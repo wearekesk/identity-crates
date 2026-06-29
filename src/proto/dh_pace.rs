@@ -11,7 +11,7 @@ use once_cell::sync::Lazy;
 use thiserror::Error;
 
 use crate::crypto::diffie_hellman::{DHpkcs3Engine, DhParameterSpec};
-use crate::proto::domain_parameter::{self, DomainParameter};
+use crate::proto::domain_parameter;
 use crate::proto::public_key_pace::PublicKeyPace;
 use crate::utils::big_uint_to_bytes;
 
@@ -138,7 +138,6 @@ pub static RFC5114_2048_256: Lazy<DhParameterSpec> = Lazy::new(|| {
 /// ephemeral key pair (used during PACE-GM mapping).
 #[derive(Debug)]
 pub struct DHPace {
-    pub domain_parameter: DomainParameter,
     domain_spec: DhParameterSpec,
     engine: Option<DHpkcs3Engine>,
     ephemeral: Option<DHpkcs3Engine>,
@@ -152,25 +151,18 @@ impl DHPace {
     /// Returns [`DHPaceError`] when `id` is not in the ICAO table, or when
     /// engine construction fails.
     pub fn new(id: u32, spec: DhParameterSpec) -> Result<Self, DHPaceError> {
-        let dom = domain_parameter::get(id)
-            .ok_or_else(|| DHPaceError(format!("DHPace; Domain parameter with id {id} does not exist.")))?
-            .clone();
+        if domain_parameter::get(id).is_none() {
+            return Err(DHPaceError(format!(
+                "DHPace; Domain parameter with id {id} does not exist."
+            )));
+        }
         let engine = DHpkcs3Engine::new(spec.clone(), None, None)
             .map_err(|e| DHPaceError(format!("DH engine: {}", e.0)))?;
         Ok(Self {
-            domain_parameter: dom,
             domain_spec: spec,
             engine: Some(engine),
             ephemeral: None,
         })
-    }
-
-    pub fn is_public_key_set(&self) -> bool {
-        self.engine.is_some()
-    }
-
-    pub fn is_ephemeral_public_key_set(&self) -> bool {
-        self.ephemeral.is_some()
     }
 
     pub fn public_key(&self) -> Result<&BigUint, DHPaceError> {
@@ -189,15 +181,6 @@ impl DHPace {
                     "Ephemeral public key is null. Generate ephemeral key pair first.".into(),
                 )
             })
-    }
-
-    /// Rebuilds the main engine from a fixed private key.
-    pub fn generate_key_pair_from_priv(&mut self, priv_key: &[u8]) -> Result<(), DHPaceError> {
-        let priv_bn = BigUint::from_bytes_be(priv_key);
-        let engine = DHpkcs3Engine::from_private(priv_bn, self.domain_spec.clone())
-            .map_err(|e| DHPaceError(e.0))?;
-        self.engine = Some(engine);
-        Ok(())
     }
 
     /// Generates a new main key pair (optionally deterministic given `seed`).
@@ -224,23 +207,6 @@ impl DHPace {
         Ok(())
     }
 
-    /// Builds an ephemeral engine from a fixed private key and mapped generator.
-    pub fn set_ephemeral_key_pair(
-        &mut self,
-        private: &[u8],
-        ephemeral_generator: BigUint,
-    ) -> Result<(), DHPaceError> {
-        let priv_bn = BigUint::from_bytes_be(private);
-        let spec = DhParameterSpec::new(
-            self.domain_spec.p().clone(),
-            ephemeral_generator,
-            self.domain_spec.length(),
-        );
-        let engine = DHpkcs3Engine::from_private(priv_bn, spec).map_err(|e| DHPaceError(e.0))?;
-        self.ephemeral = Some(engine);
-        Ok(())
-    }
-
     /// Returns the current public key wrapped in a [`PublicKeyPace::Dh`].
     pub fn get_pub_key(&self) -> Result<PublicKeyPace, DHPaceError> {
         let pk = self.public_key()?;
@@ -251,22 +217,6 @@ impl DHPace {
     pub fn get_pub_key_ephemeral(&self) -> Result<PublicKeyPace, DHPaceError> {
         let pk = self.ephemeral_public_key()?;
         Ok(PublicKeyPace::new_dh(big_uint_to_bytes(pk)))
-    }
-
-    /// Interprets `PublicKeyPace::Dh` bytes as a [`BigUint`] integer (pure
-    /// helper — mirrors the `transformPublic`).
-    pub fn transform_public(pub_key: &PublicKeyPace) -> BigUint {
-        BigUint::from_bytes_be(&pub_key.to_relevant_bytes())
-    }
-
-    /// Computes the shared secret with the other party's public key.
-    pub fn get_shared_secret(&self, other_pub_key: &[u8]) -> Result<BigUint, DHPaceError> {
-        let engine = self
-            .engine
-            .as_ref()
-            .ok_or_else(|| DHPaceError("Engine is null. Generate key pair first.".into()))?;
-        let other = BigUint::from_bytes_be(other_pub_key);
-        Ok(engine.compute_secret_key(&other))
     }
 
     /// Computes the ephemeral shared secret with the other party's ephemeral
@@ -349,17 +299,16 @@ mod tests {
     #[test]
     fn id0_has_correct_bit_length() {
         let dh = dh_pace_id0().unwrap();
-        assert_eq!(dh.domain_parameter.id, 0);
-        assert_eq!(dh.domain_parameter.size, 1024);
-        // Private-key length is the subgroup size (160 bits).
+        // 1024-bit MODP prime, 160-bit prime-order subgroup.
+        assert_eq!(dh.domain_spec.p().bits(), 1024);
         assert_eq!(dh.domain_spec.length(), 160);
     }
 
     #[test]
     fn id2_has_correct_params() {
         let dh = dh_pace_id2().unwrap();
-        assert_eq!(dh.domain_parameter.id, 2);
-        assert_eq!(dh.domain_parameter.size, 2048);
+        // 2048-bit MODP prime, 256-bit prime-order subgroup.
+        assert_eq!(dh.domain_spec.p().bits(), 2048);
         assert_eq!(dh.domain_spec.length(), 256);
     }
 
@@ -369,16 +318,11 @@ mod tests {
         DhParameterSpec::new(BigUint::from(23u32), BigUint::from(5u32), 8)
     }
 
-    fn domain_parameter_stub() -> DomainParameter {
-        domain_parameter::get(12).unwrap().clone()
-    }
-
     fn build_small(priv_key: u32) -> DHPace {
         let spec = small_spec();
         let engine =
             DHpkcs3Engine::from_private(BigUint::from(priv_key), spec.clone()).unwrap();
         DHPace {
-            domain_parameter: domain_parameter_stub(),
             domain_spec: spec,
             engine: Some(engine),
             ephemeral: None,
@@ -386,15 +330,23 @@ mod tests {
     }
 
     #[test]
-    fn shared_secret_is_symmetric_in_small_group() {
-        let alice = build_small(6);
-        let bob = build_small(15);
+    fn ephemeral_shared_secret_is_symmetric_in_small_group() {
+        // Symmetry of the agreed secret, exercised through the ephemeral
+        // engines (the only shared-secret path the session uses). Using the
+        // group's own generator makes them behave like plain DH key pairs.
+        let mut alice = build_small(6);
+        let mut bob = build_small(15);
+        alice
+            .generate_ephemeral_with_custom_generator(BigUint::from(5u32), Some(6))
+            .unwrap();
+        bob.generate_ephemeral_with_custom_generator(BigUint::from(5u32), Some(15))
+            .unwrap();
 
-        let alice_pub = big_uint_to_bytes(alice.public_key().unwrap());
-        let bob_pub = big_uint_to_bytes(bob.public_key().unwrap());
+        let alice_pub = alice.get_pub_key_ephemeral().unwrap().to_relevant_bytes();
+        let bob_pub = bob.get_pub_key_ephemeral().unwrap().to_relevant_bytes();
 
-        let s_ab = alice.get_shared_secret(&bob_pub).unwrap();
-        let s_ba = bob.get_shared_secret(&alice_pub).unwrap();
+        let s_ab = alice.get_ephemeral_shared_secret(&bob_pub).unwrap();
+        let s_ba = bob.get_ephemeral_shared_secret(&alice_pub).unwrap();
         assert_eq!(s_ab, s_ba);
     }
 
@@ -417,7 +369,9 @@ mod tests {
         let bob_pub = big_uint_to_bytes(bob.public_key().unwrap());
         let nonce = vec![0x03u8]; // small nonce
 
-        let expected_h = alice.get_shared_secret(&bob_pub).unwrap();
+        // H = bob_pub^alice_priv mod p, with alice_priv = 6 (build_small(6)).
+        let expected_h = BigUint::from_bytes_be(&bob_pub)
+            .modpow(&BigUint::from(6u32), alice.domain_spec.p());
         let nonce_bn = BigUint::from_bytes_be(&nonce);
         let g_exp = alice
             .domain_spec
@@ -435,31 +389,7 @@ mod tests {
         // Use a bespoke ephemeral generator (any element of the group).
         dh.generate_ephemeral_with_custom_generator(BigUint::from(7u32), Some(1))
             .unwrap();
-        assert!(dh.is_ephemeral_public_key_set());
         let pk = dh.get_pub_key_ephemeral().unwrap();
-        assert_eq!(pk.agreement_algorithm(), crate::lds::asn1_object_identifiers::TokenAgreementAlgo::Dh);
-    }
-
-    #[test]
-    fn set_ephemeral_key_pair_uses_fixed_private() {
-        let mut dh = build_small(6);
-        dh.set_ephemeral_key_pair(&[0x05], BigUint::from(7u32)).unwrap();
-        assert!(dh.is_ephemeral_public_key_set());
-    }
-
-    #[test]
-    fn transform_public_bytes_to_bigint() {
-        let pk = PublicKeyPace::new_dh(vec![0x01, 0x23]);
-        assert_eq!(DHPace::transform_public(&pk), BigUint::from(0x0123u32));
-    }
-
-    #[test]
-    fn generate_key_pair_from_priv_updates_engine() {
-        let mut dh = build_small(6);
-        let before = dh.public_key().unwrap().clone();
-        dh.generate_key_pair_from_priv(&[0x0F]).unwrap();
-        let after = dh.public_key().unwrap().clone();
-        // 5^15 mod 23 = 19 ≠ 5^6 mod 23 = 8
-        assert_ne!(before, after);
+        assert!(matches!(pk, PublicKeyPace::Dh { .. }));
     }
 }

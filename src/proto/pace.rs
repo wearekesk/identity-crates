@@ -27,16 +27,10 @@ use crate::proto::public_key_pace::PublicKeyPace;
 pub mod exchanged_data {
     /// Step 1 — encrypted nonce (response).
     pub const ENCRYPTED_NONCE_RESPONSE: u32 = 0x80;
-    /// Step 2 — map nonce (command).
-    pub const MAPPING_DATA_COMMAND: u32 = 0x81;
     /// Step 2 — map nonce (response).
     pub const MAPPING_DATA_RESPONSE: u32 = 0x82;
-    /// Step 3 — key agreement (command).
-    pub const EPHEMERAL_PUBLIC_KEY_COMMAND: u32 = 0x83;
     /// Step 3 — key agreement (response).
     pub const EPHEMERAL_PUBLIC_KEY_RESPONSE: u32 = 0x84;
-    /// Step 4 — mutual authentication (command).
-    pub const AUTHENTICATION_TOKEN_COMMAND: u32 = 0x85;
     /// Step 4 — mutual authentication (response).
     pub const AUTHENTICATION_TOKEN_RESPONSE: u32 = 0x86;
 }
@@ -414,7 +408,6 @@ mod tests {
         let inner = Tlv::encode(exchanged_data::MAPPING_DATA_RESPONSE, &[0xDE, 0xAD]);
         let outer = Tlv::encode(TAG_DYNAMIC_AUTHENTICATION_DATA, &inner);
         let pk = parse_step2_or_3_response(&outer, TokenAgreementAlgo::Dh).unwrap();
-        assert_eq!(pk.agreement_algorithm(), TokenAgreementAlgo::Dh);
         assert_eq!(pk.to_bytes(), vec![0xDE, 0xAD]);
     }
 

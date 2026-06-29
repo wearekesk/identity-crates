@@ -17,9 +17,6 @@ use std::collections::HashMap;
 /// group.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DomainParameterType {
-    /// No parameter / placeholder.
-    #[allow(dead_code)]
-    None,
     /// Finite field `GF(p)` — classical Diffie-Hellman.
     Gfp,
     /// Elliptic curve over `F_p`.
@@ -132,7 +129,7 @@ mod tests {
             id: 12,
             name: "a",
             size: 0,
-            kind: DomainParameterType::None,
+            kind: DomainParameterType::Gfp,
             is_supported: false,
         };
         let b = DomainParameter {

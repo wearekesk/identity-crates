@@ -27,7 +27,7 @@ use rand::rand_core::UnwrapErr;
 use rand::{rngs::StdRng, rngs::SysRng, Rng, SeedableRng};
 use thiserror::Error;
 
-use crate::proto::domain_parameter::{self, DomainParameter};
+use crate::proto::domain_parameter;
 use crate::proto::public_key_pace::PublicKeyPace;
 
 /// ICAO domain-parameter id for NIST P-256 (the only curve supported by this
@@ -67,7 +67,6 @@ pub enum ECDHPaceError {
 /// ephemeral one used during PACE-GM mapping.
 #[derive(Debug)]
 pub struct ECDHPace {
-    pub domain_parameter: DomainParameter,
     priv_key: Option<SecretKey>,
     pub_key: Option<PublicKey>,
     ephemeral_priv: Option<Scalar>,
@@ -84,28 +83,19 @@ impl ECDHPace {
     /// - [`ECDHPaceError::UnsupportedCurve`] if `id` is listed but this port
     ///   does not yet back it.
     pub fn new(id: u32) -> Result<Self, ECDHPaceError> {
-        let dom = domain_parameter::get(id)
-            .ok_or(ECDHPaceError::UnknownId(id))?
-            .clone();
+        if domain_parameter::get(id).is_none() {
+            return Err(ECDHPaceError::UnknownId(id));
+        }
         if id != NIST_P256_ID {
             return Err(ECDHPaceError::UnsupportedCurve(id));
         }
         Ok(Self {
-            domain_parameter: dom,
             priv_key: None,
             pub_key: None,
             ephemeral_priv: None,
             ephemeral_pub: None,
             ephemeral_generator: None,
         })
-    }
-
-    pub fn is_public_key_set(&self) -> bool {
-        self.pub_key.is_some()
-    }
-
-    pub fn is_ephemeral_public_key_set(&self) -> bool {
-        self.ephemeral_pub.is_some()
     }
 
     /// Generates a new main key pair using the OS RNG (`SysRng`) or a seeded
@@ -135,14 +125,6 @@ impl ECDHPace {
             }
             Some(_) => return Err(ECDHPaceError::InvalidSeedLen),
         };
-        self.pub_key = Some(sk.public_key());
-        self.priv_key = Some(sk);
-        Ok(())
-    }
-
-    /// Builds the main key pair from a fixed private key (big-endian bytes).
-    pub fn generate_key_pair_from_priv(&mut self, priv_key: &[u8]) -> Result<(), ECDHPaceError> {
-        let sk = secret_key_from_bytes(priv_key)?;
         self.pub_key = Some(sk.public_key());
         self.priv_key = Some(sk);
         Ok(())
@@ -222,51 +204,11 @@ impl ECDHPace {
         Ok(())
     }
 
-    /// Builds an ephemeral key pair from a fixed private key and mapped
-    /// generator (useful for reproducing test vectors).
-    pub fn set_ephemeral_key_pair(
-        &mut self,
-        private: &[u8],
-        mapped_generator: ProjectivePoint,
-    ) -> Result<(), ECDHPaceError> {
-        let scalar = scalar_nonzero_from_bytes(private)?;
-        let pub_point = mapped_generator * *scalar.as_ref();
-        self.ephemeral_priv = Some(*scalar.as_ref());
-        self.ephemeral_pub = Some(pub_point);
-        self.ephemeral_generator = Some(mapped_generator);
-        Ok(())
-    }
-
-    /// Returns the current EC generator `G` (always P-256 base point).
-    pub fn g(&self) -> ProjectivePoint {
-        ProjectivePoint::GENERATOR
-    }
-}
-
-/// Selector mirroring the `DomainParameterSelectorECDH.getDomainParameter`.
-pub fn get_domain_parameter(id: u32) -> Result<ECDHPace, ECDHPaceError> {
-    ECDHPace::new(id)
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn secret_key_from_bytes(bytes: &[u8]) -> Result<SecretKey, ECDHPaceError> {
-    // Normalise to exactly 32 bytes, left-pad with zeros if shorter.
-    let mut buf = [0u8; 32];
-    match bytes.len() {
-        32 => buf.copy_from_slice(bytes),
-        n if n < 32 => buf[32 - n..].copy_from_slice(bytes),
-        _ => return Err(ECDHPaceError::InvalidScalar),
-    }
-    SecretKey::from_bytes(&buf.into()).map_err(|_| ECDHPaceError::InvalidScalar)
-}
-
-fn scalar_nonzero_from_bytes(bytes: &[u8]) -> Result<NonZeroScalar<NistP256>, ECDHPaceError> {
-    let sk = secret_key_from_bytes(bytes)?;
-    Ok(sk.to_nonzero_scalar())
-}
 
 fn scalar_from_bytes(bytes: &[u8]) -> Scalar {
     // Right-align the big-endian input into a fixed 32-byte buffer, then let
@@ -353,17 +295,6 @@ fn pubkey_from_xy(x: &BigUint, y: &BigUint) -> Result<PublicKey, ECDHPaceError> 
     Ok(PublicKey::from_affine(affine).map_err(|_| ECDHPaceError::InvalidEncoding)?)
 }
 
-impl ProjectivePointExt for ProjectivePoint {
-    fn encode_uncompressed(&self) -> Vec<u8> {
-        self.to_affine().to_sec1_point(false).as_bytes().to_vec()
-    }
-}
-
-trait ProjectivePointExt {
-    /// SEC1 uncompressed encoding of this point.
-    fn encode_uncompressed(&self) -> Vec<u8>;
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -392,8 +323,8 @@ mod tests {
     #[test]
     fn p256_engine_constructs() {
         let e = ECDHPace::new(NIST_P256_ID).unwrap();
-        assert_eq!(e.domain_parameter.id, NIST_P256_ID);
-        assert!(!e.is_public_key_set());
+        // No key pair generated yet, so the public key is unavailable.
+        assert_eq!(e.get_pub_key().unwrap_err(), ECDHPaceError::NoPublicKey);
     }
 
     #[test]
@@ -429,10 +360,7 @@ mod tests {
 
         let s_ab = alice.get_shared_secret(&bob_pk_ec).unwrap();
         let s_ba = bob.get_shared_secret(&alice_pk_ec).unwrap();
-        assert_eq!(
-            s_ab.encode_uncompressed(),
-            s_ba.encode_uncompressed()
-        );
+        assert_eq!(s_ab, s_ba);
     }
 
     #[test]
@@ -470,22 +398,7 @@ mod tests {
         let h = alice.get_shared_secret(&bob_pk).unwrap();
         let s = scalar_from_bytes(&nonce);
         let expected = ProjectivePoint::GENERATOR * s + h;
-        assert_eq!(g_prime.encode_uncompressed(), expected.encode_uncompressed());
-    }
-
-    #[test]
-    fn generate_key_pair_from_priv_matches_public_key() {
-        let mut e = ECDHPace::new(NIST_P256_ID).unwrap();
-        let priv_bytes = hex::decode(
-            "0101010101010101010101010101010101010101010101010101010101010101",
-        )
-        .unwrap();
-        e.generate_key_pair_from_priv(&priv_bytes).unwrap();
-        let pk = e.get_pub_key().unwrap();
-        // Recompute by hand: PK = priv · G.
-        let sk = secret_key_from_bytes(&priv_bytes).unwrap();
-        let expected = point_to_pubkey_pace(sk.public_key().to_projective());
-        assert_eq!(pk.to_bytes(), expected.to_bytes());
+        assert_eq!(g_prime, expected);
     }
 
     #[test]
@@ -502,18 +415,6 @@ mod tests {
         alice
             .generate_ephemeral_with_custom_generator(g_prime, Some(&[0x0Au8; 32]))
             .unwrap();
-        assert!(alice.is_ephemeral_public_key_set());
-    }
-
-    #[test]
-    fn set_ephemeral_key_pair_fixed_priv() {
-        let mut e = ECDHPace::new(NIST_P256_ID).unwrap();
-        let priv_bytes = hex::decode(
-            "0202020202020202020202020202020202020202020202020202020202020202",
-        )
-        .unwrap();
-        e.set_ephemeral_key_pair(&priv_bytes, ProjectivePoint::GENERATOR)
-            .unwrap();
-        assert!(e.is_ephemeral_public_key_set());
+        assert!(alice.get_pub_key_ephemeral().is_ok());
     }
 }

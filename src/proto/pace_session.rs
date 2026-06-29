@@ -4,8 +4,9 @@
 //! of `(next APDU → response)` steps. Like [`BacSession`], no async and no
 //! NFC — the caller owns the transceive loop.
 //!
-//! This port currently supports **ECDH-GM on NIST P-256 only** (ICAO domain
-//! parameter id `12`). DH and other curves are rejected at construction.
+//! Supports **ECDH-GM on NIST P-256** (ICAO domain parameter id `12`) and
+//! **DH-GM on the RFC 5114 MODP groups** (ids `0`/`1`/`2`); both require the
+//! AES cipher. Other curves/groups are rejected at construction.
 //!
 //! ```text
 //!   Start
@@ -30,6 +31,7 @@
 //! [`BacSession`]: crate::proto::bac_session::BacSession
 
 use elliptic_curve::sec1::ToSec1Point;
+use num_bigint::BigUint;
 use p256::ProjectivePoint;
 use thiserror::Error;
 
@@ -38,6 +40,7 @@ use crate::lds::asn1_object_identifiers::{
 };
 use crate::proto::access_key::AccessKey;
 use crate::proto::aes_smcipher::AesSmCipher;
+use crate::proto::dh_pace::{self, DHPace, DHPaceError};
 use crate::proto::ecdh_pace::{ECDHPace, ECDHPaceError, NIST_P256_ID};
 use crate::proto::iso7816::command_apdu::CommandApdu;
 use crate::proto::iso7816::iso7816::{cla, ins};
@@ -46,6 +49,7 @@ use crate::proto::mrtd_sm::MrtdSM;
 use crate::proto::pace::{self, PaceError};
 use crate::proto::public_key_pace::PublicKeyPace;
 use crate::proto::ssc::AesSSC;
+use crate::utils::big_uint_to_bytes;
 
 /// Action requested by [`PaceSession::next`].
 pub enum PaceAction {
@@ -58,7 +62,7 @@ pub enum PaceAction {
 /// PACE protocol error surface for the session layer.
 #[derive(Debug, Error)]
 pub enum PaceSessionError {
-    #[error("PACE session: only ECDH-GM is supported (got {0:?})")]
+    #[error("PACE session: token-agreement algorithm not supported here (got {0:?})")]
     UnsupportedAgreement(TokenAgreementAlgo),
     #[error("PACE session: only AES cipher is supported (got {0:?})")]
     UnsupportedCipher(CipherAlgorithm),
@@ -85,6 +89,97 @@ pub enum PaceSessionError {
     Pace(#[from] PaceError),
     #[error(transparent)]
     Ecdh(#[from] ECDHPaceError),
+    #[error(transparent)]
+    Dh(#[from] DHPaceError),
+}
+
+/// PACE key-agreement engine — ECDH-GM (P-256) or classical DH (RFC 5114
+/// MODP groups). Both expose the same set of operations the session needs,
+/// exchanging [`PublicKeyPace`] values and raw KDF seed bytes so the state
+/// machine stays agreement-agnostic.
+enum PaceEngine {
+    Ecdh(ECDHPace),
+    Dh(DHPace),
+}
+
+impl PaceEngine {
+    /// Generates the main (mapping) key pair.
+    fn generate_main_key_pair(&mut self, seed: Option<&[u8]>) -> Result<(), PaceSessionError> {
+        match self {
+            PaceEngine::Ecdh(e) => e.generate_key_pair(seed)?,
+            PaceEngine::Dh(e) => e.generate_key_pair(seed.map(seed_to_u64))?,
+        }
+        Ok(())
+    }
+
+    /// The main public key.
+    fn main_pub_key(&self) -> Result<PublicKeyPace, PaceSessionError> {
+        match self {
+            PaceEngine::Ecdh(e) => Ok(e.get_pub_key()?),
+            PaceEngine::Dh(e) => Ok(e.get_pub_key()?),
+        }
+    }
+
+    /// The ephemeral public key.
+    fn ephemeral_pub_key(&self) -> Result<PublicKeyPace, PaceSessionError> {
+        match self {
+            PaceEngine::Ecdh(e) => Ok(e.get_pub_key_ephemeral()?),
+            PaceEngine::Dh(e) => Ok(e.get_pub_key_ephemeral()?),
+        }
+    }
+
+    /// PACE-GM: from the ICC mapping public and the decrypted nonce, derive the
+    /// mapped generator and build the ephemeral key pair against it.
+    fn map_and_generate_ephemeral(
+        &mut self,
+        icc_mapping_pub: &PublicKeyPace,
+        nonce: &[u8],
+        seed: Option<&[u8]>,
+    ) -> Result<(), PaceSessionError> {
+        match self {
+            PaceEngine::Ecdh(e) => {
+                let icc_pk = ECDHPace::transform_public(icc_mapping_pub)?;
+                let g_prime = e.get_mapped_generator(&icc_pk, nonce)?;
+                e.generate_ephemeral_with_custom_generator(g_prime, seed)?;
+            }
+            PaceEngine::Dh(e) => {
+                let g_prime = e.get_mapped_generator(&icc_mapping_pub.to_relevant_bytes(), nonce)?;
+                e.generate_ephemeral_with_custom_generator(
+                    BigUint::from_bytes_be(&g_prime),
+                    seed.map(seed_to_u64),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Computes the ephemeral shared secret and returns the KDF seed bytes
+    /// (the EC x-coordinate for ECDH, the shared integer for DH).
+    fn ephemeral_shared_seed(
+        &self,
+        icc_ephemeral_pub: &PublicKeyPace,
+    ) -> Result<Vec<u8>, PaceSessionError> {
+        match self {
+            PaceEngine::Ecdh(e) => {
+                let icc_eph_pk = ECDHPace::transform_public(icc_ephemeral_pub)?;
+                let shared = e.get_ephemeral_shared_secret(&icc_eph_pk)?;
+                ecdh_shared_secret_x_bytes(shared)
+            }
+            PaceEngine::Dh(e) => {
+                let shared = e.get_ephemeral_shared_secret(&icc_ephemeral_pub.to_relevant_bytes())?;
+                Ok(big_uint_to_bytes(&shared))
+            }
+        }
+    }
+}
+
+/// Folds up to the first 8 bytes of a 32-byte test seed into a `u64`, the seed
+/// form the DH engine accepts (used only for deterministic test runs).
+fn seed_to_u64(seed: &[u8]) -> u64 {
+    let mut b = [0u8; 8];
+    let n = seed.len().min(8);
+    b[..n].copy_from_slice(&seed[..n]);
+    u64::from_be_bytes(b)
 }
 
 /// Synchronous PACE handshake state machine.
@@ -97,10 +192,10 @@ pub enum PaceSessionError {
 pub struct PaceSession<K: AccessKey> {
     key: K,
     protocol: OiePaceProtocol,
-    engine: ECDHPace,
-    /// Optional seed for the main ECDH scalar (test determinism).
+    engine: PaceEngine,
+    /// Optional seed for the main scalar (test determinism).
     seed_main: Option<[u8; 32]>,
-    /// Optional seed for the ephemeral ECDH scalar (test determinism).
+    /// Optional seed for the ephemeral scalar (test determinism).
     seed_ephemeral: Option<[u8; 32]>,
     state: State,
 }
@@ -127,7 +222,21 @@ enum State {
 }
 
 impl<K: AccessKey> PaceSession<K> {
-    /// Creates a new session. Fails unless the protocol is ECDH + AES on
+    /// Creates a new session, dispatching on the protocol's token-agreement
+    /// algorithm: ECDH-GM (NIST P-256) or DH-GM (RFC 5114 MODP groups 0/1/2).
+    /// Both require the AES cipher.
+    pub fn new(
+        key: K,
+        protocol: OiePaceProtocol,
+        parameter_id: u32,
+    ) -> Result<Self, PaceSessionError> {
+        match protocol.token_agreement_algorithm {
+            TokenAgreementAlgo::Ecdh => Self::new_ecdh(key, protocol, parameter_id),
+            TokenAgreementAlgo::Dh => Self::new_dh(key, protocol, parameter_id),
+        }
+    }
+
+    /// Creates an ECDH-GM session. Fails unless the protocol is ECDH + AES on
     /// NIST P-256.
     pub fn new_ecdh(
         key: K,
@@ -145,19 +254,44 @@ impl<K: AccessKey> PaceSession<K> {
         if parameter_id != NIST_P256_ID {
             return Err(PaceSessionError::UnsupportedCurve(parameter_id));
         }
-        let engine = ECDHPace::new(parameter_id)?;
         Ok(Self {
             key,
             protocol,
-            engine,
+            engine: PaceEngine::Ecdh(ECDHPace::new(parameter_id)?),
             seed_main: None,
             seed_ephemeral: None,
             state: State::Start,
         })
     }
 
-    /// Deterministic variant that seeds both the main and ephemeral ECDH
-    /// scalars. For tests / replaying traces only.
+    /// Creates a DH-GM session. Fails unless the protocol is DH + AES on a
+    /// supported RFC 5114 MODP group (ICAO ids 0/1/2).
+    pub fn new_dh(
+        key: K,
+        protocol: OiePaceProtocol,
+        parameter_id: u32,
+    ) -> Result<Self, PaceSessionError> {
+        if protocol.token_agreement_algorithm != TokenAgreementAlgo::Dh {
+            return Err(PaceSessionError::UnsupportedAgreement(
+                protocol.token_agreement_algorithm,
+            ));
+        }
+        if protocol.cipher_algorithm != CipherAlgorithm::Aes {
+            return Err(PaceSessionError::UnsupportedCipher(protocol.cipher_algorithm));
+        }
+        let engine = dh_pace::get_domain_parameter(parameter_id)?;
+        Ok(Self {
+            key,
+            protocol,
+            engine: PaceEngine::Dh(engine),
+            seed_main: None,
+            seed_ephemeral: None,
+            state: State::Start,
+        })
+    }
+
+    /// Deterministic variant that seeds both the main and ephemeral scalars.
+    /// For tests / replaying traces only.
     pub fn new_ecdh_deterministic(
         key: K,
         protocol: OiePaceProtocol,
@@ -166,6 +300,20 @@ impl<K: AccessKey> PaceSession<K> {
         seed_ephemeral: [u8; 32],
     ) -> Result<Self, PaceSessionError> {
         let mut s = Self::new_ecdh(key, protocol, parameter_id)?;
+        s.seed_main = Some(seed_main);
+        s.seed_ephemeral = Some(seed_ephemeral);
+        Ok(s)
+    }
+
+    /// Deterministic DH variant (tests / trace replay only).
+    pub fn new_dh_deterministic(
+        key: K,
+        protocol: OiePaceProtocol,
+        parameter_id: u32,
+        seed_main: [u8; 32],
+        seed_ephemeral: [u8; 32],
+    ) -> Result<Self, PaceSessionError> {
+        let mut s = Self::new_dh(key, protocol, parameter_id)?;
         s.seed_main = Some(seed_main);
         s.seed_ephemeral = Some(seed_ephemeral);
         Ok(s)
@@ -208,8 +356,8 @@ impl<K: AccessKey> PaceSession<K> {
             State::ReadyForStep2 { nonce } => {
                 // Generate main key pair; send its public as mapping public.
                 self.engine
-                    .generate_key_pair(self.seed_main.as_ref().map(|s| &s[..]))?;
-                let terminal_pub = self.engine.get_pub_key()?;
+                    .generate_main_key_pair(self.seed_main.as_ref().map(|s| &s[..]))?;
+                let terminal_pub = self.engine.main_pub_key()?;
                 let data =
                     pace::generate_general_authenticate_data_step2_or_3(&terminal_pub, false);
                 let cmd = CommandApdu::new(
@@ -225,7 +373,7 @@ impl<K: AccessKey> PaceSession<K> {
                 Ok(PaceAction::SendApdu(cmd.to_bytes()))
             }
             State::ReadyForStep3 => {
-                let terminal_ephemeral_pub = self.engine.get_pub_key_ephemeral()?;
+                let terminal_ephemeral_pub = self.engine.ephemeral_pub_key()?;
                 let data = pace::generate_general_authenticate_data_step2_or_3(
                     &terminal_ephemeral_pub,
                     true,
@@ -310,15 +458,14 @@ impl<K: AccessKey> PaceSession<K> {
                 let data = rapdu.data.ok_or(PaceSessionError::EmptyResponse)?;
                 let icc_mapping_pub = pace::parse_step2_or_3_response(
                     &data,
-                    TokenAgreementAlgo::Ecdh,
+                    self.protocol.token_agreement_algorithm,
                 )
                 .map_err(|e| PaceSessionError::InvalidResponse(e.0))?;
 
                 // Compute mapped generator and rebuild ephemeral key pair.
-                let icc_pk = ECDHPace::transform_public(&icc_mapping_pub)?;
-                let g_prime = self.engine.get_mapped_generator(&icc_pk, &nonce)?;
-                self.engine.generate_ephemeral_with_custom_generator(
-                    g_prime,
+                self.engine.map_and_generate_ephemeral(
+                    &icc_mapping_pub,
+                    &nonce,
                     self.seed_ephemeral.as_ref().map(|s| &s[..]),
                 )?;
                 self.state = State::ReadyForStep3;
@@ -328,14 +475,12 @@ impl<K: AccessKey> PaceSession<K> {
                 let data = rapdu.data.ok_or(PaceSessionError::EmptyResponse)?;
                 let icc_ephemeral_pub = pace::parse_step2_or_3_response(
                     &data,
-                    TokenAgreementAlgo::Ecdh,
+                    self.protocol.token_agreement_algorithm,
                 )
                 .map_err(|e| PaceSessionError::InvalidResponse(e.0))?;
 
                 // Compute the ephemeral shared secret and derive K_enc / K_mac.
-                let icc_eph_pk = ECDHPace::transform_public(&icc_ephemeral_pub)?;
-                let shared = self.engine.get_ephemeral_shared_secret(&icc_eph_pk)?;
-                let seed = ecdh_shared_secret_x_bytes(shared)?;
+                let seed = self.engine.ephemeral_shared_seed(&icc_ephemeral_pub)?;
                 let k_enc = pace::calculate_enc_key(&self.protocol, &seed)?;
                 let k_mac = pace::calculate_mac_key(&self.protocol, &seed)?;
 
@@ -353,7 +498,7 @@ impl<K: AccessKey> PaceSession<K> {
 
                 // ICC's token T_IC is computed over the *terminal's* ephemeral
                 // public key — the terminal verifies with that same input.
-                let terminal_ephemeral_pub = self.engine.get_pub_key_ephemeral()?;
+                let terminal_ephemeral_pub = self.engine.ephemeral_pub_key()?;
                 let expected_input = pace::generate_encoding_input_data(
                     &self.protocol,
                     &terminal_ephemeral_pub,
@@ -415,6 +560,25 @@ mod tests {
             vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 2, 2],
         )
         .unwrap()
+    }
+
+    fn dh_gm_aes128_oid() -> OiePaceProtocol {
+        OiePaceProtocol::new(
+            "0.4.0.127.0.7.2.2.4.1.2",
+            "id-PACE-DH-GM-AES-CBC-CMAC-128",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 2],
+        )
+        .unwrap()
+    }
+
+    /// Replicates the private `seed_to_u64`: folds up to the first 8 bytes of a
+    /// seed into a big-endian `u64`, the seed form the DH engine accepts. The
+    /// terminal session uses the same derivation, so both sides stay in sync.
+    fn seed_u64(seed: &[u8]) -> u64 {
+        let mut b = [0u8; 8];
+        let n = seed.len().min(8);
+        b[..n].copy_from_slice(&seed[..n]);
+        u64::from_be_bytes(b)
     }
 
     fn build_response(data: Option<&[u8]>) -> Vec<u8> {
@@ -599,18 +763,135 @@ mod tests {
         }
     }
 
+    #[test]
+    fn full_pace_dh_loopback_produces_sm() {
+        // ---- setup ----
+        let protocol = dh_gm_aes128_oid();
+        let can = CanKey::new("123456").unwrap();
+
+        let seed_terminal_main = [0x11u8; 32];
+        let seed_terminal_eph = [0x22u8; 32];
+        let seed_icc_main = [0x33u8; 32];
+        let seed_icc_eph = [0x44u8; 32];
+
+        // ICAO domain parameter id 0 = RFC 5114 1024/160.
+        let mut session = PaceSession::new_dh_deterministic(
+            can,
+            protocol.clone(),
+            0,
+            seed_terminal_main,
+            seed_terminal_eph,
+        )
+        .unwrap();
+
+        // The "chip" side mirror — a second DH engine on the same group.
+        let can_chip = CanKey::new("123456").unwrap();
+        let mut icc = dh_pace::get_domain_parameter(0).unwrap();
+
+        // ---- Step A: MSE:Set AT ----
+        match session.next().unwrap() {
+            PaceAction::SendApdu(_) => {}
+            _ => panic!("expected MSE:Set AT"),
+        }
+        session.feed_response(&build_response(None)).unwrap();
+
+        // ---- Step 1: GA step 1 ----
+        match session.next().unwrap() {
+            PaceAction::SendApdu(_) => {}
+            _ => panic!("expected step 1"),
+        }
+        // Simulated ICC chooses a 16-byte nonce and encrypts with K_π.
+        let nonce = [0x5Au8; 16];
+        let cipher = AesCipher::new(protocol.key_length);
+        let kpi = can_chip
+            .kpi(protocol.cipher_algorithm, protocol.key_length)
+            .unwrap();
+        let enc_nonce = cipher
+            .encrypt(&nonce, &kpi, None, BlockCipherMode::Cbc, false)
+            .unwrap();
+        let step1_body = dyn_auth_wrap(0x80, &enc_nonce);
+        session.feed_response(&build_response(Some(&step1_body))).unwrap();
+
+        // ---- Step 2: GA step 2 — mapping public exchange ----
+        let _step2_apdu = match session.next().unwrap() {
+            PaceAction::SendApdu(bytes) => bytes,
+            _ => panic!("expected step 2"),
+        };
+        // ICC generates its own DH key pair and returns its raw public (no
+        // 0x04 prefix — DH public keys are raw big-endian integers).
+        icc.generate_key_pair(Some(seed_u64(&seed_icc_main))).unwrap();
+        let icc_mapping_pub = icc.get_pub_key().unwrap();
+        let step2_response = dyn_auth_wrap(0x82, &icc_mapping_pub.to_bytes());
+        session
+            .feed_response(&build_response(Some(&step2_response)))
+            .unwrap();
+
+        // ---- Step 3: GA step 3 — ephemeral public exchange ----
+        let _step3_apdu = match session.next().unwrap() {
+            PaceAction::SendApdu(bytes) => bytes,
+            _ => panic!("expected step 3"),
+        };
+        // ICC computes the mapped generator, then its own ephemeral key pair.
+        let terminal_mapping_pub = icc_mapping_pub_from_session(&session)
+            .expect("terminal's main pubkey after step 2");
+        let g = icc
+            .get_mapped_generator(&terminal_mapping_pub.to_relevant_bytes(), &nonce)
+            .unwrap();
+        icc.generate_ephemeral_with_custom_generator(
+            BigUint::from_bytes_be(&g),
+            Some(seed_u64(&seed_icc_eph)),
+        )
+        .unwrap();
+        let icc_eph_pub = icc.get_pub_key_ephemeral().unwrap();
+        let step3_response = dyn_auth_wrap(0x84, &icc_eph_pub.to_bytes());
+        session
+            .feed_response(&build_response(Some(&step3_response)))
+            .unwrap();
+
+        // ---- Step 4: GA step 4 — token exchange ----
+        let _step4_apdu = match session.next().unwrap() {
+            PaceAction::SendApdu(bytes) => bytes,
+            _ => panic!("expected step 4"),
+        };
+        // ICC computes its own token over the *terminal's* ephemeral public.
+        let terminal_eph_pub = terminal_ephemeral_pub_from_session(&session)
+            .expect("terminal ephemeral public after step 3");
+        let seed_bytes = big_uint_to_bytes(
+            &icc.get_ephemeral_shared_secret(&terminal_eph_pub.to_relevant_bytes())
+                .unwrap(),
+        );
+        let icc_k_mac = pace::calculate_mac_key(&protocol, &seed_bytes).unwrap();
+        let icc_auth_input = pace::generate_encoding_input_data(&protocol, &terminal_eph_pub);
+        let icc_token =
+            pace::calculate_auth_token(&protocol, &icc_auth_input, &icc_k_mac).unwrap();
+        let step4_response = dyn_auth_wrap(0x86, &icc_token);
+        session
+            .feed_response(&build_response(Some(&step4_response)))
+            .unwrap();
+
+        // ---- Completion ----
+        match session.next().unwrap() {
+            PaceAction::Done(sm) => {
+                assert_eq!(sm.cipher.ks_enc.len(), 16);
+                assert_eq!(sm.cipher.ks_mac.len(), 16);
+                assert_eq!(sm.ssc().to_bytes().len(), 16); // AES SSC = 128-bit
+            }
+            _ => panic!("expected Done"),
+        }
+    }
+
     /// Test helper — rebuilds the terminal's main (mapping) public by
     /// inspecting the ECDH engine inside a `PaceSession`. Uses the session's
     /// transient state between feed_response(step 2) and next().
     fn icc_mapping_pub_from_session<K: AccessKey>(
         session: &PaceSession<K>,
     ) -> Option<PublicKeyPace> {
-        session.engine.get_pub_key().ok()
+        session.engine.main_pub_key().ok()
     }
 
     fn terminal_ephemeral_pub_from_session<K: AccessKey>(
         session: &PaceSession<K>,
     ) -> Option<PublicKeyPace> {
-        session.engine.get_pub_key_ephemeral().ok()
+        session.engine.ephemeral_pub_key().ok()
     }
 }

@@ -5,7 +5,6 @@
 
 use num_bigint::BigUint;
 
-use crate::lds::asn1_object_identifiers::TokenAgreementAlgo;
 use crate::utils::big_uint_to_bytes;
 
 /// PACE public key — either DH (raw bytes) or ECDH (affine `(x, y)` coordinates).
@@ -18,14 +17,6 @@ pub enum PublicKeyPace {
 }
 
 impl PublicKeyPace {
-    /// Returns the token-agreement algorithm that produced this key.
-    pub fn agreement_algorithm(&self) -> TokenAgreementAlgo {
-        match self {
-            Self::Dh { .. } => TokenAgreementAlgo::Dh,
-            Self::Ecdh { .. } => TokenAgreementAlgo::Ecdh,
-        }
-    }
-
     /// DH constructor.
     pub fn new_dh(pub_bytes: impl Into<Vec<u8>>) -> Self {
         Self::Dh {
@@ -101,9 +92,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dh_agreement_algorithm() {
+    fn dh_to_bytes_and_relevant_bytes() {
         let p = PublicKeyPace::new_dh(vec![0x01, 0x02]);
-        assert_eq!(p.agreement_algorithm(), TokenAgreementAlgo::Dh);
         assert_eq!(p.to_bytes(), vec![0x01, 0x02]);
         assert_eq!(p.to_relevant_bytes(), vec![0x01, 0x02]);
     }
@@ -131,12 +121,6 @@ mod tests {
     fn ecdh_from_hex_rejects_odd_length() {
         assert!(PublicKeyPace::ecdh_from_hex(&[0x11, 0x22, 0x33]).is_none());
         assert!(PublicKeyPace::ecdh_from_hex(&[]).is_none());
-    }
-
-    #[test]
-    fn ecdh_agreement_algorithm() {
-        let p = PublicKeyPace::new_ecdh(BigUint::from(1u32), BigUint::from(2u32));
-        assert_eq!(p.agreement_algorithm(), TokenAgreementAlgo::Ecdh);
     }
 
     #[test]
