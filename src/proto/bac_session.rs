@@ -34,9 +34,7 @@
 use rand::rand_core::UnwrapErr;
 use rand::{rngs::SysRng, Rng};
 
-use crate::proto::bac::{
-    self, BacError, E_LEN, K_LEN, MAC_LEN, NONCE_LEN, S_LEN,
-};
+use crate::proto::bac::{self, BacError, E_LEN, K_LEN, MAC_LEN, NONCE_LEN};
 use crate::proto::dba_key::DBAKey;
 use crate::proto::des_smcipher::DesSmCipher;
 use crate::proto::iso7816::command_apdu::CommandApdu;
@@ -260,6 +258,7 @@ mod tests {
     //! session keys and SSC match the Appendix D.3 reference values.
 
     use super::*;
+    use crate::proto::bac::S_LEN;
     use crate::proto::iso7816::response_apdu::{ResponseApdu, StatusWord};
     use chrono::NaiveDate;
 

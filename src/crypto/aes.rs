@@ -172,7 +172,7 @@ impl AesCipher {
         padding: bool,
     ) -> Result<Vec<u8>, AesCipherError> {
         self.validate_key(key)?;
-        let iv_bytes = self.resolve_iv(iv, mode)?;
+        let iv_bytes = self.resolve_iv(iv)?;
 
         let input = if padding {
             self.zero_pad(data, AES_BLOCK_SIZE)
@@ -208,7 +208,7 @@ impl AesCipher {
         mode: BlockCipherMode,
     ) -> Result<Vec<u8>, AesCipherError> {
         self.validate_key(key)?;
-        let iv_bytes = self.resolve_iv(iv, mode)?;
+        let iv_bytes = self.resolve_iv(iv)?;
 
         if data.len() % AES_BLOCK_SIZE != 0 {
             return Err(AesCipherError::InvalidDataLength(data.len()));
@@ -271,11 +271,7 @@ impl AesCipher {
         Ok(())
     }
 
-    fn resolve_iv(
-        &self,
-        iv: Option<&[u8]>,
-        mode: BlockCipherMode,
-    ) -> Result<[u8; AES_BLOCK_SIZE], AesCipherError> {
+    fn resolve_iv(&self, iv: Option<&[u8]>) -> Result<[u8; AES_BLOCK_SIZE], AesCipherError> {
         match iv {
             Some(v) => {
                 if v.len() != AES_BLOCK_SIZE {

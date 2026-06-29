@@ -18,6 +18,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DomainParameterType {
     /// No parameter / placeholder.
+    #[allow(dead_code)]
     None,
     /// Finite field `GF(p)` — classical Diffie-Hellman.
     Gfp,

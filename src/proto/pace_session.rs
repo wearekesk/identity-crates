@@ -120,7 +120,6 @@ enum State {
         k_mac: Vec<u8>,
     },
     WaitingForStep4 {
-        icc_ephemeral_pub: PublicKeyPace,
         k_enc: Vec<u8>,
         k_mac: Vec<u8>,
     },
@@ -262,11 +261,7 @@ impl<K: AccessKey> PaceSession<K> {
                     256,
                 )
                 .map_err(|e| PaceSessionError::InvalidResponse(e.to_string()))?;
-                self.state = State::WaitingForStep4 {
-                    icc_ephemeral_pub,
-                    k_enc,
-                    k_mac,
-                };
+                self.state = State::WaitingForStep4 { k_enc, k_mac };
                 Ok(PaceAction::SendApdu(cmd.to_bytes()))
             }
             State::Completed(slot) => match slot {
@@ -351,11 +346,7 @@ impl<K: AccessKey> PaceSession<K> {
                 };
                 Ok(())
             }
-            State::WaitingForStep4 {
-                icc_ephemeral_pub: _,
-                k_enc,
-                k_mac,
-            } => {
+            State::WaitingForStep4 { k_enc, k_mac } => {
                 let data = rapdu.data.ok_or(PaceSessionError::EmptyResponse)?;
                 let icc_token = pace::parse_step4_response(&data)
                     .map_err(|e| PaceSessionError::InvalidResponse(e.0))?;
