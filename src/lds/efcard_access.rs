@@ -10,6 +10,7 @@
 
 use asn1::{Sequence, Set};
 
+use crate::lds::asn1_object_identifiers::{CipherAlgorithm, MappingType};
 use crate::lds::ef::{ElementaryFile, EfParseError};
 use crate::lds::substruct::pace_info::PaceInfo;
 
@@ -74,11 +75,26 @@ impl EfCardAccess {
                     )
                 }));
             }
-            // Prefer a PACEInfo whose domain parameter this library supports;
-            // fall back to the first parsed one so callers can still inspect it.
+            // Prefer a PACEInfo this library can actually run: a supported
+            // domain parameter *and* the AES cipher with GM mapping (the only
+            // combination the session implements). Without the protocol check,
+            // an earlier IM-mapping or 3DES entry with a supported domain could
+            // be chosen over a later AES-GM one and fail session setup. Fall
+            // back to any supported-domain entry, then the first parsed one, so
+            // callers can still inspect what the card offered.
+            let runnable = |pi: &PaceInfo| {
+                pi.is_pace_domain_parameter_supported
+                    && pi.protocol.cipher_algorithm == CipherAlgorithm::Aes
+                    && pi.protocol.mapping_type == MappingType::Gm
+            };
             let pick = candidates
                 .iter()
-                .position(|pi| pi.is_pace_domain_parameter_supported)
+                .position(runnable)
+                .or_else(|| {
+                    candidates
+                        .iter()
+                        .position(|pi| pi.is_pace_domain_parameter_supported)
+                })
                 .unwrap_or(0);
             Ok(candidates.swap_remove(pick))
         })?;
