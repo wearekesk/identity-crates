@@ -48,12 +48,13 @@ impl Transceiver for MyNfc {
 }
 
 // 2. Build DBAKey from MRZ fields (doc number, DOB, DOE).
+// `DBAKey::new` returns `Result` — it validates the MRZ document number.
 let key = DBAKey::new(
     "L898902C",
     NaiveDate::from_ymd_opt(1969, 8, 6).unwrap(),
     NaiveDate::from_ymd_opt(1994, 6, 23).unwrap(),
     false, // BAC mode (set true for PACE)
-);
+)?;
 
 // 3. Start SM session + read files.
 let mut passport = Passport::new(MyNfc { /* … */ });
@@ -74,7 +75,7 @@ async on the OS side, but plugins like
 loop as a clean Dart `Future`. **The clean split: Dart owns the transceive loop,
 Rust owns the crypto and state.**
 
-```
+```text
 ┌────── Flutter app (Dart) ────────┐
 │  flutter_nfc_kit.transceive(apdu)│  ← real NFC I/O
 │         ↓              ↑          │
@@ -117,7 +118,7 @@ path of least resistance for bindings (`Vec<u8>` ↔ `Uint8List`, `Result<T,E>` 
 
 ## Module layout
 
-```
+```text
 src/
 ├── lib.rs                  # crate root (was dmrtd/mod.rs)
 ├── com/                    # Transceiver trait (sync I/O boundary)
@@ -154,4 +155,4 @@ cargo check --all-targets
 
 ## License
 
-Licensed under either of [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
+Licensed under either of [MIT](../../LICENSE-MIT) or [Apache-2.0](../../LICENSE-APACHE) at your option.
