@@ -266,18 +266,19 @@ impl Tlv {
             let mut b = encoded_tag[offset];
             offset += 1;
 
-            // Continuation bytes have MSB set.
+            // Continuation bytes have MSB set. Preserve the raw bytes
+            // (including the MSB) so the tag round-trips through `encode_tag`.
             while (b & 0x80) == 0x80 {
                 if offset >= encoded_tag.len() {
                     return Err(TlvError::InvalidTag);
                 }
-                tag = (tag << 8) | ((b & 0x7F) as u64);
+                tag = (tag << 8) | (b as u64);
                 b = encoded_tag[offset];
                 offset += 1;
             }
 
             // Last byte has MSB clear.
-            tag = (tag << 8) | ((b & 0x7F) as u64);
+            tag = (tag << 8) | (b as u64);
             tag as u32
         } else {
             // Single-byte tag.
@@ -585,6 +586,21 @@ mod tests {
             Tlv::decode_tag(&[0x1F, 0x80]).unwrap_err(),
             TlvError::InvalidTag
         );
+    }
+
+    #[test]
+    fn decode_tag_multibyte_roundtrips() {
+        // Multi-byte tag with a continuation byte whose MSB is set (0x81).
+        // decode_tag must preserve the raw bytes so encode_tag can rebuild them.
+        for raw in [
+            vec![0x5F, 0x81, 0x7F],
+            vec![0x7F, 0x81, 0x01],
+            vec![0x1F, 0x82, 0x00],
+        ] {
+            let dt = Tlv::decode_tag(&raw).unwrap();
+            assert_eq!(dt.encoded_len, raw.len());
+            assert_eq!(Tlv::encode_tag(dt.value), raw, "round-trip failed for {raw:02X?}");
+        }
     }
 
     // -----------------------------------------------------------------------

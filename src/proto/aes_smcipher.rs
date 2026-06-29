@@ -6,6 +6,7 @@
 
 use crate::crypto::aes::{AesCipher, BlockCipherMode, KeyLength};
 use crate::lds::asn1_object_identifiers::CipherAlgorithm;
+use crate::proto::iso7816::sm::SmError;
 use crate::proto::iso7816::smcipher::SmCipher;
 use crate::proto::ssc::Ssc;
 
@@ -31,11 +32,11 @@ impl AesSmCipher {
         }
     }
 
-    fn iv_from_ssc(&self, ssc: &Ssc) -> Vec<u8> {
+    fn iv_from_ssc(&self, ssc: &Ssc) -> Result<Vec<u8>, SmError> {
         // IV = E(K_enc, SSC)  using ECB (one block).
         self.cipher
             .encrypt(&ssc.to_bytes(), &self.ks_enc, None, BlockCipherMode::Ecb, false)
-            .expect("AES ECB of SSC for IV")
+            .map_err(|e| SmError(format!("AES ECB of SSC for IV: {e}")))
     }
 }
 
@@ -44,26 +45,26 @@ impl SmCipher for AesSmCipher {
         CipherAlgorithm::Aes
     }
 
-    fn encrypt(&self, data: &[u8], ssc: Option<&Ssc>) -> Vec<u8> {
-        let ssc = ssc.expect("AES SM encrypt requires SSC");
-        let iv = self.iv_from_ssc(ssc);
+    fn encrypt(&self, data: &[u8], ssc: Option<&Ssc>) -> Result<Vec<u8>, SmError> {
+        let ssc = ssc.ok_or_else(|| SmError("AES SM encrypt requires SSC".into()))?;
+        let iv = self.iv_from_ssc(ssc)?;
         self.cipher
             .encrypt(data, &self.ks_enc, Some(&iv), BlockCipherMode::Cbc, false)
-            .expect("AES CBC encrypt")
+            .map_err(|e| SmError(format!("AES CBC encrypt: {e}")))
     }
 
-    fn decrypt(&self, edata: &[u8], ssc: Option<&Ssc>) -> Vec<u8> {
-        let ssc = ssc.expect("AES SM decrypt requires SSC");
-        let iv = self.iv_from_ssc(ssc);
+    fn decrypt(&self, edata: &[u8], ssc: Option<&Ssc>) -> Result<Vec<u8>, SmError> {
+        let ssc = ssc.ok_or_else(|| SmError("AES SM decrypt requires SSC".into()))?;
+        let iv = self.iv_from_ssc(ssc)?;
         self.cipher
             .decrypt(edata, &self.ks_enc, Some(&iv), BlockCipherMode::Cbc)
-            .expect("AES CBC decrypt")
+            .map_err(|e| SmError(format!("AES CBC decrypt: {e}")))
     }
 
-    fn mac(&self, data: &[u8]) -> Vec<u8> {
+    fn mac(&self, data: &[u8]) -> Result<Vec<u8>, SmError> {
         self.cipher
             .calculate_cmac(data, &self.ks_mac)
-            .expect("AES CMAC")
+            .map_err(|e| SmError(format!("AES CMAC: {e}")))
     }
 }
 
@@ -93,8 +94,8 @@ mod tests {
         let c = build();
         let s = ssc();
         let pt = vec![0x55u8; 32];
-        let ct = c.encrypt(&pt, Some(&s));
-        let pt2 = c.decrypt(&ct, Some(&s));
+        let ct = c.encrypt(&pt, Some(&s)).unwrap();
+        let pt2 = c.decrypt(&ct, Some(&s)).unwrap();
         assert_eq!(pt2, pt);
     }
 
@@ -104,20 +105,23 @@ mod tests {
         let s1 = Ssc::new(&[0x01], 128).unwrap();
         let s2 = Ssc::new(&[0x02], 128).unwrap();
         let pt = vec![0x55u8; 16];
-        assert_ne!(c.encrypt(&pt, Some(&s1)), c.encrypt(&pt, Some(&s2)));
+        assert_ne!(
+            c.encrypt(&pt, Some(&s1)).unwrap(),
+            c.encrypt(&pt, Some(&s2)).unwrap()
+        );
     }
 
     #[test]
     fn mac_is_8_bytes() {
         let c = build();
-        let mac = c.mac(&[0u8; 16]);
+        let mac = c.mac(&[0u8; 16]).unwrap();
         assert_eq!(mac.len(), 8);
     }
 
     #[test]
-    #[should_panic(expected = "requires SSC")]
-    fn encrypt_without_ssc_panics() {
+    fn encrypt_without_ssc_errors() {
         let c = build();
-        let _ = c.encrypt(&[0u8; 16], None);
+        let err = c.encrypt(&[0u8; 16], None).unwrap_err();
+        assert!(err.0.contains("requires SSC"));
     }
 }

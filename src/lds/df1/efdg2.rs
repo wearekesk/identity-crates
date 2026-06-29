@@ -145,7 +145,10 @@ impl EfDG2 {
         }
 
         let data = &first.value;
-        if data.len() < 4
+        // The fixed header up to (and including) the pose-angle-uncertainty
+        // field occupies 34 bytes; `extract` indexes the slice directly, so a
+        // shorter block would panic. Validate the minimum length upfront.
+        if data.len() < 34
             || data[0] != b'F'
             || data[1] != b'A'
             || data[2] != b'C'
@@ -185,6 +188,12 @@ impl EfDG2 {
         offset += 3;
         // Skip 8 bytes per feature point (comment: features not handled).
         offset += (self.nr_feature_points as usize).saturating_mul(8);
+
+        // The remaining static image-information fields occupy 12 bytes; a
+        // truncated block would otherwise panic inside `extract`.
+        if data.len() < offset + 12 {
+            return Err(EfParseError::new("Truncated biometric data block"));
+        }
 
         self.face_image_type = extract(data, offset, offset + 1);
         offset += 1;

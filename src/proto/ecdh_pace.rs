@@ -265,19 +265,17 @@ fn scalar_nonzero_from_bytes(bytes: &[u8]) -> Result<NonZeroScalar<NistP256>, EC
 }
 
 fn scalar_from_bytes(bytes: &[u8]) -> Scalar {
-    let value = BigUint::from_bytes_be(bytes);
-    // n = order of P-256; use the scalar's standard reduction.
+    // Right-align the big-endian input into a fixed 32-byte buffer, then let
+    // the scalar's standard reduction wrap it modulo n (the P-256 order).
+    // Working on the slice directly avoids the BigUint round-trip allocation.
     let mut buf = [0u8; 32];
-    let bytes_be = value.to_bytes_be();
-    if bytes_be.len() <= 32 {
-        buf[32 - bytes_be.len()..].copy_from_slice(&bytes_be);
+    if bytes.len() <= 32 {
+        buf[32 - bytes.len()..].copy_from_slice(bytes);
     } else {
-        // Reduce by taking the last 32 bytes (then the Scalar constructor
-        // will further reduce). This branch is unreachable with well-formed
-        // PACE nonces (16 bytes), but kept defensive.
-        buf.copy_from_slice(&bytes_be[bytes_be.len() - 32..]);
+        // Take the least-significant 32 bytes (then reduce). Unreachable with
+        // well-formed PACE nonces (16 bytes), but kept defensive.
+        buf.copy_from_slice(&bytes[bytes.len() - 32..]);
     }
-    // `Scalar::reduce` wraps any 32-byte input to the field.
     <Scalar as elliptic_curve::ops::Reduce<p256::U256>>::reduce_bytes(&buf.into())
 }
 

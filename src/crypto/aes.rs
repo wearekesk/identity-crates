@@ -315,6 +315,7 @@ pub fn get_cipher(key_length: KeyLength) -> AesCipher {
 /// # Panics
 /// Panics if `key.len()` is not 16, 24, or 32.
 fn aes_cbc_encrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8> {
+    let schedule = AesKeySchedule::new(key);
     let mut prev = *iv;
     let mut output = vec![0u8; data.len()];
 
@@ -327,7 +328,7 @@ fn aes_cbc_encrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8
         for i in 0..AES_BLOCK_SIZE {
             block[i] = in_blk[i] ^ prev[i];
         }
-        aes_encrypt_block_inplace(key, &mut block);
+        schedule.encrypt_block_inplace(&mut block);
         out_blk.copy_from_slice(&block);
         prev = block;
     }
@@ -336,6 +337,7 @@ fn aes_cbc_encrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8
 
 /// Decrypts `data` using AES in CBC mode.
 fn aes_cbc_decrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8> {
+    let schedule = AesKeySchedule::new(key);
     let mut prev = *iv;
     let mut output = vec![0u8; data.len()];
 
@@ -345,7 +347,7 @@ fn aes_cbc_decrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8
     {
         let cipher_block: [u8; AES_BLOCK_SIZE] = in_blk.try_into().unwrap();
         let mut block = cipher_block;
-        aes_decrypt_block_inplace(key, &mut block);
+        schedule.decrypt_block_inplace(&mut block);
         for i in 0..AES_BLOCK_SIZE {
             out_blk[i] = block[i] ^ prev[i];
         }
@@ -356,10 +358,11 @@ fn aes_cbc_decrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8
 
 /// Encrypts `data` using AES in ECB mode (no IV).
 fn aes_ecb_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
+    let schedule = AesKeySchedule::new(key);
     let mut output = data.to_vec();
     for block in output.chunks_exact_mut(AES_BLOCK_SIZE) {
         let mut arr: [u8; AES_BLOCK_SIZE] = block.try_into().unwrap();
-        aes_encrypt_block_inplace(key, &mut arr);
+        schedule.encrypt_block_inplace(&mut arr);
         block.copy_from_slice(&arr);
     }
     output
@@ -367,34 +370,57 @@ fn aes_ecb_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
 
 /// Decrypts `data` using AES in ECB mode.
 fn aes_ecb_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
+    let schedule = AesKeySchedule::new(key);
     let mut output = data.to_vec();
     for block in output.chunks_exact_mut(AES_BLOCK_SIZE) {
         let mut arr: [u8; AES_BLOCK_SIZE] = block.try_into().unwrap();
-        aes_decrypt_block_inplace(key, &mut arr);
+        schedule.decrypt_block_inplace(&mut arr);
         block.copy_from_slice(&arr);
     }
     output
 }
 
-/// Encrypts a single 16-byte block in-place, dispatching on `key.len()`.
-fn aes_encrypt_block_inplace(key: &[u8], block: &mut [u8; AES_BLOCK_SIZE]) {
-    let ga = GenericArray::from_mut_slice(block);
-    match key.len() {
-        16 => Aes128::new(GenericArray::from_slice(key)).encrypt_block(ga),
-        24 => Aes192::new(GenericArray::from_slice(key)).encrypt_block(ga),
-        32 => Aes256::new(GenericArray::from_slice(key)).encrypt_block(ga),
-        n => panic!("Invalid AES key length: {n}"),
-    }
+/// A key-scheduled AES cipher, dispatching on key length. Built once per
+/// message so the (relatively expensive) key expansion is not repeated for
+/// every 16-byte block in the CBC/ECB loops.
+enum AesKeySchedule {
+    A128(Box<Aes128>),
+    A192(Box<Aes192>),
+    A256(Box<Aes256>),
 }
 
-/// Decrypts a single 16-byte block in-place.
-fn aes_decrypt_block_inplace(key: &[u8], block: &mut [u8; AES_BLOCK_SIZE]) {
-    let ga = GenericArray::from_mut_slice(block);
-    match key.len() {
-        16 => Aes128::new(GenericArray::from_slice(key)).decrypt_block(ga),
-        24 => Aes192::new(GenericArray::from_slice(key)).decrypt_block(ga),
-        32 => Aes256::new(GenericArray::from_slice(key)).decrypt_block(ga),
-        n => panic!("Invalid AES key length: {n}"),
+impl AesKeySchedule {
+    /// Expands `key` into a reusable schedule.
+    ///
+    /// # Panics
+    /// Panics if `key.len()` is not 16, 24, or 32.
+    fn new(key: &[u8]) -> Self {
+        match key.len() {
+            16 => Self::A128(Box::new(Aes128::new(GenericArray::from_slice(key)))),
+            24 => Self::A192(Box::new(Aes192::new(GenericArray::from_slice(key)))),
+            32 => Self::A256(Box::new(Aes256::new(GenericArray::from_slice(key)))),
+            n => panic!("Invalid AES key length: {n}"),
+        }
+    }
+
+    /// Encrypts a single 16-byte block in-place.
+    fn encrypt_block_inplace(&self, block: &mut [u8; AES_BLOCK_SIZE]) {
+        let ga = GenericArray::from_mut_slice(block);
+        match self {
+            Self::A128(c) => c.encrypt_block(ga),
+            Self::A192(c) => c.encrypt_block(ga),
+            Self::A256(c) => c.encrypt_block(ga),
+        }
+    }
+
+    /// Decrypts a single 16-byte block in-place.
+    fn decrypt_block_inplace(&self, block: &mut [u8; AES_BLOCK_SIZE]) {
+        let ga = GenericArray::from_mut_slice(block);
+        match self {
+            Self::A128(c) => c.decrypt_block(ga),
+            Self::A192(c) => c.decrypt_block(ga),
+            Self::A256(c) => c.decrypt_block(ga),
+        }
     }
 }
 

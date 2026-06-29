@@ -122,10 +122,43 @@ pub trait StringDateExt {
     /// assert_eq!(d2.year(), 1985);
     /// ```
     fn parse_date(&self, future_date: bool) -> Result<NaiveDate, StringExtError>;
+
+    /// Like [`parse_date_yymmdd`](StringDateExt::parse_date_yymmdd) but uses the
+    /// caller-supplied `reference` date for two-digit-year disambiguation
+    /// instead of the system clock.
+    ///
+    /// This is the deterministic core; prefer it whenever you need reproducible
+    /// behaviour (e.g. in tests) or want to avoid depending on `Local::now()`.
+    fn parse_date_yymmdd_with_ref(
+        &self,
+        future_date: bool,
+        reference: NaiveDate,
+    ) -> Result<NaiveDate, StringExtError>;
+
+    /// Like [`parse_date`](StringDateExt::parse_date) but uses the
+    /// caller-supplied `reference` date for two-digit-year disambiguation
+    /// instead of the system clock.
+    fn parse_date_with_ref(
+        &self,
+        future_date: bool,
+        reference: NaiveDate,
+    ) -> Result<NaiveDate, StringExtError>;
 }
 
 impl StringDateExt for str {
     fn parse_date_yymmdd(&self, future_date: bool) -> Result<NaiveDate, StringExtError> {
+        self.parse_date_yymmdd_with_ref(future_date, Local::now().naive_local().date())
+    }
+
+    fn parse_date(&self, future_date: bool) -> Result<NaiveDate, StringExtError> {
+        self.parse_date_with_ref(future_date, Local::now().naive_local().date())
+    }
+
+    fn parse_date_yymmdd_with_ref(
+        &self,
+        future_date: bool,
+        reference: NaiveDate,
+    ) -> Result<NaiveDate, StringExtError> {
         // Strip non-digit characters, ''))
         let compact: String = self.chars().filter(|c| c.is_ascii_digit()).collect();
 
@@ -146,7 +179,7 @@ impl StringDateExt for str {
             .map_err(|_| StringExtError::DateParse("Invalid day digits".to_string()))?;
 
         // Determine the disambiguation threshold (max_year / max_month)
-        let now = Local::now().naive_local().date();
+        let now = reference;
         let (max_year, max_month) = if future_date {
             // Look ~20 years and 5 months into the future (mirrors logic)
             let future_months = now.month0() as i32 + 5;
@@ -168,7 +201,11 @@ impl StringDateExt for str {
         })
     }
 
-    fn parse_date(&self, future_date: bool) -> Result<NaiveDate, StringExtError> {
+    fn parse_date_with_ref(
+        &self,
+        future_date: bool,
+        reference: NaiveDate,
+    ) -> Result<NaiveDate, StringExtError> {
         let raw = self.trim();
         if raw.is_empty() {
             return Err(StringExtError::DateParse("Empty date string".to_string()));
@@ -177,7 +214,7 @@ impl StringDateExt for str {
         let cleaned: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
 
         match cleaned.len() {
-            6 => cleaned.parse_date_yymmdd(future_date),
+            6 => cleaned.parse_date_yymmdd_with_ref(future_date, reference),
             8 => {
                 let year: i32 = cleaned[0..4]
                     .parse()
@@ -254,6 +291,31 @@ mod tests {
     }
 
     // --- parse_date_yymmdd ---
+
+    #[test]
+    fn with_ref_is_deterministic_around_threshold() {
+        // Pin the reference date so the two-digit-year disambiguation does not
+        // depend on the system clock.
+        let reference = NaiveDate::from_ymd_opt(2030, 6, 15).unwrap();
+
+        // "29" as a birth date with a 2030 reference is in the past → 2029.
+        let d = "290101"
+            .parse_date_yymmdd_with_ref(false, reference)
+            .unwrap();
+        assert_eq!(d.year(), 2029);
+
+        // "31" exceeds the reference year → rolls back a century → 1931.
+        let d = "310101"
+            .parse_date_yymmdd_with_ref(false, reference)
+            .unwrap();
+        assert_eq!(d.year(), 1931);
+
+        // parse_date_with_ref routes 6-digit input through the same logic.
+        let d = "31-01-01"
+            .parse_date_with_ref(false, reference)
+            .unwrap();
+        assert_eq!(d.year(), 1931);
+    }
 
     #[test]
     fn past_birth_date_1900s() {

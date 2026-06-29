@@ -61,7 +61,7 @@ impl<C: SmCipher> MrtdSM<C> {
             Some(data) if !data.is_empty() => {
                 let block_len = self.block_len()?;
                 let padded = iso9797::pad(data, block_len);
-                let edata = self.cipher.encrypt(&padded, Some(&self.ssc));
+                let edata = self.cipher.encrypt(&padded, Some(&self.ssc))?;
                 let out = if cmd.ins == ins::READ_BINARY_EXT {
                     sm::do85(&edata)
                 } else {
@@ -115,7 +115,7 @@ impl<C: SmCipher> MrtdSM<C> {
         let is_do87 = tag == TAG_DO87;
         let padded = !is_do87 || dtv.value[0] == 0x01;
         let cipher_input = if is_do87 { &dtv.value[1..] } else { &dtv.value[..] };
-        let mut data = self.cipher.decrypt(cipher_input, Some(&self.ssc));
+        let mut data = self.cipher.decrypt(cipher_input, Some(&self.ssc))?;
         if padded {
             data = iso9797::unpad(&data).to_vec();
         }
@@ -180,7 +180,7 @@ impl<C: SmCipher> SecureMessaging for MrtdSM<C> {
         let do97 = sm::do97(masked.ne);
         let m = self.generate_m(&masked, &data_do, &do97)?;
         let n = self.generate_n(&m)?;
-        let cc = self.cipher.mac(&n);
+        let cc = self.cipher.mac(&n)?;
         let do8e = sm::do8e(&cc);
 
         let mut combined = data_do;
@@ -214,7 +214,7 @@ impl<C: SmCipher> SecureMessaging for MrtdSM<C> {
             .as_ref()
             .ok_or_else(|| SmError("Missing response data".into()))?;
         let k = self.generate_k(&body[..do8e_start])?;
-        let cc = self.cipher.mac(&k);
+        let cc = self.cipher.mac(&k)?;
         if cc != do8e.value {
             return Err(SmError("Invalid MAC of response APDU".into()));
         }
@@ -239,7 +239,7 @@ mod tests {
         // ICAO 9303 p11 Appendix D.3 BAC session keys (used across the book).
         let k_enc = hex::decode("979EC13B1CBFE9DCD01AB0FED307EAE5").unwrap();
         let k_mac = hex::decode("F1CB1F1FB5ADF208806B89DC579DC1F8").unwrap();
-        let cipher = DesSmCipher::new(k_enc, k_mac);
+        let cipher = DesSmCipher::new(k_enc, k_mac).unwrap();
         let ssc = Ssc::new(&hex::decode("887022120C06C226").unwrap(), 64).unwrap();
         MrtdSM::new(cipher, ssc)
     }
@@ -318,7 +318,7 @@ mod tests {
         let padded = iso9797::pad(&plaintext, DesedeCipher::BLOCK_SIZE);
         // Use reader's cipher to produce ciphertext with the (incremented) SSC.
         reader.ssc.increment();
-        let ct = reader.cipher.encrypt(&padded, Some(&reader.ssc));
+        let ct = reader.cipher.encrypt(&padded, Some(&reader.ssc)).unwrap();
         // Reset to a fresh reader so unprotect performs its own increment.
         let mut reader = build_sm();
 
@@ -332,7 +332,7 @@ mod tests {
         let mut k = reader.ssc.to_bytes();
         k.extend_from_slice(&body);
         let k_padded = iso9797::pad(&k, DesedeCipher::BLOCK_SIZE);
-        let cc = reader.cipher.mac(&k_padded);
+        let cc = reader.cipher.mac(&k_padded).unwrap();
         // Rewind the SSC so unprotect re-increments it back to the same point.
         reader.ssc = build_sm().ssc;
 

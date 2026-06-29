@@ -6,9 +6,14 @@
 //! encrypt / decrypt / mac primitives.
 
 use crate::lds::asn1_object_identifiers::CipherAlgorithm;
+use crate::proto::iso7816::sm::SmError;
 use crate::proto::ssc::Ssc;
 
 /// Abstract SM cipher — mirrors the `SMCipher` class.
+///
+/// All cryptographic operations return a [`Result`] so that an invalid key
+/// length, a missing SSC, or malformed input surfaces as a recoverable error
+/// rather than panicking inside a library.
 pub trait SmCipher {
     /// Returns the algorithm family of this cipher.
     fn cipher_algorithm(&self) -> CipherAlgorithm;
@@ -17,16 +22,16 @@ pub trait SmCipher {
     ///
     /// `data` must already be padded as required by the concrete cipher.
     /// `ssc` is consumed as the IV where applicable.
-    fn encrypt(&self, data: &[u8], ssc: Option<&Ssc>) -> Vec<u8>;
+    fn encrypt(&self, data: &[u8], ssc: Option<&Ssc>) -> Result<Vec<u8>, SmError>;
 
     /// Decrypts `edata` from a Secure Messaging payload.
     ///
     /// The caller is responsible for any post-decryption unpadding. `ssc` is
     /// consumed as the IV where applicable.
-    fn decrypt(&self, edata: &[u8], ssc: Option<&Ssc>) -> Vec<u8>;
+    fn decrypt(&self, edata: &[u8], ssc: Option<&Ssc>) -> Result<Vec<u8>, SmError>;
 
     /// Computes the MAC of `data` using this cipher's MAC primitive.
     ///
     /// `data` must already be padded as required.
-    fn mac(&self, data: &[u8]) -> Vec<u8>;
+    fn mac(&self, data: &[u8]) -> Result<Vec<u8>, SmError>;
 }

@@ -150,9 +150,9 @@ pub fn establish_sm(
     ks_enc: &[u8],
     ks_mac: &[u8],
     ssc: DesedeSSC,
-) -> MrtdSM<DesSmCipher> {
-    let cipher = DesSmCipher::new(ks_enc.to_vec(), ks_mac.to_vec());
-    MrtdSM::new(cipher, ssc.0)
+) -> Result<MrtdSM<DesSmCipher>, BacError> {
+    let cipher = DesSmCipher::new(ks_enc, ks_mac.to_vec()).map_err(|e| BacError(e.to_string()))?;
+    Ok(MrtdSM::new(cipher, ssc.0))
 }
 
 // ---------------------------------------------------------------------------
@@ -290,7 +290,7 @@ mod tests {
         let kenc = hex("979EC13B1CBFE9DCD01AB0FED307EAE5");
         let kmac = hex("F1CB1F1FB5ADF208806B89DC579DC1F8");
         let ssc = calculate_ssc(&hex("781723860C06C226"), &hex("4608F91988702212")).unwrap();
-        let _sm = establish_sm(&kenc, &kmac, ssc);
+        let _sm = establish_sm(&kenc, &kmac, ssc).unwrap();
     }
 
     #[test]

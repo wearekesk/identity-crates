@@ -15,8 +15,6 @@
 //! - [`DESedePaceSSC`] – 64-bit SSC for 3DES PACE (starts at zero)
 //! - [`AesSSC`]        – 128-bit SSC for AES Secure Messaging (PACE)
 
-use num_bigint::BigUint;
-use num_traits::Zero;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
@@ -39,6 +37,11 @@ pub enum SscError {
     /// `bit_size` must be a multiple of 8.
     #[error("bit_size ({0}) must be a multiple of 8")]
     BitSizeNotMultipleOf8(usize),
+
+    /// `bit_size` exceeds the 128-bit counter width supported by the backing
+    /// `u128` representation.
+    #[error("bit_size ({0}) exceeds the maximum supported width of 128 bits")]
+    BitSizeTooLarge(usize),
 
     /// The provided initial value exceeds the declared `bit_size`.
     #[error(
@@ -67,8 +70,10 @@ pub enum SscError {
 /// ```
 #[derive(Debug, Clone)]
 pub struct Ssc {
-    /// Current counter value.
-    value: BigUint,
+    /// Current counter value. The SSC is at most 128 bits wide (AES block
+    /// size), so a stack-allocated `u128` holds it without any heap allocation
+    /// — important because the counter is incremented on every APDU exchange.
+    value: u128,
     /// Maximum allowed bit width of the counter.
     pub bit_size: usize,
 }
@@ -105,14 +110,28 @@ impl Ssc {
         if bit_size % 8 != 0 {
             return Err(SscError::BitSizeNotMultipleOf8(bit_size));
         }
+        if bit_size > 128 {
+            return Err(SscError::BitSizeTooLarge(bit_size));
+        }
 
-        let value = BigUint::from_bytes_be(ssc);
+        // Fold the big-endian bytes into a u128. Leading zero bytes are
+        // permitted; any value whose magnitude exceeds 128 bits cannot be held.
+        let mut value: u128 = 0;
+        for &b in ssc {
+            if value > (u128::MAX >> 8) {
+                return Err(SscError::ValueTooLarge {
+                    value_bits: 129,
+                    bit_size,
+                });
+            }
+            value = (value << 8) | b as u128;
+        }
 
-        // Check that the value fits in `bit_size` bits.
-        // A BigUint of value 0 has bits() == 0, which always fits.
-        if value.bits() as usize > bit_size {
+        // Check that the value fits in `bit_size` bits (0 always fits).
+        let value_bits = (128 - value.leading_zeros()) as usize;
+        if value_bits > bit_size {
             return Err(SscError::ValueTooLarge {
-                value_bits: value.bits() as usize,
+                value_bits,
                 bit_size,
             });
         }
@@ -149,12 +168,12 @@ impl Ssc {
     /// assert_eq!(ssc.to_bytes(), vec![0xFF]);
     /// ```
     pub fn increment(&mut self) {
-        self.value += 1u8;
-
-        // Wrap at 2^bit_size
-        let max_bits = self.bit_size;
-        if self.value.bits() as usize > max_bits {
-            self.value = BigUint::zero();
+        // Wrapping add handles the full 128-bit case; for narrower counters we
+        // mask back down to `bit_size` bits so the counter wraps at 2^bit_size.
+        self.value = self.value.wrapping_add(1);
+        if self.bit_size < 128 {
+            let mask = (1u128 << self.bit_size) - 1;
+            self.value &= mask;
         }
     }
 
@@ -171,18 +190,9 @@ impl Ssc {
     /// ```
     pub fn to_bytes(&self) -> Vec<u8> {
         let byte_len = self.bit_size / 8;
-        let raw = self.value.to_bytes_be();
-
-        if raw.len() >= byte_len {
-            // Value already fills the full width (or raw is [0] for zero).
-            // Truncate to byte_len from the right in the unlikely overflow case.
-            raw[raw.len().saturating_sub(byte_len)..].to_vec()
-        } else {
-            // Left-pad with zeros to reach byte_len.
-            let mut padded = vec![0u8; byte_len - raw.len()];
-            padded.extend_from_slice(&raw);
-            padded
-        }
+        // The value never exceeds `bit_size` bits, so the most-significant
+        // `16 - byte_len` bytes of the big-endian encoding are always zero.
+        self.value.to_be_bytes()[16 - byte_len..].to_vec()
     }
 }
 

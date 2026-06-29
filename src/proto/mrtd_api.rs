@@ -44,6 +44,8 @@ pub enum MrtdApiError {
     MissingPaceInfo,
     #[error("offset {0} exceeds READ BINARY limit (32767)")]
     OffsetTooLarge(u32),
+    #[error("declared file length {0} exceeds maximum permitted size ({MAX_FILE_LEN})")]
+    FileTooLarge(usize),
     #[error("session establishment failed: {0}")]
     Session(String),
 }
@@ -65,6 +67,11 @@ const HEADER_CHUNK_LEN: u32 = 8;
 /// Chunk size used for subsequent `READ BINARY` calls — leaves headroom for
 /// secure-messaging overhead under a 256-byte chip buffer.
 const BODY_CHUNK_LEN: u32 = 0xDC;
+/// Upper bound on a single elementary file. Standard eMRTD EFs are well under
+/// 1 MiB (typically < 64 KiB); capping the decoded length guards against a
+/// malicious or corrupted chip advertising a huge size and forcing an
+/// unbounded read loop (DoS / OOM).
+const MAX_FILE_LEN: usize = 512 * 1024;
 
 /// ICC-level API handle.
 pub struct MrtdApi<T: Transceiver> {
@@ -166,6 +173,9 @@ impl<T: Transceiver> MrtdApi<T> {
         let decoded = Tlv::decode_tag_and_length(&first)
             .map_err(|e| MrtdApiError::Tlv(e.to_string()))?;
         let total_len = decoded.encoded_len + decoded.length.value;
+        if total_len > MAX_FILE_LEN {
+            return Err(MrtdApiError::FileTooLarge(total_len));
+        }
 
         let mut data = first;
         while data.len() < total_len {

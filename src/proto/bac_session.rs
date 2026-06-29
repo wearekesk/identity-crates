@@ -226,7 +226,7 @@ impl BacSession {
                 let kicc = bac::verify_rnd_ifd_and_extract_kicc(&self.rnd_ifd, &r)?;
                 let ks = bac::calculate_session_keys(&self.kifd, &kicc)?;
                 let ssc = bac::calculate_ssc(&self.rnd_ifd, &rnd_icc)?;
-                let sm = bac::establish_sm(&ks.first, &ks.second, ssc);
+                let sm = bac::establish_sm(&ks.first, &ks.second, ssc)?;
                 self.state = State::Completed(Some(sm));
                 Ok(())
             }
@@ -384,8 +384,16 @@ mod tests {
             _ => panic!("expected Done"),
         };
 
-        // The session keys + SSC should match the spec exactly.
-        assert_eq!(sm.cipher.enc_key, exp_ks_enc);
+        // The session keys + SSC should match the spec exactly. K_enc is no
+        // longer stored as raw bytes, so verify it functionally: the derived
+        // cipher must encrypt identically to one built from the expected K_enc.
+        use crate::proto::iso7816::smcipher::SmCipher as _;
+        let probe = [0u8; 8];
+        let expected_cipher = DesSmCipher::new(&exp_ks_enc, exp_ks_mac.clone()).unwrap();
+        assert_eq!(
+            sm.cipher.encrypt(&probe, None).unwrap(),
+            expected_cipher.encrypt(&probe, None).unwrap(),
+        );
         assert_eq!(sm.cipher.mac_key, exp_ks_mac);
         assert_eq!(sm.ssc().to_bytes(), exp_ssc);
     }

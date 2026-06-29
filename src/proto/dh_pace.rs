@@ -50,6 +50,8 @@ pub static RFC5114_1024_160: Lazy<DhParameterSpec> = Lazy::new(|| {
         )),
         160,
     )
+    // RFC 5114 §2.1 — 160-bit prime-order subgroup order q.
+    .with_subgroup_order(big_hex("F518AA8781A8DF278ABA4E7D64B7CB9D49462353"))
 });
 
 /// RFC 5114 — 2048-bit MODP with 224-bit prime-order subgroup (ICAO id 1).
@@ -83,6 +85,11 @@ pub static RFC5114_2048_224: Lazy<DhParameterSpec> = Lazy::new(|| {
         )),
         224,
     )
+    // RFC 5114 §2.2 — 224-bit prime-order subgroup order q.
+    .with_subgroup_order(big_hex(concat!(
+        "801C0D34C58D93FE997177101F80535A",
+        "4738CEBCBF389A99B36371EB"
+    )))
 });
 
 /// RFC 5114 — 2048-bit MODP with 256-bit prime-order subgroup (ICAO id 2).
@@ -116,6 +123,11 @@ pub static RFC5114_2048_256: Lazy<DhParameterSpec> = Lazy::new(|| {
         )),
         256,
     )
+    // RFC 5114 §2.3 — 256-bit prime-order subgroup order q.
+    .with_subgroup_order(big_hex(concat!(
+        "8CF83642A709A097B447997640129DA2",
+        "99B1A47D1EB3750BA308B0FE64F5FBD3"
+    )))
 });
 
 // ---------------------------------------------------------------------------

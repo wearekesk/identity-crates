@@ -56,9 +56,9 @@ pub struct AAPublicKey {
     enc_pub_key: Vec<u8>,
     /// Inferred key type (RSA when the algorithm OID matches, otherwise ECC).
     key_type: AAPublicKeyType,
-    /// Raw `SubjectPublicKey` bit-string bytes (i.e. the remainder of the
-    /// outer `SubjectPublicKeyInfo` value after the `AlgorithmIdentifier`
-    /// sub-structure).
+    /// The actual `SubjectPublicKey` octets: the BIT STRING content with the
+    /// leading "number of unused bits" byte stripped (i.e. the bare public key,
+    /// not the surrounding `0x03` TLV).
     sub_pub_key_bytes: Vec<u8>,
 }
 
@@ -106,15 +106,24 @@ impl AAPublicKey {
         if tv_alg.encoded_len > tv_pub_key_info.value.len() {
             return Err(AAPublicKeyError::MissingSubjectPublicKey);
         }
-        let sub_pub_key_bytes = tv_pub_key_info.value[tv_alg.encoded_len..].to_vec();
+        let bit_string_tlv = &tv_pub_key_info.value[tv_alg.encoded_len..];
 
-        let first = sub_pub_key_bytes
+        let first = bit_string_tlv
             .first()
             .copied()
             .ok_or(AAPublicKeyError::MissingSubjectPublicKey)?;
         if first != TAG_BIT_STRING {
             return Err(AAPublicKeyError::InvalidSubjectPublicKeyTag(first));
         }
+
+        // Decode the BIT STRING and drop the leading "unused bits" octet so the
+        // accessor exposes the bare public-key bytes rather than the TLV.
+        let bit_string = Tlv::decode(bit_string_tlv)?;
+        let sub_pub_key_bytes = bit_string
+            .value
+            .split_first()
+            .map(|(_unused_bits, key)| key.to_vec())
+            .ok_or(AAPublicKeyError::MissingSubjectPublicKey)?;
 
         Ok(Self {
             enc_pub_key,
@@ -128,7 +137,9 @@ impl AAPublicKey {
         &self.enc_pub_key
     }
 
-    /// Returns the raw `SubjectPublicKey` bit-string bytes.
+    /// Returns the bare `SubjectPublicKey` octets (the BIT STRING content with
+    /// the leading unused-bits byte removed), ready to be parsed as the public
+    /// key itself.
     pub fn raw_subject_public_key(&self) -> &[u8] {
         &self.sub_pub_key_bytes
     }
@@ -169,7 +180,9 @@ mod tests {
         let aa = AAPublicKey::from_bytes(spki.clone()).unwrap();
         assert_eq!(aa.key_type(), AAPublicKeyType::Rsa);
         assert_eq!(aa.to_bytes(), spki.as_slice());
-        assert_eq!(aa.raw_subject_public_key()[0], TAG_BIT_STRING);
+        // The accessor strips the BIT STRING tag/length and the unused-bits
+        // byte (0x00), exposing only the key octets.
+        assert_eq!(aa.raw_subject_public_key(), &[0xAB, 0xCD, 0xEF]);
     }
 
     #[test]
