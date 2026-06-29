@@ -5,8 +5,9 @@
 //! parameter is GF(p) / EC(p), and whether this library currently supports it
 //! (i.e. whether the underlying crypto backend can evaluate it).
 //!
-//! For the Rust port, the `is_supported` flag is set to `true` only for
-//! NIST P-256 (secp256r1), matching the original parity; additional
+//! For the Rust port, the `is_supported` flag is `true` for NIST P-256
+//! (secp256r1, id 12, via [`crate::proto::ecdh_pace`]) and the three RFC 5114
+//! MODP/DH groups (ids 0/1/2, via [`crate::proto::dh_pace`]); additional
 //! parameters can be enabled as the PACE backend gains broader curve support.
 
 use once_cell::sync::Lazy;
@@ -61,9 +62,9 @@ impl std::fmt::Display for DomainParameter {
 /// ICAO 9303 Part 11 §9.5.1 domain parameter table.
 pub static ICAO_DOMAIN_PARAMETERS: Lazy<HashMap<u32, DomainParameter>> = Lazy::new(|| {
     let entries = [
-        DomainParameter { id:  0, name: "1024-bit MODP Group with 160-bit Prime Order Subgroup",  size: 1024, kind: DomainParameterType::Gfp, is_supported: false },
-        DomainParameter { id:  1, name: "2048-bit MODP Group with 224-bit Prime Order Subgroup",  size: 2048, kind: DomainParameterType::Gfp, is_supported: false },
-        DomainParameter { id:  2, name: "2048-bit MODP Group with 256-bit Prime Order Subgroup",  size: 2048, kind: DomainParameterType::Gfp, is_supported: false },
+        DomainParameter { id:  0, name: "1024-bit MODP Group with 160-bit Prime Order Subgroup",  size: 1024, kind: DomainParameterType::Gfp, is_supported: true  },
+        DomainParameter { id:  1, name: "2048-bit MODP Group with 224-bit Prime Order Subgroup",  size: 2048, kind: DomainParameterType::Gfp, is_supported: true  },
+        DomainParameter { id:  2, name: "2048-bit MODP Group with 256-bit Prime Order Subgroup",  size: 2048, kind: DomainParameterType::Gfp, is_supported: true  },
         DomainParameter { id:  8, name: "NIST P-192 (secp192r1)",                                 size:  192, kind: DomainParameterType::Ecp, is_supported: false },
         DomainParameter { id:  9, name: "BrainpoolP192r1",                                        size:  192, kind: DomainParameterType::Ecp, is_supported: false },
         DomainParameter { id: 10, name: "NIST P-224 (secp224r1)",                                 size:  224, kind: DomainParameterType::Ecp, is_supported: false },
@@ -93,13 +94,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn p256_is_the_only_supported_entry() {
-        let supported: Vec<u32> = ICAO_DOMAIN_PARAMETERS
+    fn supported_entries_are_p256_and_rfc5114_dh_groups() {
+        let mut supported: Vec<u32> = ICAO_DOMAIN_PARAMETERS
             .values()
             .filter(|p| p.is_supported)
             .map(|p| p.id)
             .collect();
-        assert_eq!(supported, vec![12]);
+        supported.sort_unstable();
+        // P-256 (12, ECDH) + RFC 5114 MODP/DH groups (0/1/2).
+        assert_eq!(supported, vec![0, 1, 2, 12]);
     }
 
     #[test]

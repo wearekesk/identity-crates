@@ -23,7 +23,11 @@
 //! standard 16-byte AES-CMAC output, matching the reference.
 
 use aes::{Aes128, Aes192, Aes256};
-use cipher::{BlockDecrypt, BlockEncrypt, KeyInit, generic_array::GenericArray};
+use cbc::cipher::block_padding::NoPadding;
+use cipher::{
+    BlockDecrypt, BlockDecryptMut, BlockEncrypt, BlockEncryptMut, KeyInit, KeyIvInit,
+    generic_array::GenericArray,
+};
 use cmac::Cmac;
 use digest::Mac;
 use thiserror::Error;
@@ -315,45 +319,35 @@ pub fn get_cipher(key_length: KeyLength) -> AesCipher {
 /// # Panics
 /// Panics if `key.len()` is not 16, 24, or 32.
 fn aes_cbc_encrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8> {
-    let schedule = AesKeySchedule::new(key);
-    let mut prev = *iv;
-    let mut output = vec![0u8; data.len()];
-
-    for (in_blk, out_blk) in data
-        .chunks_exact(AES_BLOCK_SIZE)
-        .zip(output.chunks_exact_mut(AES_BLOCK_SIZE))
-    {
-        // XOR with previous cipher block (CBC)
-        let mut block = [0u8; AES_BLOCK_SIZE];
-        for i in 0..AES_BLOCK_SIZE {
-            block[i] = in_blk[i] ^ prev[i];
-        }
-        schedule.encrypt_block_inplace(&mut block);
-        out_blk.copy_from_slice(&block);
-        prev = block;
+    // `data` is guaranteed block-aligned by the caller, so `NoPadding` adds
+    // nothing — we delegate the CBC chaining to the vetted `cbc` crate.
+    let iv = GenericArray::from_slice(iv);
+    match key.len() {
+        16 => cbc::Encryptor::<Aes128>::new(GenericArray::from_slice(key), iv)
+            .encrypt_padded_vec_mut::<NoPadding>(data),
+        24 => cbc::Encryptor::<Aes192>::new(GenericArray::from_slice(key), iv)
+            .encrypt_padded_vec_mut::<NoPadding>(data),
+        32 => cbc::Encryptor::<Aes256>::new(GenericArray::from_slice(key), iv)
+            .encrypt_padded_vec_mut::<NoPadding>(data),
+        n => panic!("Invalid AES key length: {n}"),
     }
-    output
 }
 
 /// Decrypts `data` using AES in CBC mode.
 fn aes_cbc_decrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8> {
-    let schedule = AesKeySchedule::new(key);
-    let mut prev = *iv;
-    let mut output = vec![0u8; data.len()];
-
-    for (in_blk, out_blk) in data
-        .chunks_exact(AES_BLOCK_SIZE)
-        .zip(output.chunks_exact_mut(AES_BLOCK_SIZE))
-    {
-        let cipher_block: [u8; AES_BLOCK_SIZE] = in_blk.try_into().unwrap();
-        let mut block = cipher_block;
-        schedule.decrypt_block_inplace(&mut block);
-        for i in 0..AES_BLOCK_SIZE {
-            out_blk[i] = block[i] ^ prev[i];
-        }
-        prev = cipher_block;
+    let iv = GenericArray::from_slice(iv);
+    // `NoPadding` decrypt cannot fail for block-aligned input (which the caller
+    // validates), so the unpad result is infallible here.
+    match key.len() {
+        16 => cbc::Decryptor::<Aes128>::new(GenericArray::from_slice(key), iv)
+            .decrypt_padded_vec_mut::<NoPadding>(data),
+        24 => cbc::Decryptor::<Aes192>::new(GenericArray::from_slice(key), iv)
+            .decrypt_padded_vec_mut::<NoPadding>(data),
+        32 => cbc::Decryptor::<Aes256>::new(GenericArray::from_slice(key), iv)
+            .decrypt_padded_vec_mut::<NoPadding>(data),
+        n => panic!("Invalid AES key length: {n}"),
     }
-    output
+    .expect("CBC NoPadding decrypt of block-aligned data is infallible")
 }
 
 /// Encrypts `data` using AES in ECB mode (no IV).

@@ -18,7 +18,11 @@
 //! Both ciphers use an 8-byte IV (one DES block).
 
 use crate::crypto::iso9797::{DES_BLOCK_SIZE, pad, unpad};
-use cipher::{BlockDecrypt, BlockEncrypt, KeyInit, generic_array::GenericArray};
+use cbc::cipher::block_padding::NoPadding;
+use cipher::{
+    BlockDecrypt, BlockDecryptMut, BlockEncrypt, BlockEncryptMut, KeyInit, KeyIvInit,
+    generic_array::GenericArray,
+};
 use des::{Des, TdesEde3};
 use thiserror::Error;
 
@@ -451,91 +455,32 @@ pub fn desede_decrypt(
 
 /// Single-DES CBC encrypt.  `data` must be block-aligned.
 fn cbc_encrypt_single_des(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
-    let cipher = Des::new(GenericArray::from_slice(key));
-    let mut prev = [0u8; DES_BLOCK_SIZE];
-    prev.copy_from_slice(iv);
-    let mut output = vec![0u8; data.len()];
-    for (in_blk, out_blk) in data
-        .chunks_exact(DES_BLOCK_SIZE)
-        .zip(output.chunks_exact_mut(DES_BLOCK_SIZE))
-    {
-        let mut b = [0u8; DES_BLOCK_SIZE];
-        for i in 0..DES_BLOCK_SIZE {
-            b[i] = in_blk[i] ^ prev[i];
-        }
-        let mut ga = *GenericArray::from_slice(&b);
-        cipher.encrypt_block(&mut ga);
-        out_blk.copy_from_slice(&ga);
-        prev.copy_from_slice(&ga);
-    }
-    output
+    // `data` is block-aligned by the caller, so `NoPadding` is a no-op and the
+    // CBC chaining is delegated to the vetted `cbc` crate.
+    cbc::Encryptor::<Des>::new(GenericArray::from_slice(key), GenericArray::from_slice(iv))
+        .encrypt_padded_vec_mut::<NoPadding>(data)
 }
 
 /// Single-DES CBC decrypt.  `data` must be block-aligned.
 fn cbc_decrypt_single_des(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
-    let cipher = Des::new(GenericArray::from_slice(key));
-    let mut prev = [0u8; DES_BLOCK_SIZE];
-    prev.copy_from_slice(iv);
-    let mut output = vec![0u8; data.len()];
-    for (in_blk, out_blk) in data
-        .chunks_exact(DES_BLOCK_SIZE)
-        .zip(output.chunks_exact_mut(DES_BLOCK_SIZE))
-    {
-        let cipher_block = in_blk; // save before overwriting
-        let mut ga = *GenericArray::from_slice(in_blk);
-        cipher.decrypt_block(&mut ga);
-        for i in 0..DES_BLOCK_SIZE {
-            out_blk[i] = ga[i] ^ prev[i];
-        }
-        prev.copy_from_slice(cipher_block);
-    }
-    output
+    cbc::Decryptor::<Des>::new(GenericArray::from_slice(key), GenericArray::from_slice(iv))
+        .decrypt_padded_vec_mut::<NoPadding>(data)
+        .expect("CBC NoPadding decrypt of block-aligned data is infallible")
 }
 
 /// 3DES CBC encrypt (EDE order: Ka-enc, Kb-dec, Kc-enc).  `data` must be block-aligned.
 ///
 /// The 24-byte `key` is laid out as `[Ka(8) | Kb(8) | Kc(8)]`.
-/// We manually apply the EDE sequence per block using the `TdesEde3` cipher.
 fn cbc_encrypt_3des(key: &[u8; 24], iv: &[u8], data: &[u8]) -> Vec<u8> {
-    let cipher = TdesEde3::new(GenericArray::from_slice(key));
-    let mut prev = [0u8; DES_BLOCK_SIZE];
-    prev.copy_from_slice(iv);
-    let mut output = vec![0u8; data.len()];
-    for (in_blk, out_blk) in data
-        .chunks_exact(DES_BLOCK_SIZE)
-        .zip(output.chunks_exact_mut(DES_BLOCK_SIZE))
-    {
-        let mut b = [0u8; DES_BLOCK_SIZE];
-        for i in 0..DES_BLOCK_SIZE {
-            b[i] = in_blk[i] ^ prev[i];
-        }
-        let mut ga = *GenericArray::from_slice(&b);
-        cipher.encrypt_block(&mut ga);
-        out_blk.copy_from_slice(&ga);
-        prev.copy_from_slice(&ga);
-    }
-    output
+    cbc::Encryptor::<TdesEde3>::new(GenericArray::from_slice(key), GenericArray::from_slice(iv))
+        .encrypt_padded_vec_mut::<NoPadding>(data)
 }
 
 /// 3DES CBC decrypt.  `data` must be block-aligned.
 fn cbc_decrypt_3des(key: &[u8; 24], iv: &[u8], data: &[u8]) -> Vec<u8> {
-    let cipher = TdesEde3::new(GenericArray::from_slice(key));
-    let mut prev = [0u8; DES_BLOCK_SIZE];
-    prev.copy_from_slice(iv);
-    let mut output = vec![0u8; data.len()];
-    for (in_blk, out_blk) in data
-        .chunks_exact(DES_BLOCK_SIZE)
-        .zip(output.chunks_exact_mut(DES_BLOCK_SIZE))
-    {
-        let cipher_block: [u8; DES_BLOCK_SIZE] = in_blk.try_into().unwrap();
-        let mut ga = *GenericArray::from_slice(in_blk);
-        cipher.decrypt_block(&mut ga);
-        for i in 0..DES_BLOCK_SIZE {
-            out_blk[i] = ga[i] ^ prev[i];
-        }
-        prev = cipher_block;
-    }
-    output
+    cbc::Decryptor::<TdesEde3>::new(GenericArray::from_slice(key), GenericArray::from_slice(iv))
+        .decrypt_padded_vec_mut::<NoPadding>(data)
+        .expect("CBC NoPadding decrypt of block-aligned data is infallible")
 }
 
 /// 3DES ECB encrypt – single block.

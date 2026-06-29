@@ -241,4 +241,14 @@ mod tests {
         assert_eq!(info.protocol.token_agreement_algorithm, TokenAgreementAlgo::Dh);
         assert!(!info.is_pace_domain_parameter_supported);
     }
+
+    #[test]
+    fn dh_protocol_with_gfp_param_is_supported() {
+        // id-PACE-DH-GM-AES-CBC-CMAC-128 with a GF(p) RFC 5114 group (id 0).
+        let oid: &[u8] = &[0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x01, 0x02];
+        let der = build_pace_info(oid, 2, Some(0));
+        let info = PaceInfo::from_der(&der).unwrap();
+        assert_eq!(info.protocol.token_agreement_algorithm, TokenAgreementAlgo::Dh);
+        assert!(info.is_pace_domain_parameter_supported);
+    }
 }

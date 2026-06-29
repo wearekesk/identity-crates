@@ -17,7 +17,8 @@
 //! - ISO/IEC 9797-1:2011
 //! - ICAO Doc 9303 Part 11, Section 9.8.6
 
-use cipher::{BlockDecrypt, BlockEncrypt, KeyInit};
+use cbc::cipher::block_padding::NoPadding;
+use cipher::{BlockDecrypt, BlockEncrypt, BlockEncryptMut, KeyInit, KeyIvInit};
 use des::Des;
 use thiserror::Error;
 
@@ -182,26 +183,10 @@ pub fn mac_alg3(key: &[u8], msg: &[u8], pad_msg: bool) -> Result<Vec<u8>, Iso979
 fn cbc_encrypt_des(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
     use cipher::generic_array::GenericArray;
 
-    let cipher = Des::new(GenericArray::from_slice(key));
-    let mut prev_block = [0u8; DES_BLOCK_SIZE];
-    prev_block.copy_from_slice(iv);
-
-    let mut output = vec![0u8; data.len()];
-    for (in_block, out_block) in data
-        .chunks_exact(DES_BLOCK_SIZE)
-        .zip(output.chunks_exact_mut(DES_BLOCK_SIZE))
-    {
-        // XOR with previous cipher block (CBC)
-        let mut block = [0u8; DES_BLOCK_SIZE];
-        for i in 0..DES_BLOCK_SIZE {
-            block[i] = in_block[i] ^ prev_block[i];
-        }
-        let mut block_ga = *GenericArray::from_slice(&block);
-        cipher.encrypt_block(&mut block_ga);
-        out_block.copy_from_slice(&block_ga);
-        prev_block.copy_from_slice(&block_ga);
-    }
-    output
+    // `data` is block-aligned by the caller, so `NoPadding` is a no-op; the CBC
+    // chaining is delegated to the vetted `cbc` crate.
+    cbc::Encryptor::<Des>::new(GenericArray::from_slice(key), GenericArray::from_slice(iv))
+        .encrypt_padded_vec_mut::<NoPadding>(data)
 }
 
 /// Encrypts a single 8-byte block using single DES in ECB mode.
