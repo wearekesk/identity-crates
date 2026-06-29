@@ -47,9 +47,9 @@ impl PaceInfo {
         sequence
             .parse(|p| {
                 // --- protocol OID ---
-                let oid: ObjectIdentifier = p
-                    .read_element()
-                    .map_err(|_| EfParseError::new("Invalid structure of PaceInfo. Expected OBJECT IDENTIFIER."))?;
+                let oid: ObjectIdentifier = p.read_element().map_err(|_| {
+                    EfParseError::new("Invalid structure of PaceInfo. Expected OBJECT IDENTIFIER.")
+                })?;
                 let oid_string = oid.to_string();
                 let registry = Asn1ObjectIdentifierType::instance();
                 let oie = registry
@@ -79,18 +79,13 @@ impl PaceInfo {
                     None
                 } else {
                     Some(p.read_element().map_err(|_| {
-                        EfParseError::new(
-                            "Invalid parameterId in PaceInfo. Expected INTEGER.",
-                        )
+                        EfParseError::new("Invalid parameterId in PaceInfo. Expected INTEGER.")
                     })?)
                 };
 
                 let is_supported = parameter_id
                     .map(|id| {
-                        check_domain_parameter_supported(
-                            id,
-                            protocol.token_agreement_algorithm,
-                        )
+                        check_domain_parameter_supported(id, protocol.token_agreement_algorithm)
                     })
                     .unwrap_or(false);
 
@@ -142,9 +137,7 @@ fn check_domain_parameter_supported(id: i64, algo: TokenAgreementAlgo) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lds::asn1_object_identifiers::{
-        CipherAlgorithm, KeyLength, MappingType,
-    };
+    use crate::lds::asn1_object_identifiers::{CipherAlgorithm, KeyLength, MappingType};
 
     /// Hand-builds a DER PACEInfo SEQUENCE for testing.
     ///
@@ -251,7 +244,10 @@ mod tests {
         // parameter_id = 12 is ECP-based, so DH (GF(p)) is a mismatch.
         let der = build_pace_info(oid, 2, Some(12));
         let info = PaceInfo::from_der(&der).unwrap();
-        assert_eq!(info.protocol.token_agreement_algorithm, TokenAgreementAlgo::Dh);
+        assert_eq!(
+            info.protocol.token_agreement_algorithm,
+            TokenAgreementAlgo::Dh
+        );
         assert!(!info.is_pace_domain_parameter_supported);
     }
 
@@ -261,7 +257,10 @@ mod tests {
         let oid: &[u8] = &[0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x01, 0x02];
         let der = build_pace_info(oid, 2, Some(0));
         let info = PaceInfo::from_der(&der).unwrap();
-        assert_eq!(info.protocol.token_agreement_algorithm, TokenAgreementAlgo::Dh);
+        assert_eq!(
+            info.protocol.token_agreement_algorithm,
+            TokenAgreementAlgo::Dh
+        );
         assert!(info.is_pace_domain_parameter_supported);
     }
 }

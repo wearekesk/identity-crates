@@ -3,7 +3,7 @@
 //! The reference stores the payload verbatim; full validation requires a
 //! CMS / `SignedData` decoder that is out of scope for this library.
 
-use crate::lds::ef::{ElementaryFile, EfParseError};
+use crate::lds::ef::{EfParseError, ElementaryFile};
 
 /// EF.SOD file ID.
 pub const EF_SOD_FID: u16 = 0x011D;

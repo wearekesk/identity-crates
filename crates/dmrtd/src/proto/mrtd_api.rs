@@ -19,9 +19,7 @@ use crate::proto::bac_session::{BacAction, BacSession};
 use crate::proto::dba_key::DBAKey;
 use crate::proto::iso7816::command_apdu::{CommandApdu, CommandApduError};
 use crate::proto::iso7816::iso7816::{cla, ins, select_file_p1, select_file_p2};
-use crate::proto::iso7816::response_apdu::{
-    ResponseApdu, ResponseApduError, StatusWord,
-};
+use crate::proto::iso7816::response_apdu::{ResponseApdu, ResponseApduError, StatusWord};
 use crate::proto::iso7816::sm::SecureMessaging;
 use crate::proto::pace_session::{PaceAction, PaceSession};
 
@@ -135,10 +133,7 @@ impl<T: Transceiver> MrtdApi<T> {
 
     /// Sends `INTERNAL AUTHENTICATE` with the given 8-byte challenge and
     /// returns the signature bytes.
-    pub fn active_authenticate(
-        &mut self,
-        challenge: &[u8],
-    ) -> Result<Vec<u8>, MrtdApiError> {
+    pub fn active_authenticate(&mut self, challenge: &[u8]) -> Result<Vec<u8>, MrtdApiError> {
         if challenge.len() != 8 {
             return Err(MrtdApiError::InvalidChallengeLen(challenge.len()));
         }
@@ -170,8 +165,8 @@ impl<T: Transceiver> MrtdApi<T> {
         if first.len() < 2 {
             return Err(MrtdApiError::Tlv("not enough bytes for TLV header".into()));
         }
-        let decoded = Tlv::decode_tag_and_length(&first)
-            .map_err(|e| MrtdApiError::Tlv(e.to_string()))?;
+        let decoded =
+            Tlv::decode_tag_and_length(&first).map_err(|e| MrtdApiError::Tlv(e.to_string()))?;
         let total_len = decoded.encoded_len + decoded.length.value;
         if total_len > MAX_FILE_LEN {
             return Err(MrtdApiError::FileTooLarge(total_len));
@@ -312,7 +307,10 @@ impl<T: Transceiver> MrtdApi<T> {
         let mut session = PaceSession::new(access_key, protocol, parameter_id)
             .map_err(|e| MrtdApiError::Session(e.to_string()))?;
         loop {
-            match session.next().map_err(|e| MrtdApiError::Session(e.to_string()))? {
+            match session
+                .next()
+                .map_err(|e| MrtdApiError::Session(e.to_string()))?
+            {
                 PaceAction::SendApdu(apdu) => {
                     let resp = self.transceiver.transceive(&apdu)?;
                     session
@@ -333,9 +331,7 @@ impl<T: Transceiver> MrtdApi<T> {
 
     fn transceive_cmd(&mut self, cmd: &CommandApdu) -> Result<ResponseApdu, MrtdApiError> {
         let wire = match self.sm.as_mut() {
-            Some(sm) => sm
-                .protect(cmd)
-                .map_err(|e| MrtdApiError::Response(e.0))?,
+            Some(sm) => sm.protect(cmd).map_err(|e| MrtdApiError::Response(e.0))?,
             None => cmd.clone(),
         };
         let resp_bytes = self.transceiver.transceive(&wire.to_bytes())?;

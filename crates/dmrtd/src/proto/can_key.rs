@@ -116,10 +116,7 @@ mod tests {
     fn kpi_aes128_value_matches_reference_vector() {
         let key = CanKey::new("123456").unwrap();
         let kpi = key.kpi(CipherAlgorithm::Aes, KeyLength::S128).unwrap();
-        assert_eq!(
-            hex::encode(kpi),
-            "591468cda83d65219cccb8560233600f"
-        );
+        assert_eq!(hex::encode(kpi), "591468cda83d65219cccb8560233600f");
     }
 
     #[test]

@@ -72,7 +72,13 @@ impl AesSmCipher {
         }
         // IV = E(K_enc, SSC)  using ECB (one block).
         self.cipher
-            .encrypt(&ssc.to_bytes(), &self.ks_enc, None, BlockCipherMode::Ecb, false)
+            .encrypt(
+                &ssc.to_bytes(),
+                &self.ks_enc,
+                None,
+                BlockCipherMode::Ecb,
+                false,
+            )
             .map_err(|e| SmError(format!("AES ECB of SSC for IV: {e}")))
     }
 }

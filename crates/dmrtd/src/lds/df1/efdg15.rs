@@ -6,7 +6,7 @@
 
 use crate::crypto::aa_pubkey::AAPublicKey;
 use crate::lds::df1::dg::{parse_dg_content, DgTag};
-use crate::lds::ef::{ElementaryFile, EfParseError};
+use crate::lds::ef::{EfParseError, ElementaryFile};
 
 /// EF.DG15 file ID.
 pub const EF_DG15_FID: u16 = 0x010F;

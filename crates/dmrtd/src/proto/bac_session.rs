@@ -110,11 +110,7 @@ impl BacSession {
 
     /// Creates a session with caller-supplied `RND.IFD` and `K.IFD`. Intended
     /// for tests and replaying recorded traces; do not use in production.
-    pub fn with_random_bytes(
-        key: DBAKey,
-        rnd_ifd: [u8; NONCE_LEN],
-        kifd: [u8; K_LEN],
-    ) -> Self {
+    pub fn with_random_bytes(key: DBAKey, rnd_ifd: [u8; NONCE_LEN], kifd: [u8; K_LEN]) -> Self {
         Self {
             key,
             rnd_ifd,
@@ -239,7 +235,9 @@ impl BacSession {
                 rapdu.status
             )));
         }
-        let data = rapdu.data.ok_or_else(|| BacError("Empty response data".into()))?;
+        let data = rapdu
+            .data
+            .ok_or_else(|| BacError("Empty response data".into()))?;
 
         match std::mem::replace(&mut self.state, State::Start) {
             State::WaitingForChallenge => match Self::handle_challenge(&data) {
@@ -368,7 +366,7 @@ mod tests {
     fn malformed_challenge_poisons_session_not_resets_to_start() {
         let mut s = BacSession::new(icao_d3_key());
         let _ = s.next().unwrap(); // GET CHALLENGE
-        // SW=9000 but a wrong-length body must not rewind the machine to Start.
+                                   // SW=9000 but a wrong-length body must not rewind the machine to Start.
         let resp = build_response(&[0u8; 7]);
         assert!(s.feed_response(&resp).is_err());
         // next() must NOT re-issue GET CHALLENGE; the session is poisoned.

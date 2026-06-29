@@ -150,10 +150,7 @@ mod tests {
 
     #[test]
     fn with_tlvs_preserves_order() {
-        let s = TlvSet::with_tlvs(vec![
-            Tlv::new(0x80, vec![0x01]),
-            Tlv::new(0x81, vec![0x02]),
-        ]);
+        let s = TlvSet::with_tlvs(vec![Tlv::new(0x80, vec![0x01]), Tlv::new(0x81, vec![0x02])]);
         assert_eq!(s.all().len(), 2);
         assert_eq!(s.all()[0].tag, 0x80);
         assert_eq!(s.all()[1].tag, 0x81);

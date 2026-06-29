@@ -11,7 +11,7 @@ use chrono::NaiveDate;
 use crate::extension::string::StringDateExt;
 use crate::extension::uint8list::BytesExt;
 use crate::lds::df1::dg::{parse_dg_content, DgTag};
-use crate::lds::ef::{ElementaryFile, EfParseError};
+use crate::lds::ef::{EfParseError, ElementaryFile};
 use crate::lds::tlv::Tlv;
 
 /// EF.DG11 file ID.
@@ -241,10 +241,7 @@ mod tests {
     #[test]
     fn unknown_tags_are_ignored() {
         // 0x5F22 is a valid 2-byte BER-TLV tag not recognised by DG11.
-        let fields = vec![
-            field(TAG_FULL_NAME, b"NAME"),
-            field(0x5F22, b"UNKNOWN"),
-        ];
+        let fields = vec![field(TAG_FULL_NAME, b"NAME"), field(0x5F22, b"UNKNOWN")];
         let dg = EfDG11::from_bytes(build_dg11(&[0x0E, 0x22], fields)).unwrap();
         assert_eq!(dg.name_of_holder.as_deref(), Some("NAME"));
     }

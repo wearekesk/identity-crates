@@ -11,10 +11,10 @@
 //! }
 //! ```
 
-use rand::Rng;
 use rand::rand_core::UnwrapErr;
-use subtle::ConstantTimeEq;
 use rand::rngs::SysRng;
+use rand::Rng;
+use subtle::ConstantTimeEq;
 
 /// Generates `length` cryptographically secure random bytes.
 ///

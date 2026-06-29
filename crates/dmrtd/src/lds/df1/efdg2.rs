@@ -5,7 +5,7 @@
 //! Template is inspected — this matches the reference behaviour.
 
 use crate::lds::df1::dg::{parse_dg_content, DgTag};
-use crate::lds::ef::{ElementaryFile, EfParseError};
+use crate::lds::ef::{EfParseError, ElementaryFile};
 use crate::lds::tlv::Tlv;
 
 /// EF.DG2 file ID.
@@ -144,9 +144,7 @@ impl EfDG2 {
         {
             return Err(EfParseError::new(format!(
                 "Invalid object tag={:X}, expected {:X} or {:X}",
-                first.tag.value,
-                BIOMETRIC_DATA_BLOCK_TAG,
-                BIOMETRIC_DATA_BLOCK_CONSTRUCTED_TAG
+                first.tag.value, BIOMETRIC_DATA_BLOCK_TAG, BIOMETRIC_DATA_BLOCK_CONSTRUCTED_TAG
             )));
         }
 
@@ -302,9 +300,7 @@ fn extract(data: &[u8], start: usize, end: usize) -> i32 {
             // These fields (notably `feature_mask`) are packed bit masks, so
             // sign-extending bit 23 would wrongly produce a negative value and
             // corrupt mask checks. The result always fits in a positive i32.
-            ((data[start] as i32) << 16)
-                | ((data[start + 1] as i32) << 8)
-                | data[start + 2] as i32
+            ((data[start] as i32) << 16) | ((data[start + 1] as i32) << 8) | data[start + 2] as i32
         }
         4 => i32::from_be_bytes([
             data[start],
@@ -328,7 +324,7 @@ mod tests {
     /// DG2 TLV bytes.
     fn build_minimal_dg2(
         jpeg_payload: &[u8],
-        image_type: u8,  // 0 = JPEG, 1 = JPEG2000
+        image_type: u8, // 0 = JPEG, 1 = JPEG2000
         width: u16,
         height: u16,
     ) -> Vec<u8> {
@@ -347,7 +343,7 @@ mod tests {
         bdb.extend_from_slice(&0u16.to_be_bytes()); // expression
         bdb.extend_from_slice(&[0, 0, 0]); // pose angle
         bdb.extend_from_slice(&[0, 0, 0]); // pose angle uncertainty
-        // (no feature points)
+                                           // (no feature points)
         bdb.push(0); // face_image_type
         bdb.push(image_type); // image_data_type
         bdb.extend_from_slice(&width.to_be_bytes()); // image_width
@@ -496,8 +492,8 @@ mod tests {
         let dg2_bytes = build_minimal_dg2(&[0xFF, 0xD8], 0, 1, 1);
         // Rewrap with wrong outer tag.
         let body_start = 2; // 0x75 tag, then length byte(s) — for short length only
-        // Extract the inner body (skip the outer 0x75 tag + length).
-        // Simpler: rebuild with a different outer tag.
+                            // Extract the inner body (skip the outer 0x75 tag + length).
+                            // Simpler: rebuild with a different outer tag.
         let inner = &dg2_bytes[body_start..];
         let bogus = Tlv::encode(0x76, inner);
         assert!(EfDG2::from_bytes(bogus).is_err());

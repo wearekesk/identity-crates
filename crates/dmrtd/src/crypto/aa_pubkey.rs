@@ -10,9 +10,7 @@ use crate::lds::tlv::{Tlv, TlvError};
 
 /// RSA encryption OID — 1.2.840.113549.1.1.1 — encoded as DER OID bytes
 /// (without the 0x06 tag or the length prefix).
-const RSA_OID_BYTES: &[u8] = &[
-    0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01,
-];
+const RSA_OID_BYTES: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01];
 
 const TAG_SEQUENCE: u32 = 0x30;
 const TAG_OID: u32 = 0x06;

@@ -6,7 +6,7 @@
 //! original bytes.
 
 use crate::lds::df1::dg::{parse_dg_content, DgTag};
-use crate::lds::ef::{ElementaryFile, EfParseError};
+use crate::lds::ef::{EfParseError, ElementaryFile};
 use crate::lds::mrz::Mrz;
 use crate::lds::tlv::Tlv;
 

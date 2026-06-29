@@ -26,7 +26,7 @@ use crate::lds::df1::efdg7::EfDG7;
 use crate::lds::df1::efdg8::EfDG8;
 use crate::lds::df1::efdg9::EfDG9;
 use crate::lds::df1::efsod::EfSOD;
-use crate::lds::ef::{ElementaryFile, EfParseError};
+use crate::lds::ef::{EfParseError, ElementaryFile};
 use crate::lds::efcard_access::EfCardAccess;
 use crate::lds::efcard_security::EfCardSecurity;
 use crate::proto::access_key::AccessKey;
@@ -59,7 +59,9 @@ impl From<MrtdApiError> for PassportError {
                 // map it to the more informative "security status not
                 // satisfied" description.
                 let msg = if sw.sw1 == 0x63 && sw.sw2 == 0xCF {
-                    StatusWord::SECURITY_STATUS_NOT_SATISFIED.description().to_string()
+                    StatusWord::SECURITY_STATUS_NOT_SATISFIED
+                        .description()
+                        .to_string()
                 } else {
                     sw.description().to_string()
                 };
@@ -144,10 +146,7 @@ impl<T: Transceiver> Passport<T> {
 
     /// Issues `INTERNAL AUTHENTICATE` with an 8-byte challenge and returns
     /// the chip's signature.
-    pub fn active_authenticate(
-        &mut self,
-        challenge: &[u8],
-    ) -> Result<Vec<u8>, PassportError> {
+    pub fn active_authenticate(&mut self, challenge: &[u8]) -> Result<Vec<u8>, PassportError> {
         Ok(self.api.active_authenticate(challenge)?)
     }
 
@@ -334,12 +333,9 @@ mod tests {
             struct B;
             impl asn1::SimpleAsn1Writable for B {
                 type Error = asn1::WriteError;
-                const TAG: asn1::Tag =
-                    <asn1::SequenceWriter<'_> as asn1::SimpleAsn1Writable>::TAG;
+                const TAG: asn1::Tag = <asn1::SequenceWriter<'_> as asn1::SimpleAsn1Writable>::TAG;
                 fn write_data(&self, dest: &mut asn1::WriteBuf) -> asn1::WriteResult {
-                    let oid_bytes = [
-                        0x04u8, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x02, 0x02,
-                    ];
+                    let oid_bytes = [0x04u8, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x02, 0x02];
                     let oid = asn1::ObjectIdentifier::from_der(&oid_bytes).unwrap();
                     asn1::Writer::new(dest).write_element(&oid)?;
                     asn1::Writer::new(dest).write_element(&2u32)?;
@@ -416,8 +412,8 @@ mod tests {
         let script = vec![
             (vec![0x00, 0xA4, 0x04, 0x00], ok_response(&[])), // SELECT DF1 by AID
             (vec![0x00, 0xB0, 0x9E, 0x00], ok_response(&first)), // READ BINARY SFI=0x1E
-            (vec![0x00, 0xB0], ok_response(&tail)),             // READ BINARY tail
-            (vec![0x00, 0xB0, 0x81, 0x00], vec![0x69, 0x82]),   // EF.DG1 missing
+            (vec![0x00, 0xB0], ok_response(&tail)),           // READ BINARY tail
+            (vec![0x00, 0xB0, 0x81, 0x00], vec![0x69, 0x82]), // EF.DG1 missing
         ];
         let tx = MockTransceiver {
             script,
@@ -427,8 +423,8 @@ mod tests {
 
         p.read_ef_com().unwrap();
         let _ = p.read_ef_dg1(); // will surface 6982, we don't care about the result
-        // Extract the sequence of APDUs the chip saw — expect exactly one
-        // SELECT DF1 (INS=0xA4 with P1=0x04).
+                                 // Extract the sequence of APDUs the chip saw — expect exactly one
+                                 // SELECT DF1 (INS=0xA4 with P1=0x04).
         let tx = &p.api_mut(); // release &mut
         let _ = tx;
     }

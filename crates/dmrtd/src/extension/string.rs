@@ -7,7 +7,7 @@
 //!
 //! These mirror the reference extensions `StringDecodeApis` and `StringYYMMDDateApi`.
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::{Datelike, Local, NaiveDate};
 
 // ---------------------------------------------------------------------------
@@ -316,9 +316,7 @@ mod tests {
         assert_eq!(d.year(), 1931);
 
         // parse_date_with_ref routes 6-digit input through the same logic.
-        let d = "31-01-01"
-            .parse_date_with_ref(false, reference)
-            .unwrap();
+        let d = "31-01-01".parse_date_with_ref(false, reference).unwrap();
         assert_eq!(d.year(), 1931);
 
         // Same year and month as the reference, but a day AFTER the reference

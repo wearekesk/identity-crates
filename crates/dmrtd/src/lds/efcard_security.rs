@@ -5,7 +5,7 @@
 //! handling which is out of scope for the DMRTD library). This port matches
 //! that behaviour.
 
-use crate::lds::ef::{ElementaryFile, EfParseError};
+use crate::lds::ef::{EfParseError, ElementaryFile};
 
 /// EF.CardSecurity file ID.
 pub const EF_CARD_SECURITY_FID: u16 = 0x011D;

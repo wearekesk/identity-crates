@@ -149,7 +149,8 @@ impl PaceEngine {
                 e.generate_ephemeral_with_custom_generator(g_prime, seed)?;
             }
             PaceEngine::Dh(e) => {
-                let g_prime = e.get_mapped_generator(&icc_mapping_pub.to_relevant_bytes(), nonce)?;
+                let g_prime =
+                    e.get_mapped_generator(&icc_mapping_pub.to_relevant_bytes(), nonce)?;
                 e.generate_ephemeral_with_custom_generator(
                     BigUint::from_bytes_be(&g_prime),
                     seed.map(seed_to_u64),
@@ -172,7 +173,8 @@ impl PaceEngine {
                 ecdh_shared_secret_x_bytes(shared)
             }
             PaceEngine::Dh(e) => {
-                let shared = e.get_ephemeral_shared_secret(&icc_ephemeral_pub.to_relevant_bytes())?;
+                let shared =
+                    e.get_ephemeral_shared_secret(&icc_ephemeral_pub.to_relevant_bytes())?;
                 Ok(big_uint_to_bytes(&shared))
             }
         }
@@ -232,8 +234,12 @@ enum State {
     WaitingForMseSetAt,
     ReadyForStep1,
     WaitingForStep1,
-    ReadyForStep2 { nonce: Vec<u8> },
-    WaitingForStep2 { nonce: Vec<u8> },
+    ReadyForStep2 {
+        nonce: Vec<u8>,
+    },
+    WaitingForStep2 {
+        nonce: Vec<u8>,
+    },
     ReadyForStep3,
     WaitingForStep3,
     ReadyForStep4 {
@@ -276,7 +282,9 @@ impl<K: AccessKey> PaceSession<K> {
             ));
         }
         if protocol.cipher_algorithm != CipherAlgorithm::Aes {
-            return Err(PaceSessionError::UnsupportedCipher(protocol.cipher_algorithm));
+            return Err(PaceSessionError::UnsupportedCipher(
+                protocol.cipher_algorithm,
+            ));
         }
         if protocol.mapping_type != MappingType::Gm {
             return Err(PaceSessionError::UnsupportedMapping(protocol.mapping_type));
@@ -307,7 +315,9 @@ impl<K: AccessKey> PaceSession<K> {
             ));
         }
         if protocol.cipher_algorithm != CipherAlgorithm::Aes {
-            return Err(PaceSessionError::UnsupportedCipher(protocol.cipher_algorithm));
+            return Err(PaceSessionError::UnsupportedCipher(
+                protocol.cipher_algorithm,
+            ));
         }
         if protocol.mapping_type != MappingType::Gm {
             return Err(PaceSessionError::UnsupportedMapping(protocol.mapping_type));
@@ -356,10 +366,8 @@ impl<K: AccessKey> PaceSession<K> {
     pub fn next(&mut self) -> Result<PaceAction, PaceSessionError> {
         match std::mem::replace(&mut self.state, State::Start) {
             State::Start => {
-                let data = pace::generate_mse_set_at_data(
-                    &self.protocol,
-                    self.key.pace_ref_key_tag(),
-                );
+                let data =
+                    pace::generate_mse_set_at_data(&self.protocol, self.key.pace_ref_key_tag());
                 let cmd = CommandApdu::new(
                     cla::NO_SM,
                     ins::MANAGE_SECURITY_ENVIRONMENT,
@@ -429,8 +437,7 @@ impl<K: AccessKey> PaceSession<K> {
                 k_mac,
             } => {
                 // Terminal's auth token is computed over the *ICC's* ephemeral key.
-                let input =
-                    pace::generate_encoding_input_data(&self.protocol, &icc_ephemeral_pub);
+                let input = pace::generate_encoding_input_data(&self.protocol, &icc_ephemeral_pub);
                 let t_ifd = pace::calculate_auth_token(&self.protocol, &input, &k_mac)?;
                 let data = pace::generate_general_authenticate_data_step4(&t_ifd);
                 let cmd = CommandApdu::new(
@@ -487,18 +494,15 @@ impl<K: AccessKey> PaceSession<K> {
                 let data = rapdu.data.ok_or(PaceSessionError::EmptyResponse)?;
                 let encrypted_nonce = pace::parse_step1_response(&data)
                     .map_err(|e| PaceSessionError::InvalidResponse(e.0))?;
-                let nonce =
-                    pace::decrypt_nonce(&self.protocol, &encrypted_nonce, &self.key)?;
+                let nonce = pace::decrypt_nonce(&self.protocol, &encrypted_nonce, &self.key)?;
                 self.state = State::ReadyForStep2 { nonce };
                 Ok(())
             }
             State::WaitingForStep2 { nonce } => {
                 let data = rapdu.data.ok_or(PaceSessionError::EmptyResponse)?;
-                let icc_mapping_pub = pace::parse_step2_or_3_response(
-                    &data,
-                    self.protocol.token_agreement_algorithm,
-                )
-                .map_err(|e| PaceSessionError::InvalidResponse(e.0))?;
+                let icc_mapping_pub =
+                    pace::parse_step2_or_3_response(&data, self.protocol.token_agreement_algorithm)
+                        .map_err(|e| PaceSessionError::InvalidResponse(e.0))?;
 
                 // Compute mapped generator and rebuild ephemeral key pair.
                 self.engine.map_and_generate_ephemeral(
@@ -511,11 +515,9 @@ impl<K: AccessKey> PaceSession<K> {
             }
             State::WaitingForStep3 => {
                 let data = rapdu.data.ok_or(PaceSessionError::EmptyResponse)?;
-                let icc_ephemeral_pub = pace::parse_step2_or_3_response(
-                    &data,
-                    self.protocol.token_agreement_algorithm,
-                )
-                .map_err(|e| PaceSessionError::InvalidResponse(e.0))?;
+                let icc_ephemeral_pub =
+                    pace::parse_step2_or_3_response(&data, self.protocol.token_agreement_algorithm)
+                        .map_err(|e| PaceSessionError::InvalidResponse(e.0))?;
 
                 // Compute the ephemeral shared secret and derive K_enc / K_mac.
                 let seed = self.engine.ephemeral_shared_seed(&icc_ephemeral_pub)?;
@@ -537,15 +539,10 @@ impl<K: AccessKey> PaceSession<K> {
                 // ICC's token T_IC is computed over the *terminal's* ephemeral
                 // public key — the terminal verifies with that same input.
                 let terminal_ephemeral_pub = self.engine.ephemeral_pub_key()?;
-                let expected_input = pace::generate_encoding_input_data(
-                    &self.protocol,
-                    &terminal_ephemeral_pub,
-                );
-                let expected_token = pace::calculate_auth_token(
-                    &self.protocol,
-                    &expected_input,
-                    &k_mac,
-                )?;
+                let expected_input =
+                    pace::generate_encoding_input_data(&self.protocol, &terminal_ephemeral_pub);
+                let expected_token =
+                    pace::calculate_auth_token(&self.protocol, &expected_input, &k_mac)?;
                 if !constant_time_eq(&expected_token, &icc_token) {
                     return Err(PaceSessionError::AuthTokenMismatch);
                 }
@@ -587,7 +584,7 @@ mod tests {
     //! is produced.
 
     use super::*;
-    use crate::crypto::aes::{AES_BLOCK_SIZE, AesCipher, BlockCipherMode};
+    use crate::crypto::aes::{AesCipher, BlockCipherMode, AES_BLOCK_SIZE};
     use crate::lds::tlv::Tlv;
     use crate::proto::can_key::CanKey;
 
@@ -767,7 +764,9 @@ mod tests {
             .encrypt(&nonce, &kpi, Some(&zero_iv), BlockCipherMode::Cbc, false)
             .unwrap();
         let step1_body = dyn_auth_wrap(0x80, &enc_nonce);
-        session.feed_response(&build_response(Some(&step1_body))).unwrap();
+        session
+            .feed_response(&build_response(Some(&step1_body)))
+            .unwrap();
 
         // ---- Step 2: GA step 2 — mapping public exchange ----
         let _step2_apdu = match session.next().unwrap() {
@@ -790,10 +789,12 @@ mod tests {
             _ => panic!("expected step 3"),
         };
         // Chip also computes the mapped generator, then its own ephemeral.
-        let terminal_mapping_pk = icc_mapping_pub_from_session(&session)
-            .expect("terminal's main pubkey after step 2");
+        let terminal_mapping_pk =
+            icc_mapping_pub_from_session(&session).expect("terminal's main pubkey after step 2");
         let terminal_mapping_ec = ECDHPace::transform_public(&terminal_mapping_pk).unwrap();
-        let g_prime = icc.get_mapped_generator(&terminal_mapping_ec, &nonce).unwrap();
+        let g_prime = icc
+            .get_mapped_generator(&terminal_mapping_ec, &nonce)
+            .unwrap();
         icc.generate_ephemeral_with_custom_generator(g_prime, Some(&seed_icc_eph))
             .unwrap();
         let icc_eph_pub = icc.get_pub_key_ephemeral().unwrap();
@@ -817,8 +818,7 @@ mod tests {
         let seed_bytes = ecdh_shared_secret_x_bytes(icc_shared).unwrap();
         let icc_k_mac = pace::calculate_mac_key(&protocol, &seed_bytes).unwrap();
         let icc_auth_input = pace::generate_encoding_input_data(&protocol, &terminal_eph_pub);
-        let icc_token =
-            pace::calculate_auth_token(&protocol, &icc_auth_input, &icc_k_mac).unwrap();
+        let icc_token = pace::calculate_auth_token(&protocol, &icc_auth_input, &icc_k_mac).unwrap();
         let step4_response = dyn_auth_wrap(0x86, &icc_token);
         session
             .feed_response(&build_response(Some(&step4_response)))
@@ -836,8 +836,14 @@ mod tests {
 
         // Re-taking a consumed session must keep returning AlreadyTaken without
         // corrupting the state machine (a second call must not regress to Start).
-        assert!(matches!(session.next(), Err(PaceSessionError::AlreadyTaken)));
-        assert!(matches!(session.next(), Err(PaceSessionError::AlreadyTaken)));
+        assert!(matches!(
+            session.next(),
+            Err(PaceSessionError::AlreadyTaken)
+        ));
+        assert!(matches!(
+            session.next(),
+            Err(PaceSessionError::AlreadyTaken)
+        ));
     }
 
     #[test]
@@ -888,7 +894,9 @@ mod tests {
             .encrypt(&nonce, &kpi, Some(&zero_iv), BlockCipherMode::Cbc, false)
             .unwrap();
         let step1_body = dyn_auth_wrap(0x80, &enc_nonce);
-        session.feed_response(&build_response(Some(&step1_body))).unwrap();
+        session
+            .feed_response(&build_response(Some(&step1_body)))
+            .unwrap();
 
         // ---- Step 2: GA step 2 — mapping public exchange ----
         let _step2_apdu = match session.next().unwrap() {
@@ -897,7 +905,8 @@ mod tests {
         };
         // ICC generates its own DH key pair and returns its raw public (no
         // 0x04 prefix — DH public keys are raw big-endian integers).
-        icc.generate_key_pair(Some(seed_u64(&seed_icc_main))).unwrap();
+        icc.generate_key_pair(Some(seed_u64(&seed_icc_main)))
+            .unwrap();
         let icc_mapping_pub = icc.get_pub_key().unwrap();
         let step2_response = dyn_auth_wrap(0x82, &icc_mapping_pub.to_bytes());
         session
@@ -910,8 +919,8 @@ mod tests {
             _ => panic!("expected step 3"),
         };
         // ICC computes the mapped generator, then its own ephemeral key pair.
-        let terminal_mapping_pub = icc_mapping_pub_from_session(&session)
-            .expect("terminal's main pubkey after step 2");
+        let terminal_mapping_pub =
+            icc_mapping_pub_from_session(&session).expect("terminal's main pubkey after step 2");
         let g = icc
             .get_mapped_generator(&terminal_mapping_pub.to_relevant_bytes(), &nonce)
             .unwrap();
@@ -940,8 +949,7 @@ mod tests {
         );
         let icc_k_mac = pace::calculate_mac_key(&protocol, &seed_bytes).unwrap();
         let icc_auth_input = pace::generate_encoding_input_data(&protocol, &terminal_eph_pub);
-        let icc_token =
-            pace::calculate_auth_token(&protocol, &icc_auth_input, &icc_k_mac).unwrap();
+        let icc_token = pace::calculate_auth_token(&protocol, &icc_auth_input, &icc_k_mac).unwrap();
         let step4_response = dyn_auth_wrap(0x86, &icc_token);
         session
             .feed_response(&build_response(Some(&step4_response)))

@@ -128,11 +128,19 @@ impl Mrz {
         let cd_doc_num = read_with_pad(&mut r, 1)?;
         let mut opt_data = read(&mut r, 15)?;
         let date_of_birth = read_date(&mut r, false)?;
-        assert_check_digit(&date_of_birth.format_yymmdd(), read_cd(&mut r)?, "Data of Birth check digit mismatch")?;
+        assert_check_digit(
+            &date_of_birth.format_yymmdd(),
+            read_cd(&mut r)?,
+            "Data of Birth check digit mismatch",
+        )?;
 
         let gender = read(&mut r, 1)?;
         let date_of_expiry = read_date(&mut r, true)?;
-        assert_check_digit(&date_of_expiry.format_yymmdd(), read_cd(&mut r)?, "Data of Expiry check digit mismatch")?;
+        assert_check_digit(
+            &date_of_expiry.format_yymmdd(),
+            read_cd(&mut r)?,
+            "Data of Expiry check digit mismatch",
+        )?;
 
         let nationality = read(&mut r, 3)?;
         let mut opt_data2: Option<String> = Some(read(&mut r, 11)?);
@@ -182,11 +190,19 @@ impl Mrz {
 
         let nationality = read(&mut r, 3)?;
         let date_of_birth = read_date(&mut r, false)?;
-        assert_check_digit(&date_of_birth.format_yymmdd(), read_cd(&mut r)?, "Data of Birth check digit mismatch")?;
+        assert_check_digit(
+            &date_of_birth.format_yymmdd(),
+            read_cd(&mut r)?,
+            "Data of Birth check digit mismatch",
+        )?;
 
         let gender = read(&mut r, 1)?;
         let date_of_expiry = read_date(&mut r, true)?;
-        assert_check_digit(&date_of_expiry.format_yymmdd(), read_cd(&mut r)?, "Data of Expiry check digit mismatch")?;
+        assert_check_digit(
+            &date_of_expiry.format_yymmdd(),
+            read_cd(&mut r)?,
+            "Data of Expiry check digit mismatch",
+        )?;
 
         let mut opt_data = read(&mut r, 7)?;
         let mut opt_data2: Option<String> = None;
@@ -228,18 +244,34 @@ impl Mrz {
         let (last_name, first_name) = read_name_identifiers(&mut r, 39)?;
 
         let doc_num = read(&mut r, 9)?;
-        assert_check_digit(&doc_num, read_cd(&mut r)?, "Document Number check digit mismatch")?;
+        assert_check_digit(
+            &doc_num,
+            read_cd(&mut r)?,
+            "Document Number check digit mismatch",
+        )?;
 
         let nationality = read(&mut r, 3)?;
         let date_of_birth = read_date(&mut r, false)?;
-        assert_check_digit(&date_of_birth.format_yymmdd(), read_cd(&mut r)?, "Data of Birth check digit mismatch")?;
+        assert_check_digit(
+            &date_of_birth.format_yymmdd(),
+            read_cd(&mut r)?,
+            "Data of Birth check digit mismatch",
+        )?;
 
         let gender = read(&mut r, 1)?;
         let date_of_expiry = read_date(&mut r, true)?;
-        assert_check_digit(&date_of_expiry.format_yymmdd(), read_cd(&mut r)?, "Data of Expiry check digit mismatch")?;
+        assert_check_digit(
+            &date_of_expiry.format_yymmdd(),
+            read_cd(&mut r)?,
+            "Data of Expiry check digit mismatch",
+        )?;
 
         let opt_data = read(&mut r, 14)?;
-        assert_check_digit(&opt_data, read_cd(&mut r)?, "Optional data check digit mismatch")?;
+        assert_check_digit(
+            &opt_data,
+            read_cd(&mut r)?,
+            "Optional data check digit mismatch",
+        )?;
 
         let cd_composite = read_cd(&mut r)?;
 
@@ -333,7 +365,10 @@ fn read_name_identifiers(
     size: usize,
 ) -> Result<(String, String), MrzParseError> {
     let name_field = read(r, size)?;
-    let ids: Vec<String> = name_field.split("<<").map(|s| s.replace('<', " ")).collect();
+    let ids: Vec<String> = name_field
+        .split("<<")
+        .map(|s| s.replace('<', " "))
+        .collect();
     let last = ids.first().cloned().unwrap_or_default();
     let first = if ids.len() > 1 {
         ids[1..].join(" ")
@@ -367,9 +402,7 @@ fn parse_extended_document_number(
     if str_cd_doc_num == "<" && opt_data.len() > 2 {
         let dn_second_part = opt_data.split('<').next().unwrap_or("");
         if dn_second_part.is_empty() {
-            return Err(MrzParseError(
-                "Document Number extension is empty".into(),
-            ));
+            return Err(MrzParseError("Document Number extension is empty".into()));
         }
         // Operate on characters, not bytes: MRZ bytes are mapped 1:1 to chars,
         // so bytes >= 0x80 become multi-byte UTF-8 and byte-indexed slicing
@@ -438,8 +471,14 @@ mod tests {
         assert_eq!(mrz.first_name, "ANNA MARIA");
         assert_eq!(mrz.last_name, "ERIKSSON");
         assert_eq!(mrz.gender, "F");
-        assert_eq!(mrz.date_of_birth, NaiveDate::from_ymd_opt(1974, 8, 12).unwrap());
-        assert_eq!(mrz.date_of_expiry, NaiveDate::from_ymd_opt(2012, 4, 15).unwrap());
+        assert_eq!(
+            mrz.date_of_birth,
+            NaiveDate::from_ymd_opt(1974, 8, 12).unwrap()
+        );
+        assert_eq!(
+            mrz.date_of_expiry,
+            NaiveDate::from_ymd_opt(2012, 4, 15).unwrap()
+        );
         assert_eq!(mrz.optional_data(), "");
         assert_eq!(mrz.optional_data2(), Some(""));
     }
@@ -453,8 +492,14 @@ mod tests {
         assert_eq!(mrz.first_name, "PETER JOHN");
         assert_eq!(mrz.last_name, "STEVENSON");
         assert_eq!(mrz.gender, "M");
-        assert_eq!(mrz.date_of_birth, NaiveDate::from_ymd_opt(1934, 7, 12).unwrap());
-        assert_eq!(mrz.date_of_expiry, NaiveDate::from_ymd_opt(1995, 7, 12).unwrap());
+        assert_eq!(
+            mrz.date_of_birth,
+            NaiveDate::from_ymd_opt(1934, 7, 12).unwrap()
+        );
+        assert_eq!(
+            mrz.date_of_expiry,
+            NaiveDate::from_ymd_opt(1995, 7, 12).unwrap()
+        );
         assert_eq!(mrz.optional_data(), "");
         assert_eq!(mrz.optional_data2(), None);
     }
@@ -468,8 +513,14 @@ mod tests {
         assert_eq!(mrz.first_name, "ANNA MARIA");
         assert_eq!(mrz.last_name, "ERIKSSON");
         assert_eq!(mrz.gender, "F");
-        assert_eq!(mrz.date_of_birth, NaiveDate::from_ymd_opt(1974, 8, 12).unwrap());
-        assert_eq!(mrz.date_of_expiry, NaiveDate::from_ymd_opt(2012, 4, 15).unwrap());
+        assert_eq!(
+            mrz.date_of_birth,
+            NaiveDate::from_ymd_opt(1974, 8, 12).unwrap()
+        );
+        assert_eq!(
+            mrz.date_of_expiry,
+            NaiveDate::from_ymd_opt(2012, 4, 15).unwrap()
+        );
         assert_eq!(mrz.optional_data(), "");
         assert_eq!(mrz.optional_data2(), None);
     }
@@ -480,8 +531,14 @@ mod tests {
         let mrz = Mrz::from_bytes(mrz_str.as_bytes().to_vec()).unwrap();
         assert_eq!(mrz.version, MrzVersion::Td2);
         assert_eq!(mrz.document_number(), "D23145890734");
-        assert_eq!(mrz.date_of_birth, NaiveDate::from_ymd_opt(1934, 7, 12).unwrap());
-        assert_eq!(mrz.date_of_expiry, NaiveDate::from_ymd_opt(1995, 7, 12).unwrap());
+        assert_eq!(
+            mrz.date_of_birth,
+            NaiveDate::from_ymd_opt(1934, 7, 12).unwrap()
+        );
+        assert_eq!(
+            mrz.date_of_expiry,
+            NaiveDate::from_ymd_opt(1995, 7, 12).unwrap()
+        );
         assert_eq!(mrz.optional_data(), "");
         assert_eq!(mrz.optional_data2(), None);
     }
@@ -498,8 +555,14 @@ mod tests {
         assert_eq!(mrz.first_name, "ANNA MARIA");
         assert_eq!(mrz.last_name, "ERIKSSON");
         assert_eq!(mrz.gender, "F");
-        assert_eq!(mrz.date_of_birth, NaiveDate::from_ymd_opt(1974, 8, 12).unwrap());
-        assert_eq!(mrz.date_of_expiry, NaiveDate::from_ymd_opt(2012, 4, 15).unwrap());
+        assert_eq!(
+            mrz.date_of_birth,
+            NaiveDate::from_ymd_opt(1974, 8, 12).unwrap()
+        );
+        assert_eq!(
+            mrz.date_of_expiry,
+            NaiveDate::from_ymd_opt(2012, 4, 15).unwrap()
+        );
         assert_eq!(mrz.optional_data(), "ZE184226B");
         assert_eq!(mrz.optional_data2(), None);
     }
@@ -513,8 +576,14 @@ mod tests {
         assert_eq!(mrz.nationality, "D");
         assert_eq!(mrz.last_name, "SCHMIDT");
         assert_eq!(mrz.first_name, "FINN");
-        assert_eq!(mrz.date_of_birth, NaiveDate::from_ymd_opt(1975, 3, 20).unwrap());
-        assert_eq!(mrz.date_of_expiry, NaiveDate::from_ymd_opt(2025, 11, 18).unwrap());
+        assert_eq!(
+            mrz.date_of_birth,
+            NaiveDate::from_ymd_opt(1975, 3, 20).unwrap()
+        );
+        assert_eq!(
+            mrz.date_of_expiry,
+            NaiveDate::from_ymd_opt(2025, 11, 18).unwrap()
+        );
     }
 
     #[test]

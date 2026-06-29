@@ -600,7 +600,11 @@ mod tests {
         ] {
             let dt = Tlv::decode_tag(&raw).unwrap();
             assert_eq!(dt.encoded_len, raw.len());
-            assert_eq!(Tlv::encode_tag(dt.value), raw, "round-trip failed for {raw:02X?}");
+            assert_eq!(
+                Tlv::encode_tag(dt.value),
+                raw,
+                "round-trip failed for {raw:02X?}"
+            );
         }
     }
 

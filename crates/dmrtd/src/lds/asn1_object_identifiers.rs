@@ -193,32 +193,29 @@ impl OiePaceProtocol {
     fn params_from_name(
         name: &str,
         id_str: &str,
-    ) -> Result<
-        (CipherAlgorithm, KeyLength, TokenAgreementAlgo, MappingType),
-        OieException,
-    > {
+    ) -> Result<(CipherAlgorithm, KeyLength, TokenAgreementAlgo, MappingType), OieException> {
         use CipherAlgorithm::{Aes, DeSede};
         use KeyLength::{S128, S192, S256};
         use MappingType::{Gm, Im};
         use TokenAgreementAlgo::{Dh, Ecdh};
 
         match name {
-            "ID-PACE-DH-GM-3DES-CBC-CBC"        => Ok((DeSede, S128, Dh,   Gm)),
-            "ID-PACE-DH-GM-AES-CBC-CMAC-128"    => Ok((Aes,    S128, Dh,   Gm)),
-            "ID-PACE-DH-GM-AES-CBC-CMAC-192"    => Ok((Aes,    S192, Dh,   Gm)),
-            "ID-PACE-DH-GM-AES-CBC-CMAC-256"    => Ok((Aes,    S256, Dh,   Gm)),
-            "ID-PACE-DH-IM-3DES-CBC-CBC"        => Ok((DeSede, S128, Dh,   Im)),
-            "ID-PACE-DH-IM-AES-CBC-CMAC-128"    => Ok((Aes,    S128, Dh,   Im)),
-            "ID-PACE-DH-IM-AES-CBC-CMAC-192"    => Ok((Aes,    S192, Dh,   Im)),
-            "ID-PACE-DH-IM-AES-CBC-CMAC-256"    => Ok((Aes,    S256, Dh,   Im)),
-            "ID-PACE-ECDH-GM-3DES-CBC-CBC"      => Ok((DeSede, S128, Ecdh, Gm)),
-            "ID-PACE-ECDH-GM-AES-CBC-CMAC-128"  => Ok((Aes,    S128, Ecdh, Gm)),
-            "ID-PACE-ECDH-GM-AES-CBC-CMAC-192"  => Ok((Aes,    S192, Ecdh, Gm)),
-            "ID-PACE-ECDH-GM-AES-CBC-CMAC-256"  => Ok((Aes,    S256, Ecdh, Gm)),
-            "ID-PACE-ECDH-IM-3DES-CBC-CBC"      => Ok((DeSede, S128, Ecdh, Im)),
-            "ID-PACE-ECDH-IM-AES-CBC-CMAC-128"  => Ok((Aes,    S128, Ecdh, Im)),
-            "ID-PACE-ECDH-IM-AES-CBC-CMAC-192"  => Ok((Aes,    S192, Ecdh, Im)),
-            "ID-PACE-ECDH-IM-AES-CBC-CMAC-256"  => Ok((Aes,    S256, Ecdh, Im)),
+            "ID-PACE-DH-GM-3DES-CBC-CBC" => Ok((DeSede, S128, Dh, Gm)),
+            "ID-PACE-DH-GM-AES-CBC-CMAC-128" => Ok((Aes, S128, Dh, Gm)),
+            "ID-PACE-DH-GM-AES-CBC-CMAC-192" => Ok((Aes, S192, Dh, Gm)),
+            "ID-PACE-DH-GM-AES-CBC-CMAC-256" => Ok((Aes, S256, Dh, Gm)),
+            "ID-PACE-DH-IM-3DES-CBC-CBC" => Ok((DeSede, S128, Dh, Im)),
+            "ID-PACE-DH-IM-AES-CBC-CMAC-128" => Ok((Aes, S128, Dh, Im)),
+            "ID-PACE-DH-IM-AES-CBC-CMAC-192" => Ok((Aes, S192, Dh, Im)),
+            "ID-PACE-DH-IM-AES-CBC-CMAC-256" => Ok((Aes, S256, Dh, Im)),
+            "ID-PACE-ECDH-GM-3DES-CBC-CBC" => Ok((DeSede, S128, Ecdh, Gm)),
+            "ID-PACE-ECDH-GM-AES-CBC-CMAC-128" => Ok((Aes, S128, Ecdh, Gm)),
+            "ID-PACE-ECDH-GM-AES-CBC-CMAC-192" => Ok((Aes, S192, Ecdh, Gm)),
+            "ID-PACE-ECDH-GM-AES-CBC-CMAC-256" => Ok((Aes, S256, Ecdh, Gm)),
+            "ID-PACE-ECDH-IM-3DES-CBC-CBC" => Ok((DeSede, S128, Ecdh, Im)),
+            "ID-PACE-ECDH-IM-AES-CBC-CMAC-128" => Ok((Aes, S128, Ecdh, Im)),
+            "ID-PACE-ECDH-IM-AES-CBC-CMAC-192" => Ok((Aes, S192, Ecdh, Im)),
+            "ID-PACE-ECDH-IM-AES-CBC-CMAC-256" => Ok((Aes, S256, Ecdh, Im)),
             "ID-PACE-ECDH-CAM-AES-CBC-CMAC-128"
             | "ID-PACE-ECDH-CAM-AES-CBC-CMAC-192"
             | "ID-PACE-ECDH-CAM-AES-CBC-CMAC-256" => Err(OieException(format!(
@@ -254,22 +251,86 @@ impl std::fmt::Display for OiePaceProtocol {
 /// Custom PACE OIDs defined by this module.
 pub static CUSTOM_OIDS: Lazy<Vec<Oie>> = Lazy::new(|| {
     vec![
-        Oie::new("0.4.0.127.0.7.2.2.4.1.1", "id-PACE-DH-GM-3DES-CBC-CBC",       vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 1]),
-        Oie::new("0.4.0.127.0.7.2.2.4.1.2", "id-PACE-DH-GM-AES-CBC-CMAC-128",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 2]),
-        Oie::new("0.4.0.127.0.7.2.2.4.1.3", "id-PACE-DH-GM-AES-CBC-CMAC-192",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 3]),
-        Oie::new("0.4.0.127.0.7.2.2.4.1.4", "id-PACE-DH-GM-AES-CBC-CMAC-256",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 4]),
-        Oie::new("0.4.0.127.0.7.2.2.4.3.1", "id-PACE-DH-IM-3DES-CBC-CBC",       vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 1]),
-        Oie::new("0.4.0.127.0.7.2.2.4.3.2", "id-PACE-DH-IM-AES-CBC-CMAC-128",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 2]),
-        Oie::new("0.4.0.127.0.7.2.2.4.3.3", "id-PACE-DH-IM-AES-CBC-CMAC-192",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 3]),
-        Oie::new("0.4.0.127.0.7.2.2.4.3.4", "id-PACE-DH-IM-AES-CBC-CMAC-256",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 4]),
-        Oie::new("0.4.0.127.0.7.2.2.4.2.1", "id-PACE-ECDH-GM-3DES-CBC-CBC",     vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 2, 1]),
-        Oie::new("0.4.0.127.0.7.2.2.4.2.2", "id-PACE-ECDH-GM-AES-CBC-CMAC-128", vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 2, 2]),
-        Oie::new("0.4.0.127.0.7.2.2.4.2.3", "id-PACE-ECDH-GM-AES-CBC-CMAC-192", vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 2, 3]),
-        Oie::new("0.4.0.127.0.7.2.2.4.2.4", "id-PACE-ECDH-GM-AES-CBC-CMAC-256", vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 2, 4]),
-        Oie::new("0.4.0.127.0.7.2.2.4.4.1", "id-PACE-ECDH-IM-3DES-CBC-CBC",     vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 4, 1]),
-        Oie::new("0.4.0.127.0.7.2.2.4.4.2", "id-PACE-ECDH-IM-AES-CBC-CMAC-128", vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 4, 2]),
-        Oie::new("0.4.0.127.0.7.2.2.4.4.3", "id-PACE-ECDH-IM-AES-CBC-CMAC-192", vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 4, 3]),
-        Oie::new("0.4.0.127.0.7.2.2.4.4.4", "id-PACE-ECDH-IM-AES-CBC-CMAC-256", vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 4, 4]),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.1.1",
+            "id-PACE-DH-GM-3DES-CBC-CBC",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 1],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.1.2",
+            "id-PACE-DH-GM-AES-CBC-CMAC-128",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 2],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.1.3",
+            "id-PACE-DH-GM-AES-CBC-CMAC-192",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 3],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.1.4",
+            "id-PACE-DH-GM-AES-CBC-CMAC-256",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 4],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.3.1",
+            "id-PACE-DH-IM-3DES-CBC-CBC",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 1],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.3.2",
+            "id-PACE-DH-IM-AES-CBC-CMAC-128",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 2],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.3.3",
+            "id-PACE-DH-IM-AES-CBC-CMAC-192",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 3],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.3.4",
+            "id-PACE-DH-IM-AES-CBC-CMAC-256",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 4],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.2.1",
+            "id-PACE-ECDH-GM-3DES-CBC-CBC",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 2, 1],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.2.2",
+            "id-PACE-ECDH-GM-AES-CBC-CMAC-128",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 2, 2],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.2.3",
+            "id-PACE-ECDH-GM-AES-CBC-CMAC-192",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 2, 3],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.2.4",
+            "id-PACE-ECDH-GM-AES-CBC-CMAC-256",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 2, 4],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.4.1",
+            "id-PACE-ECDH-IM-3DES-CBC-CBC",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 4, 1],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.4.2",
+            "id-PACE-ECDH-IM-AES-CBC-CMAC-128",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 4, 2],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.4.3",
+            "id-PACE-ECDH-IM-AES-CBC-CMAC-192",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 4, 3],
+        ),
+        Oie::new(
+            "0.4.0.127.0.7.2.2.4.4.4",
+            "id-PACE-ECDH-IM-AES-CBC-CMAC-256",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 4, 4],
+        ),
     ]
 });
 
@@ -361,8 +422,16 @@ mod tests {
 
     #[test]
     fn oie_equality_uses_identifier_only() {
-        let a = Oie::new("0.4.0.127.0.7.2.2.4.1.2", "name-a", vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 2]);
-        let b = Oie::new("DIFFERENT.STRING",        "name-b", vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 2]);
+        let a = Oie::new(
+            "0.4.0.127.0.7.2.2.4.1.2",
+            "name-a",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 2],
+        );
+        let b = Oie::new(
+            "DIFFERENT.STRING",
+            "name-b",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 2],
+        );
         assert_eq!(a, b);
     }
 

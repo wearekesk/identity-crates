@@ -131,7 +131,11 @@ impl CommandApdu {
                 if extended {
                     // Extended Le: two-byte big-endian. Only 65536 maps to the
                     // 0x0000 "any length" sentinel; 256 is the literal 0x0100.
-                    let le_val = if self.ne == 65536 { 0u16 } else { self.ne as u16 };
+                    let le_val = if self.ne == 65536 {
+                        0u16
+                    } else {
+                        self.ne as u16
+                    };
                     out.extend_from_slice(&le_val.to_be_bytes());
                 } else {
                     // Short Le: single byte; 256 → 0x00.
@@ -146,7 +150,11 @@ impl CommandApdu {
                     // Extended Case 2: prefix 0x00 (addByte) then two-byte Le.
                     // Only 65536 maps to 0x0000; 256 is the literal 0x0100.
                     out.push(0x00);
-                    let le_val = if self.ne == 65536 { 0u16 } else { self.ne as u16 };
+                    let le_val = if self.ne == 65536 {
+                        0u16
+                    } else {
+                        self.ne as u16
+                    };
                     out.extend_from_slice(&le_val.to_be_bytes());
                 } else {
                     // Short Case 2: single Le byte; 256 → 0x00.

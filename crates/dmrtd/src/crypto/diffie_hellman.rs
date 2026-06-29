@@ -14,7 +14,7 @@
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
 use rand::rand_core::UnwrapErr;
-use rand::{Rng, SeedableRng, rngs::StdRng, rngs::SysRng};
+use rand::{rngs::StdRng, rngs::SysRng, Rng, SeedableRng};
 use thiserror::Error;
 
 // ---------------------------------------------------------------------------
@@ -154,7 +154,11 @@ impl DHpkcs3Engine {
         if &priv_key >= upper {
             return Err(DhPkcs3EngineError(format!(
                 "Private key must be less than the {} order",
-                if parameter_spec.q().is_some() { "subgroup" } else { "group" }
+                if parameter_spec.q().is_some() {
+                    "subgroup"
+                } else {
+                    "group"
+                }
             )));
         }
         let pub_key = Self::generate_public_key(&priv_key, &parameter_spec);
@@ -273,12 +277,20 @@ impl DHpkcs3Engine {
             let lower = BigUint::one();
             let mut bytes = vec![0u8; byte_len.max(1)];
             return Ok(match seed {
-                Some(s) => {
-                    Self::draw_in_range(&mut StdRng::seed_from_u64(s), &mut bytes, &lower, &upper, keep_bits)
-                }
-                None => {
-                    Self::draw_in_range(&mut UnwrapErr(SysRng), &mut bytes, &lower, &upper, keep_bits)
-                }
+                Some(s) => Self::draw_in_range(
+                    &mut StdRng::seed_from_u64(s),
+                    &mut bytes,
+                    &lower,
+                    &upper,
+                    keep_bits,
+                ),
+                None => Self::draw_in_range(
+                    &mut UnwrapErr(SysRng),
+                    &mut bytes,
+                    &lower,
+                    &upper,
+                    keep_bits,
+                ),
             });
         }
 
@@ -310,11 +322,15 @@ impl DHpkcs3Engine {
         match seed {
             Some(s) => {
                 let mut rng = StdRng::seed_from_u64(s);
-                Ok(Self::draw_in_range(&mut rng, &mut bytes, &lower, &upper, keep_bits))
+                Ok(Self::draw_in_range(
+                    &mut rng, &mut bytes, &lower, &upper, keep_bits,
+                ))
             }
             None => {
                 let mut rng = UnwrapErr(SysRng);
-                Ok(Self::draw_in_range(&mut rng, &mut bytes, &lower, &upper, keep_bits))
+                Ok(Self::draw_in_range(
+                    &mut rng, &mut bytes, &lower, &upper, keep_bits,
+                ))
             }
         }
     }
@@ -374,8 +390,7 @@ mod tests {
     #[test]
     fn key_pair_roundtrip_with_fixed_private() {
         let spec = small_spec();
-        let engine =
-            DHpkcs3Engine::from_private(BigUint::from(6u32), spec.clone()).unwrap();
+        let engine = DHpkcs3Engine::from_private(BigUint::from(6u32), spec.clone()).unwrap();
         // 5^6 mod 23 = 15625 mod 23 = 8
         assert_eq!(engine.public_key(), &BigUint::from(8u32));
         assert_eq!(engine.private_key(), &BigUint::from(6u32));
@@ -429,7 +444,7 @@ mod tests {
         assert!(engine.compute_secret_key(&BigUint::zero()).is_err());
         assert!(engine.compute_secret_key(&BigUint::one()).is_err());
         assert!(engine.compute_secret_key(&BigUint::from(22u32)).is_err()); // p-1
-        // In-range peer succeeds.
+                                                                            // In-range peer succeeds.
         assert!(engine.compute_secret_key(&BigUint::from(8u32)).is_ok());
     }
 
@@ -437,12 +452,8 @@ mod tests {
     fn compute_secret_key_rejects_small_subgroup_peer() {
         // p = 467, p-1 = 2 * 233. The order-233 subgroup is the quadratic
         // residues; g = 4 (= 2^2) generates it, q = 233.
-        let spec = DhParameterSpec::new(
-            BigUint::from(467u32),
-            BigUint::from(4u32),
-            8,
-        )
-        .with_subgroup_order(BigUint::from(233u32));
+        let spec = DhParameterSpec::new(BigUint::from(467u32), BigUint::from(4u32), 8)
+            .with_subgroup_order(BigUint::from(233u32));
         let engine = DHpkcs3Engine::from_private(BigUint::from(5u32), spec).unwrap();
 
         // 4 is a quadratic residue → 4^233 mod 467 == 1 → accepted.
@@ -525,5 +536,4 @@ mod tests {
         let err = DHpkcs3Engine::new(spec, None, Some(0)).unwrap_err();
         assert!(err.0.contains("No valid private-key range"));
     }
-
 }

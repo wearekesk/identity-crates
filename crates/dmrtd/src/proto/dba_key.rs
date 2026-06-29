@@ -77,7 +77,11 @@ impl DBAKey {
             mrtd_number,
             dob: date_of_birth,
             doe: date_of_expiry,
-            seed_len: if pace_mode { SEED_LEN_PACE } else { SEED_LEN_BAC },
+            seed_len: if pace_mode {
+                SEED_LEN_PACE
+            } else {
+                SEED_LEN_BAC
+            },
         })
     }
 
@@ -208,10 +212,7 @@ mod tests {
         )
         .unwrap();
         let seed = key.key_seed();
-        assert_eq!(
-            hex::encode_upper(&seed),
-            "239AB9CB282DAF66231DC5A4DF6BFBAE"
-        );
+        assert_eq!(hex::encode_upper(&seed), "239AB9CB282DAF66231DC5A4DF6BFBAE");
     }
 
     #[test]
@@ -276,15 +277,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            key.kpi(CipherAlgorithm::Aes, KeyLength::S128).unwrap().len(),
+            key.kpi(CipherAlgorithm::Aes, KeyLength::S128)
+                .unwrap()
+                .len(),
             16
         );
         assert_eq!(
-            key.kpi(CipherAlgorithm::Aes, KeyLength::S192).unwrap().len(),
+            key.kpi(CipherAlgorithm::Aes, KeyLength::S192)
+                .unwrap()
+                .len(),
             24
         );
         assert_eq!(
-            key.kpi(CipherAlgorithm::Aes, KeyLength::S256).unwrap().len(),
+            key.kpi(CipherAlgorithm::Aes, KeyLength::S256)
+                .unwrap()
+                .len(),
             32
         );
     }
@@ -322,8 +329,14 @@ mod tests {
         .unwrap();
         let key = DBAKey::from_mrz(&mrz).unwrap();
         assert_eq!(key.mrtd_number(), "L898902C3");
-        assert_eq!(key.date_of_birth(), NaiveDate::from_ymd_opt(1974, 8, 12).unwrap());
-        assert_eq!(key.date_of_expiry(), NaiveDate::from_ymd_opt(2012, 4, 15).unwrap());
+        assert_eq!(
+            key.date_of_birth(),
+            NaiveDate::from_ymd_opt(1974, 8, 12).unwrap()
+        );
+        assert_eq!(
+            key.date_of_expiry(),
+            NaiveDate::from_ymd_opt(2012, 4, 15).unwrap()
+        );
         assert!(!key.is_pace_mode());
     }
 

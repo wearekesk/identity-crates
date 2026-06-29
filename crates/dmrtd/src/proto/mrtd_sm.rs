@@ -75,7 +75,12 @@ impl<C: SmCipher> MrtdSM<C> {
         }
     }
 
-    fn generate_m(&self, cmd: &CommandApdu, data_do: &[u8], do97: &[u8]) -> Result<Vec<u8>, SmError> {
+    fn generate_m(
+        &self,
+        cmd: &CommandApdu,
+        data_do: &[u8],
+        do97: &[u8],
+    ) -> Result<Vec<u8>, SmError> {
         let block_len = self.block_len()?;
         let padded_header = iso9797::pad(&cmd.raw_header(), block_len)
             .map_err(|e| SmError(format!("ISO 9797 pad: {e}")))?;
@@ -268,8 +273,15 @@ mod tests {
     #[test]
     fn protect_masks_cla_and_appends_do8e() {
         let mut sm = build_sm();
-        let cmd = CommandApdu::new(0x00, ins::SELECT_FILE, 0x02, 0x0C, Some(vec![0x01, 0x1E]), 0)
-            .unwrap();
+        let cmd = CommandApdu::new(
+            0x00,
+            ins::SELECT_FILE,
+            0x02,
+            0x0C,
+            Some(vec![0x01, 0x1E]),
+            0,
+        )
+        .unwrap();
         let p = sm.protect(&cmd).unwrap();
         assert_eq!(p.cla & cla::SM_HEADER_AUTHN, cla::SM_HEADER_AUTHN);
         // Protected APDU has data = DO'87' || DO'8E' (no DO'97' since ne=0).

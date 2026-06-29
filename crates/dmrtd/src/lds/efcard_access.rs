@@ -11,7 +11,7 @@
 use asn1::{Sequence, Set};
 
 use crate::lds::asn1_object_identifiers::{CipherAlgorithm, MappingType};
-use crate::lds::ef::{ElementaryFile, EfParseError};
+use crate::lds::ef::{EfParseError, ElementaryFile};
 use crate::lds::substruct::pace_info::PaceInfo;
 
 /// EF.CardAccess file ID.
@@ -137,8 +137,7 @@ mod tests {
     };
 
     /// DER OID content for id-PACE-ECDH-GM-AES-CBC-CMAC-128 (0.4.0.127.0.7.2.2.4.2.2).
-    const OID_ECDH_GM_AES128: &[u8] =
-        &[0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x02, 0x02];
+    const OID_ECDH_GM_AES128: &[u8] = &[0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x02, 0x02];
 
     fn make_pace_info_sequence_with_id(parameter_id: u32) -> Vec<u8> {
         struct PaceInfoBuilder {
@@ -146,8 +145,7 @@ mod tests {
         }
         impl asn1::SimpleAsn1Writable for PaceInfoBuilder {
             type Error = asn1::WriteError;
-            const TAG: asn1::Tag =
-                <asn1::SequenceWriter<'_> as asn1::SimpleAsn1Writable>::TAG;
+            const TAG: asn1::Tag = <asn1::SequenceWriter<'_> as asn1::SimpleAsn1Writable>::TAG;
             fn write_data(&self, dest: &mut asn1::WriteBuf) -> asn1::WriteResult {
                 let oid = asn1::ObjectIdentifier::from_der(OID_ECDH_GM_AES128).unwrap();
                 asn1::Writer::new(dest).write_element(&oid)?;

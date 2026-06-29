@@ -35,8 +35,8 @@ impl std::fmt::Display for DgTag {
 /// Returns [`EfParseError`] if the wrapper is malformed or its tag does not
 /// equal `expected_tag`.
 pub fn parse_dg_content(content: &[u8], expected_tag: u32) -> Result<Vec<u8>, EfParseError> {
-    let tlv = Tlv::decode(content)
-        .map_err(|e| EfParseError::new(format!("Invalid DG wrapper: {e}")))?;
+    let tlv =
+        Tlv::decode(content).map_err(|e| EfParseError::new(format!("Invalid DG wrapper: {e}")))?;
     if tlv.tag.value != expected_tag {
         return Err(EfParseError::new(format!(
             "Invalid tag={:X}, expected tag={:X}",

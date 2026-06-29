@@ -300,7 +300,10 @@ mod tests {
 
     #[test]
     fn pad_zero_block_size_errors() {
-        assert!(matches!(pad(&[0x01], 0), Err(Iso9797Error::InvalidBlockSize)));
+        assert!(matches!(
+            pad(&[0x01], 0),
+            Err(Iso9797Error::InvalidBlockSize)
+        ));
     }
 
     // -----------------------------------------------------------------------
@@ -351,13 +354,19 @@ mod tests {
         ];
         assert!(matches!(unpad(&data, 8), Err(Iso9797Error::UnpadFailed)));
         // With the bound disabled (block_size = 0) the same input unpads.
-        assert_eq!(unpad(&data, 0).unwrap(), &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+        assert_eq!(
+            unpad(&data, 0).unwrap(),
+            &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]
+        );
     }
 
     #[test]
     fn unpad_non_block_aligned_input_errors() {
         // 2 bytes is not a multiple of the 8-byte block — invalid padded input.
-        assert!(matches!(unpad(&[0x01, 0x80], 8), Err(Iso9797Error::UnpadFailed)));
+        assert!(matches!(
+            unpad(&[0x01, 0x80], 8),
+            Err(Iso9797Error::UnpadFailed)
+        ));
     }
 
     #[test]
@@ -462,10 +471,7 @@ mod tests {
 
     #[test]
     fn icao_d41_n_vector_matches() {
-        let n = hex::decode(
-            "887022120C06C2270CA4020C800000008709016375432908C044F6",
-        )
-        .unwrap();
+        let n = hex::decode("887022120C06C2270CA4020C800000008709016375432908C044F6").unwrap();
         let mac = mac_alg3(&ks_mac_d3(), &n, true).unwrap();
         assert_eq!(hex::encode_upper(&mac), "BF8B92D635FF24F8");
     }
@@ -486,10 +492,7 @@ mod tests {
 
     #[test]
     fn icao_d42_k_vector_matches() {
-        let k = hex::decode(
-            "887022120C06C22A8709019FF0EC34F992265199029000",
-        )
-        .unwrap();
+        let k = hex::decode("887022120C06C22A8709019FF0EC34F992265199029000").unwrap();
         let mac = mac_alg3(&ks_mac_d3(), &k, true).unwrap();
         assert_eq!(hex::encode_upper(&mac), "AD55CC17140B2DED");
     }

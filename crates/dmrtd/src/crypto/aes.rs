@@ -614,7 +614,9 @@ mod tests {
     #[test]
     fn zero_pad_three_bytes() {
         let cipher = AesCipher::new(KeyLength::S128);
-        let padded = cipher.zero_pad(&[0x01, 0x02, 0x03], AES_BLOCK_SIZE).unwrap();
+        let padded = cipher
+            .zero_pad(&[0x01, 0x02, 0x03], AES_BLOCK_SIZE)
+            .unwrap();
         assert_eq!(padded.len(), AES_BLOCK_SIZE);
         assert_eq!(&padded[..3], &[0x01u8, 0x02, 0x03]);
         assert!(padded[3..].iter().all(|&b| b == 0));
@@ -763,11 +765,9 @@ mod tests {
     fn wrong_key_length_returns_error() {
         let cipher = AesCipher::new(KeyLength::S128);
         let bad_key = [0u8; 24]; // 24 bytes instead of 16
-        assert!(
-            cipher
-                .encrypt(&[0u8; 16], &bad_key, None, BlockCipherMode::Cbc, false)
-                .is_err()
-        );
+        assert!(cipher
+            .encrypt(&[0u8; 16], &bad_key, None, BlockCipherMode::Cbc, false)
+            .is_err());
     }
 
     #[test]
@@ -775,22 +775,18 @@ mod tests {
         let cipher = AesCipher::new(KeyLength::S128);
         let key = [0u8; 16];
         let bad_iv = [0u8; 8]; // 8 bytes instead of 16
-        assert!(
-            cipher
-                .encrypt(&[0u8; 16], &key, Some(&bad_iv), BlockCipherMode::Cbc, false)
-                .is_err()
-        );
+        assert!(cipher
+            .encrypt(&[0u8; 16], &key, Some(&bad_iv), BlockCipherMode::Cbc, false)
+            .is_err());
     }
 
     #[test]
     fn non_block_aligned_data_without_padding_returns_error() {
         let cipher = AesCipher::new(KeyLength::S128);
         let key = [0u8; 16];
-        assert!(
-            cipher
-                .encrypt(&[0u8; 5], &key, None, BlockCipherMode::Cbc, false)
-                .is_err()
-        );
+        assert!(cipher
+            .encrypt(&[0u8; 5], &key, None, BlockCipherMode::Cbc, false)
+            .is_err());
     }
 
     // -----------------------------------------------------------------------

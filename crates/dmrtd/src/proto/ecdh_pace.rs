@@ -117,7 +117,9 @@ impl ECDHPace {
                 let scalar = loop {
                     let mut bytes = [0u8; 32];
                     rng.fill_bytes(&mut bytes);
-                    if let Ok(nz) = Scalar::from_repr(bytes.into()).into_option().ok_or(())
+                    if let Ok(nz) = Scalar::from_repr(bytes.into())
+                        .into_option()
+                        .ok_or(())
                         .and_then(|s| NonZeroScalar::new(s).into_option().ok_or(()))
                     {
                         break nz;
@@ -205,7 +207,6 @@ impl ECDHPace {
         self.ephemeral_generator = Some(mapped_generator);
         Ok(())
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -295,9 +296,8 @@ fn pubkey_from_xy(x: &BigUint, y: &BigUint) -> Result<PublicKey, ECDHPaceError> 
     y_bytes[32 - y_be.len()..].copy_from_slice(&y_be);
 
     let encoded = EncodedPoint::from_affine_coordinates(&x_bytes.into(), &y_bytes.into(), false);
-    let affine =
-        Option::<AffinePoint>::from(AffinePoint::from_sec1_point(&encoded))
-            .ok_or(ECDHPaceError::InvalidEncoding)?;
+    let affine = Option::<AffinePoint>::from(AffinePoint::from_sec1_point(&encoded))
+        .ok_or(ECDHPaceError::InvalidEncoding)?;
     Ok(PublicKey::from_affine(affine).map_err(|_| ECDHPaceError::InvalidEncoding)?)
 }
 
@@ -311,10 +311,7 @@ mod tests {
 
     #[test]
     fn unknown_id_is_rejected() {
-        assert_eq!(
-            ECDHPace::new(99).unwrap_err(),
-            ECDHPaceError::UnknownId(99),
-        );
+        assert_eq!(ECDHPace::new(99).unwrap_err(), ECDHPaceError::UnknownId(99),);
     }
 
     #[test]

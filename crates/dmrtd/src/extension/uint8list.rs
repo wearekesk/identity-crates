@@ -14,7 +14,7 @@
 //! }
 //! ```
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use chrono::NaiveDate;
 
 // ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn base64_roundtrip() {
-        use base64::{Engine as _, engine::general_purpose::STANDARD as B64};
+        use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
         let original: &[u8] = &[1, 2, 3, 4, 5, 255, 0];
         let encoded = original.base64();
         let decoded = B64.decode(&encoded).unwrap();

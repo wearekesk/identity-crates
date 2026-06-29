@@ -339,8 +339,7 @@ mod tests {
 
     fn build_small(priv_key: u32) -> DHPace {
         let spec = small_spec();
-        let engine =
-            DHpkcs3Engine::from_private(BigUint::from(priv_key), spec.clone()).unwrap();
+        let engine = DHpkcs3Engine::from_private(BigUint::from(priv_key), spec.clone()).unwrap();
         DHPace {
             domain_spec: spec,
             engine: Some(engine),
@@ -392,8 +391,8 @@ mod tests {
         let nonce = vec![0x03u8]; // small nonce
 
         // H = bob_pub^alice_priv mod p, with alice_priv = 6 (build_small(6)).
-        let expected_h = BigUint::from_bytes_be(&bob_pub)
-            .modpow(&BigUint::from(6u32), alice.domain_spec.p());
+        let expected_h =
+            BigUint::from_bytes_be(&bob_pub).modpow(&BigUint::from(6u32), alice.domain_spec.p());
         let nonce_bn = BigUint::from_bytes_be(&nonce);
         let g_exp = alice
             .domain_spec

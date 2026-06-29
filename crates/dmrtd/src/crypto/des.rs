@@ -14,7 +14,7 @@
 //! # IV
 //! The cipher uses an 8-byte IV (one DES block).
 
-use crate::crypto::iso9797::{DES_BLOCK_SIZE, pad, unpad};
+use crate::crypto::iso9797::{pad, unpad, DES_BLOCK_SIZE};
 use cbc::cipher::block_padding::NoPadding;
 use cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use des::TdesEde3;

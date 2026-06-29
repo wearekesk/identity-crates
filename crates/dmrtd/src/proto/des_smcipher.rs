@@ -27,10 +27,7 @@ impl DesSmCipher {
     /// # Errors
     /// Returns [`DesError`] if `enc_key` or `mac_key` is not a valid 3DES /
     /// ISO 9797-1 MAC algorithm 3 key length (16 or 24 bytes).
-    pub fn new(
-        enc_key: impl AsRef<[u8]>,
-        mac_key: impl Into<Vec<u8>>,
-    ) -> Result<Self, DesError> {
+    pub fn new(enc_key: impl AsRef<[u8]>, mac_key: impl Into<Vec<u8>>) -> Result<Self, DesError> {
         let iv = [0u8; DesedeCipher::BLOCK_SIZE];
         let mac_key = mac_key.into();
         // The MAC key feeds ISO 9797-1 MAC algorithm 3, which (like 3DES) only

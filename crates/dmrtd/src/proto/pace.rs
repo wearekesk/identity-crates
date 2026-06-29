@@ -7,7 +7,7 @@
 
 use thiserror::Error;
 
-use crate::crypto::aes::{AES_BLOCK_SIZE, AesCipher, BlockCipherMode};
+use crate::crypto::aes::{AesCipher, BlockCipherMode, AES_BLOCK_SIZE};
 use crate::crypto::des::DesedeCipher;
 use crate::crypto::iso9797;
 use crate::crypto::kdf::DeriveKey;
@@ -70,8 +70,7 @@ pub struct Step4Error(pub String);
 ///
 /// Returns the raw encrypted-nonce bytes.
 pub fn parse_step1_response(data: &[u8]) -> Result<Vec<u8>, Step1Error> {
-    let dyn_data = Tlv::from_bytes(data)
-        .map_err(|e| Step1Error(format!("Invalid TLV: {e}")))?;
+    let dyn_data = Tlv::from_bytes(data).map_err(|e| Step1Error(format!("Invalid TLV: {e}")))?;
     if dyn_data.tag != TAG_DYNAMIC_AUTHENTICATION_DATA {
         return Err(Step1Error(
             "Response data does not contain dynamic authentication data".into(),
@@ -95,8 +94,7 @@ pub fn parse_step2_or_3_response(
     data: &[u8],
     algo: TokenAgreementAlgo,
 ) -> Result<PublicKeyPace, Step2Or3Error> {
-    let dyn_data = Tlv::from_bytes(data)
-        .map_err(|e| Step2Or3Error(format!("Invalid TLV: {e}")))?;
+    let dyn_data = Tlv::from_bytes(data).map_err(|e| Step2Or3Error(format!("Invalid TLV: {e}")))?;
     if dyn_data.tag != TAG_DYNAMIC_AUTHENTICATION_DATA {
         return Err(Step2Or3Error(
             "Response data does not contain dynamic authentication data".into(),
@@ -138,8 +136,7 @@ pub fn parse_step2_or_3_response(
 ///
 /// Returns the ICC-computed `T_IC` token.
 pub fn parse_step4_response(data: &[u8]) -> Result<Vec<u8>, Step4Error> {
-    let dyn_data = Tlv::from_bytes(data)
-        .map_err(|e| Step4Error(format!("Invalid TLV: {e}")))?;
+    let dyn_data = Tlv::from_bytes(data).map_err(|e| Step4Error(format!("Invalid TLV: {e}")))?;
     if dyn_data.tag != TAG_DYNAMIC_AUTHENTICATION_DATA {
         return Err(Step4Error(
             "Response data does not contain dynamic authentication data".into(),
@@ -599,11 +596,7 @@ mod tests {
             fn pace_ref_key_tag(&self) -> u8 {
                 0
             }
-            fn kpi(
-                &self,
-                _: CipherAlgorithm,
-                _: KeyLength,
-            ) -> Result<Vec<u8>, String> {
+            fn kpi(&self, _: CipherAlgorithm, _: KeyLength) -> Result<Vec<u8>, String> {
                 Ok(self.kpi.clone())
             }
         }
@@ -617,9 +610,8 @@ mod tests {
         assert_eq!(proto.token_agreement_algorithm, TokenAgreementAlgo::Ecdh);
         assert_eq!(proto.key_length, KeyLength::S256);
 
-        let kpi =
-            hex::decode("00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF")
-                .unwrap();
+        let kpi = hex::decode("00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF")
+            .unwrap();
         let nonce = hex::decode("A1A2A3A4A5A6A7A8A9AAABACADAEAFB0").unwrap();
 
         let cipher = AesCipher::new(KeyLength::S256);

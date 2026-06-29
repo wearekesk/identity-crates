@@ -10,7 +10,7 @@
 use std::collections::BTreeSet;
 
 use crate::lds::df1::dg::DgTag;
-use crate::lds::ef::{ElementaryFile, EfParseError};
+use crate::lds::ef::{EfParseError, ElementaryFile};
 use crate::lds::tlv::Tlv;
 
 /// EF.COM file ID.
@@ -208,8 +208,7 @@ mod tests {
     /// ICAO 9303 p10 Appendix A.1 test case 1.
     #[test]
     fn icao_a1_case1_parses() {
-        let bytes =
-            hex::decode("60165F0104303130375F36063034303030305C046175766C").unwrap();
+        let bytes = hex::decode("60165F0104303130375F36063034303030305C046175766C").unwrap();
         let ef = EfCOM::from_bytes(bytes.clone()).unwrap();
         assert_eq!(ef.to_bytes(), bytes.as_slice());
         assert_eq!(ef.version(), "0107");
@@ -225,8 +224,7 @@ mod tests {
     /// ICAO 9303 p10 Appendix A.1 test case 2.
     #[test]
     fn icao_a1_case2_parses() {
-        let bytes =
-            hex::decode("60165F0104313539395F36063034303030305C046175766C").unwrap();
+        let bytes = hex::decode("60165F0104313539395F36063034303030305C046175766C").unwrap();
         let ef = EfCOM::from_bytes(bytes.clone()).unwrap();
         assert_eq!(ef.version(), "1599");
         assert_eq!(ef.unicode_version(), "040000");
