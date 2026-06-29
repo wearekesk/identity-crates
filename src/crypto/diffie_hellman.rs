@@ -243,13 +243,18 @@ impl DHpkcs3Engine {
         // — the correct, unbiased range for a DH private key. Falling back to a
         // raw `length`-bit draw (when q is absent) is biased because q < 2^len.
         if let Some(q) = spec.q() {
-            let byte_len = (q.bits() as usize).div_ceil(8);
+            let keep_bits = q.bits();
+            let byte_len = (keep_bits as usize).div_ceil(8);
             let upper = q.clone();
             let lower = BigUint::one();
             let mut bytes = vec![0u8; byte_len.max(1)];
             return Ok(match seed {
-                Some(s) => Self::draw_in_range(&mut StdRng::seed_from_u64(s), &mut bytes, &lower, &upper),
-                None => Self::draw_in_range(&mut UnwrapErr(SysRng), &mut bytes, &lower, &upper),
+                Some(s) => {
+                    Self::draw_in_range(&mut StdRng::seed_from_u64(s), &mut bytes, &lower, &upper, keep_bits)
+                }
+                None => {
+                    Self::draw_in_range(&mut UnwrapErr(SysRng), &mut bytes, &lower, &upper, keep_bits)
+                }
             });
         }
 
@@ -263,28 +268,46 @@ impl DHpkcs3Engine {
         let lower = BigUint::one() << (length - 1);
         let upper = BigUint::one() << length;
         let mut bytes = vec![0u8; byte_len];
+        // The buffer is exactly `length` bits wide, so no high bits to mask;
+        // the [2^(length-1), 2^length) check selects the top-bit-set half.
+        let keep_bits = length as u64;
 
         match seed {
             Some(s) => {
                 let mut rng = StdRng::seed_from_u64(s);
-                Ok(Self::draw_in_range(&mut rng, &mut bytes, &lower, &upper))
+                Ok(Self::draw_in_range(&mut rng, &mut bytes, &lower, &upper, keep_bits))
             }
             None => {
                 let mut rng = UnwrapErr(SysRng);
-                Ok(Self::draw_in_range(&mut rng, &mut bytes, &lower, &upper))
+                Ok(Self::draw_in_range(&mut rng, &mut bytes, &lower, &upper, keep_bits))
             }
         }
     }
 
     /// Rejection-samples a value in the half-open range `[lower, upper)`.
+    ///
+    /// `keep_bits` is the number of significant bits to retain from the drawn
+    /// buffer: the high bits of the leading byte beyond `keep_bits` are masked
+    /// off so each candidate already fits in `[0, 2^keep_bits)`. Choosing
+    /// `keep_bits = upper.bits()` keeps the rejection probability below 50% per
+    /// iteration regardless of where `upper` sits relative to a byte boundary.
     fn draw_in_range<R: Rng>(
         rng: &mut R,
         buf: &mut [u8],
         lower: &BigUint,
         upper: &BigUint,
+        keep_bits: u64,
     ) -> BigUint {
+        let excess = (buf.len() as u64 * 8).saturating_sub(keep_bits);
         loop {
             rng.fill_bytes(buf);
+            // Drop the surplus high bits of the leading byte (excess is 0..=7
+            // for a tightly-sized buffer) so candidates stay in [0, 2^keep_bits).
+            if excess > 0 {
+                if let Some(first) = buf.first_mut() {
+                    *first &= 0xFFu8 >> excess;
+                }
+            }
             let n = BigUint::from_bytes_be(buf);
             if &n >= lower && &n < upper {
                 return n;

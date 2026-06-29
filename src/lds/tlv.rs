@@ -262,24 +262,32 @@ impl Tlv {
                 return Err(TlvError::InvalidTag);
             }
 
-            let mut tag = first_byte as u64; // store first byte including class/constructed bits
+            let mut tag = first_byte as u32; // store first byte including class/constructed bits
             let mut b = encoded_tag[offset];
             offset += 1;
 
             // Continuation bytes have MSB set. Preserve the raw bytes
             // (including the MSB) so the tag round-trips through `encode_tag`.
+            // Each appended byte shifts `tag` left by 8; reject tags that would
+            // not fit in the u32 representation rather than truncating silently.
             while (b & 0x80) == 0x80 {
                 if offset >= encoded_tag.len() {
                     return Err(TlvError::InvalidTag);
                 }
-                tag = (tag << 8) | (b as u64);
+                if tag > (u32::MAX >> 8) {
+                    return Err(TlvError::InvalidTag);
+                }
+                tag = (tag << 8) | (b as u32);
                 b = encoded_tag[offset];
                 offset += 1;
             }
 
             // Last byte has MSB clear.
-            tag = (tag << 8) | (b as u64);
-            tag as u32
+            if tag > (u32::MAX >> 8) {
+                return Err(TlvError::InvalidTag);
+            }
+            tag = (tag << 8) | (b as u32);
+            tag
         } else {
             // Single-byte tag.
             first_byte as u32
@@ -601,6 +609,16 @@ mod tests {
             assert_eq!(dt.encoded_len, raw.len());
             assert_eq!(Tlv::encode_tag(dt.value), raw, "round-trip failed for {raw:02X?}");
         }
+    }
+
+    #[test]
+    fn decode_tag_overflow_errors() {
+        // A 5-byte tag cannot fit in the u32 tag representation; it must be
+        // rejected rather than silently truncated.
+        assert_eq!(
+            Tlv::decode_tag(&[0x1F, 0x81, 0x82, 0x83, 0x04]).unwrap_err(),
+            TlvError::InvalidTag
+        );
     }
 
     // -----------------------------------------------------------------------

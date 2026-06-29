@@ -382,9 +382,9 @@ fn aes_ecb_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
 /// message so the (relatively expensive) key expansion is not repeated for
 /// every 16-byte block in the CBC/ECB loops.
 enum AesKeySchedule {
-    A128(Box<Aes128>),
-    A192(Box<Aes192>),
-    A256(Box<Aes256>),
+    A128(Aes128),
+    A192(Aes192),
+    A256(Aes256),
 }
 
 impl AesKeySchedule {
@@ -394,15 +394,9 @@ impl AesKeySchedule {
     /// Panics if `key.len()` is not 16, 24, or 32.
     fn new(key: &[u8]) -> Self {
         match key.len() {
-            16 => Self::A128(Box::new(
-                Aes128::new_from_slice(key).expect("valid AES-128 key"),
-            )),
-            24 => Self::A192(Box::new(
-                Aes192::new_from_slice(key).expect("valid AES-192 key"),
-            )),
-            32 => Self::A256(Box::new(
-                Aes256::new_from_slice(key).expect("valid AES-256 key"),
-            )),
+            16 => Self::A128(Aes128::new_from_slice(key).expect("valid AES-128 key")),
+            24 => Self::A192(Aes192::new_from_slice(key).expect("valid AES-192 key")),
+            32 => Self::A256(Aes256::new_from_slice(key).expect("valid AES-256 key")),
             n => panic!("Invalid AES key length: {n}"),
         }
     }

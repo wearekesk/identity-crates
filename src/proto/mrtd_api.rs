@@ -182,7 +182,14 @@ impl<T: Transceiver> MrtdApi<T> {
             let remaining = (total_len - data.len()) as u32;
             let ne = remaining.min(BODY_CHUNK_LEN);
             let offset = data.len() as u32;
-            let chunk = self.read_binary(offset, ne)?;
+            // Plain READ BINARY encodes the offset in P1-P2 (15 bits, max
+            // 0x7FFF). Beyond that — common for DG2 facial images — switch to
+            // the odd-instruction form which carries the offset in a DO.
+            let chunk = if offset <= 0x7FFF {
+                self.read_binary(offset, ne)?
+            } else {
+                self.read_binary_ext(offset, ne)?
+            };
             if chunk.is_empty() {
                 break;
             }
@@ -215,6 +222,37 @@ impl<T: Transceiver> MrtdApi<T> {
         let cmd = CommandApdu::new(cla::NO_SM, ins::READ_BINARY, p1, p2, None, ne)?;
         let rapdu = self.transceive_cmd(&cmd)?;
         Ok(rapdu.data.unwrap_or_default())
+    }
+
+    /// READ BINARY using the odd instruction (`0xB1`) for offsets beyond the
+    /// 15-bit P1-P2 ceiling. Per ISO 7816-4 / ICAO 9303 the offset is sent as a
+    /// BER-TLV offset data object (`'54'`) in the command data; P1-P2 = 0x0000
+    /// addresses the current EF (already selected by the initial SFI read). The
+    /// chip wraps the payload in a discretionary-data DO (`'53'`, or `'73'` for
+    /// a constructed template), which is unwrapped here when present.
+    fn read_binary_ext(&mut self, offset: u32, ne: u32) -> Result<Vec<u8>, MrtdApiError> {
+        // Minimal big-endian encoding of the offset (at least one byte).
+        let be = offset.to_be_bytes();
+        let start = be.iter().position(|&b| b != 0).unwrap_or(be.len() - 1);
+        let offset_do = Tlv::encode(0x54, &be[start..]);
+
+        let cmd = CommandApdu::new(
+            cla::NO_SM,
+            ins::READ_BINARY_EXT,
+            0x00,
+            0x00,
+            Some(offset_do),
+            ne,
+        )?;
+        let rapdu = self.transceive_cmd(&cmd)?;
+        let data = rapdu.data.unwrap_or_default();
+
+        match data.first() {
+            Some(&tag) if tag == 0x53 || tag == 0x73 => Tlv::decode(&data)
+                .map(|tv| tv.value)
+                .map_err(|e| MrtdApiError::Tlv(e.to_string())),
+            _ => Ok(data),
+        }
     }
 
     // -----------------------------------------------------------------------
