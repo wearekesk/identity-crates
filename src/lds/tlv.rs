@@ -351,6 +351,8 @@ impl Tlv {
     ///
     /// # Errors
     /// - [`TlvError::EmptyLength`] — `encoded_length` is empty.
+    /// - [`TlvError::IndefiniteLength`] — the BER indefinite-length marker
+    ///   `0x80` (forbidden in DER) was encountered.
     /// - [`TlvError::LengthTooBig`] — declared byte-count of length > 3.
     /// - [`TlvError::InvalidLength`] — `encoded_length` is truncated.
     pub fn decode_length(encoded_length: &[u8]) -> Result<DecodedLen, TlvError> {

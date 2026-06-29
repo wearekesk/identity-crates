@@ -45,8 +45,10 @@ pub enum CommandApduError {
 /// # Fields
 /// - `cla`, `ins`, `p1`, `p2` — the four mandatory header bytes.
 /// - `data` — optional command data field (max 65 535 bytes).
-/// - `ne` — expected response length (0 = none; max 65 536; 256 and 65 536
-///   are encoded as the "request any length" sentinel 0x00 / 0x0000).
+/// - `ne` — expected response length (0 = none; max 65 536). In short form
+///   `ne == 256` is the `0x00` "any length" sentinel; in extended form only
+///   `ne == 65 536` is the `0x0000` sentinel, while `ne == 256` is the literal
+///   `0x0100`.
 #[derive(Debug, Clone)]
 pub struct CommandApdu {
     pub cla: u8,

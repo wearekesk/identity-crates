@@ -51,7 +51,7 @@ impl EfCardAccess {
                     "Invalid structure of EF.CardAccess. Expected at least one element in set, got none.",
                 ));
             }
-            let mut found: Option<PaceInfo> = None;
+            let mut candidates: Vec<PaceInfo> = Vec::new();
             let mut last_err: Option<EfParseError> = None;
             while !parser.is_empty() {
                 let seq: Sequence<'_> = parser.read_element().map_err(|_| {
@@ -60,22 +60,27 @@ impl EfCardAccess {
                     )
                 })?;
                 // PACEDomainParameterInfo (ICAO 9303 p11 §9.2.1) and other
-                // SecurityInfos fail to parse as PaceInfo; skip them and keep
-                // looking for the first PACEInfo.
-                if found.is_none() {
-                    match PaceInfo::from_sequence(seq) {
-                        Ok(pi) => found = Some(pi),
-                        Err(e) => last_err = Some(e),
-                    }
+                // SecurityInfos fail to parse as PaceInfo; collect every element
+                // that *does* parse as a PACEInfo.
+                match PaceInfo::from_sequence(seq) {
+                    Ok(pi) => candidates.push(pi),
+                    Err(e) => last_err = Some(e),
                 }
             }
-            found.ok_or_else(|| {
-                last_err.unwrap_or_else(|| {
+            if candidates.is_empty() {
+                return Err(last_err.unwrap_or_else(|| {
                     EfParseError::new(
                         "Invalid structure of EF.CardAccess. No PACEInfo found in set.",
                     )
-                })
-            })
+                }));
+            }
+            // Prefer a PACEInfo whose domain parameter this library supports;
+            // fall back to the first parsed one so callers can still inspect it.
+            let pick = candidates
+                .iter()
+                .position(|pi| pi.is_pace_domain_parameter_supported)
+                .unwrap_or(0);
+            Ok(candidates.swap_remove(pick))
         })?;
 
         Ok(Self {
@@ -119,8 +124,10 @@ mod tests {
     const OID_ECDH_GM_AES128: &[u8] =
         &[0x04, 0x00, 0x7F, 0x00, 0x07, 0x02, 0x02, 0x04, 0x02, 0x02];
 
-    fn make_pace_info_sequence() -> Vec<u8> {
-        struct PaceInfoBuilder;
+    fn make_pace_info_sequence_with_id(parameter_id: u32) -> Vec<u8> {
+        struct PaceInfoBuilder {
+            parameter_id: u32,
+        }
         impl asn1::SimpleAsn1Writable for PaceInfoBuilder {
             type Error = asn1::WriteError;
             const TAG: asn1::Tag =
@@ -129,14 +136,34 @@ mod tests {
                 let oid = asn1::ObjectIdentifier::from_der(OID_ECDH_GM_AES128).unwrap();
                 asn1::Writer::new(dest).write_element(&oid)?;
                 asn1::Writer::new(dest).write_element(&2u32)?;
-                asn1::Writer::new(dest).write_element(&12u32)?;
+                asn1::Writer::new(dest).write_element(&self.parameter_id)?;
                 Ok(())
             }
             fn data_length(&self) -> Option<usize> {
                 None
             }
         }
-        asn1::write_single(&PaceInfoBuilder).unwrap()
+        asn1::write_single(&PaceInfoBuilder { parameter_id }).unwrap()
+    }
+
+    fn make_pace_info_sequence() -> Vec<u8> {
+        // id 12 = NIST P-256, the supported ECDH parameter.
+        make_pace_info_sequence_with_id(12)
+    }
+
+    /// Wraps the given pre-encoded SEQUENCE bytes in a SET (`0x31`).
+    fn wrap_in_set(content: &[u8]) -> Vec<u8> {
+        let mut out = vec![0x31];
+        let content_len = content.len();
+        if content_len < 128 {
+            out.push(content_len as u8);
+        } else if content_len < 256 {
+            out.extend_from_slice(&[0x81, content_len as u8]);
+        } else {
+            out.extend_from_slice(&[0x82, (content_len >> 8) as u8, content_len as u8]);
+        }
+        out.extend_from_slice(content);
+        out
     }
 
     fn make_ef_card_access() -> Vec<u8> {
@@ -220,5 +247,22 @@ mod tests {
         let ef = EfCardAccess::from_bytes(out).unwrap();
         assert!(ef.is_pace_info_set());
         assert_eq!(ef.pace_info().unwrap().parameter_id, Some(12));
+    }
+
+    /// With multiple PACEInfos, the one whose domain parameter is supported
+    /// must be chosen over an earlier unsupported one.
+    #[test]
+    fn prefers_supported_pace_info_over_earlier_unsupported() {
+        // First element: id 9 (BrainpoolP192r1) — not supported by this port.
+        // Second element: id 12 (NIST P-256) — supported. (id 9 < id 12, so this
+        // also satisfies DER SET OF canonical ordering.)
+        let unsupported = make_pace_info_sequence_with_id(9);
+        let supported = make_pace_info_sequence_with_id(12);
+        let mut content = unsupported;
+        content.extend_from_slice(&supported);
+        let ef = EfCardAccess::from_bytes(wrap_in_set(&content)).unwrap();
+        let pi = ef.pace_info().unwrap();
+        assert_eq!(pi.parameter_id, Some(12));
+        assert!(pi.is_pace_domain_parameter_supported);
     }
 }

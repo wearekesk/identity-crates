@@ -82,7 +82,9 @@ pub fn do97(ne: u32) -> Vec<u8> {
 /// The status word is always exactly 2 bytes. A minimal-integer encoding would
 /// drop leading zero bytes (e.g. a status with `SW1 == 0x00`), emitting a
 /// 1-byte or empty DO'99'; the SW must be carried verbatim as two bytes.
-pub fn do99(sw: u32) -> Vec<u8> {
+pub fn do99(sw: u16) -> Vec<u8> {
+    // `sw` is a u16, so the status word always encodes as exactly two bytes —
+    // out-of-range statuses are rejected at the type level.
     build_do(TAG_DO99, &int_to_bin(sw as u64, 2))
 }
 

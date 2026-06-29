@@ -296,7 +296,15 @@ impl DHpkcs3Engine {
             .parameter_spec
             .g()
             .modpow(nonce, self.parameter_spec.p());
-        Ok((g_exp * h) % self.parameter_spec.p())
+        let g_prime = (g_exp * h) % self.parameter_spec.p();
+        // A mapped generator of 0 or 1 has trivial order and would make the
+        // ephemeral DH exchange degenerate — reject it.
+        if g_prime <= BigUint::one() {
+            return Err(DhPkcs3EngineError(
+                "Mapped generator is degenerate (<= 1)".to_string(),
+            ));
+        }
+        Ok(g_prime)
     }
 
     // -----------------------------------------------------------------------

@@ -213,7 +213,7 @@ mod tests {
         let err = EfDG11::from_bytes(build_dg11(&[0x2B], fields)).unwrap_err();
         assert!(err.0.contains("8 ASCII digits"));
 
-        // Non-digit characters are rejected too (7 bytes, non-digit present).
+        // Non-digit characters are rejected even at the valid length of 8 bytes.
         let fields = vec![field(TAG_FULL_DATE_OF_BIRTH, b"1974AB12")];
         let err = EfDG11::from_bytes(build_dg11(&[0x2B], fields)).unwrap_err();
         assert!(err.0.contains("8 ASCII digits"));
