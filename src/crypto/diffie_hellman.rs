@@ -305,6 +305,13 @@ impl DHpkcs3Engine {
         // >= p-1 draw. For real parameters (length << p.bits()) 2^length < p-1,
         // so this is a no-op and the distribution is unchanged.
         let upper = (BigUint::one() << length).min(spec.p() - BigUint::one());
+        // If the cap collapsed the range (p too small for this `length`), there
+        // is no valid value to draw — fail instead of looping forever.
+        if upper <= lower {
+            return Err(DhPkcs3EngineError(format!(
+                "No valid private-key range: 2^(length-1) ({lower}) >= min(2^length, p-1) ({upper})"
+            )));
+        }
         let mut bytes = vec![0u8; byte_len];
         // The buffer is exactly `length` bits wide, so no high bits to mask;
         // the [2^(length-1), 2^length) check selects the top-bit-set half.
@@ -486,6 +493,15 @@ mod tests {
         let spec = DhParameterSpec::new(BigUint::from(23u32), BigUint::from(5u32), 0);
         let err = DHpkcs3Engine::new(spec, None, Some(0)).unwrap_err();
         assert!(err.0.contains("Invalid bitLength"));
+    }
+
+    #[test]
+    fn empty_range_after_cap_is_rejected() {
+        // p too small for `length`: lower = 2^15 = 32768, but min(2^16, p-1)=22,
+        // so the range is empty — must error rather than loop forever.
+        let spec = DhParameterSpec::new(BigUint::from(23u32), BigUint::from(5u32), 16);
+        let err = DHpkcs3Engine::new(spec, None, Some(0)).unwrap_err();
+        assert!(err.0.contains("No valid private-key range"));
     }
 
     #[test]
