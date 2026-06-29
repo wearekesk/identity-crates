@@ -73,10 +73,12 @@ impl StringDecodeExt for str {
 pub trait StringDateExt {
     /// Parses a 6-digit `YYMMDD` compact date string into a [`NaiveDate`].
     ///
-    /// The two-digit year is disambiguated against the current year:
-    /// - If `future_date` is **false** (birth date): if the resulting year
-    ///   would be greater than `current_year`, subtract 100 (i.e. it's in
-    ///   the 1900s).
+    /// The two-digit year is disambiguated against the reference date using a
+    /// full `(year, month, day)` threshold (not just the year):
+    /// - If `future_date` is **false** (birth date): if the resulting
+    ///   `(year, month, day)` would be after the threshold, subtract 100 (i.e.
+    ///   it's in the 1900s) — so a same-year/same-month date *after* the
+    ///   reference day still rolls back a century.
     /// - If `future_date` is **true** (expiry date): add a ~20-year/5-month
     ///   look-ahead window before applying the same rule.
     ///

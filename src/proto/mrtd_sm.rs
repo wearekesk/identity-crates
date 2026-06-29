@@ -135,7 +135,8 @@ impl<C: SmCipher> MrtdSM<C> {
         };
         let mut data = self.cipher.decrypt(cipher_input, Some(&self.ssc))?;
         if padded {
-            data = iso9797::unpad(&data)
+            let block_len = self.block_len()?;
+            data = iso9797::unpad(&data, block_len)
                 .map_err(|e| SmError(format!("ISO 9797 unpad: {e}")))?
                 .to_vec();
         }

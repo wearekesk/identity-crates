@@ -149,24 +149,27 @@ impl OiePaceProtocol {
         let readable_name = readable_name.into().to_uppercase();
         let params = Self::params_from_name(&readable_name, &identifier_string)?;
 
-        // Consistency guard: if this OID string is registered, the supplied arc
-        // sequence and readable name must agree with the canonical registry
-        // entry. Without this, a caller could pair a valid protocol name with a
-        // different protocol's OID (or arc) and get a silently-mismatched
-        // protocol back. Unregistered OIDs are left to `params_from_name` alone.
-        if let Ok(registered) =
-            Asn1ObjectIdentifierType::instance().get_oid_by_identifier_string(&identifier_string)
+        // Consistency guard: the OID string must be a registered PACE OID, and
+        // the supplied arc sequence and readable name must agree with the
+        // canonical registry entry. Rejecting registry misses (rather than
+        // bypassing the guard) stops a caller pairing a valid protocol name with
+        // an arbitrary / unregistered OID string or arc.
+        let registered = Asn1ObjectIdentifierType::instance()
+            .get_oid_by_identifier_string(&identifier_string)
+            .map_err(|_| {
+                OieException(format!(
+                    "OIEPaceProtocol; unknown PACE OID {identifier_string} (not in registry)"
+                ))
+            })?;
+        if registered.readable_name.to_uppercase() != readable_name
+            || registered.identifier != identifier
         {
-            if registered.readable_name.to_uppercase() != readable_name
-                || registered.identifier != identifier
-            {
-                return Err(OieException(format!(
-                    "OIEPaceProtocol; inconsistent PACE protocol for OID {identifier_string}: \
-                     readable name {readable_name} / arc {identifier:?} does not match the \
-                     registered entry ({})",
-                    registered.readable_name
-                )));
-            }
+            return Err(OieException(format!(
+                "OIEPaceProtocol; inconsistent PACE protocol for OID {identifier_string}: \
+                 readable name {readable_name} / arc {identifier:?} does not match the \
+                 registered entry ({})",
+                registered.readable_name
+            )));
         }
 
         Ok(Self {
@@ -447,6 +450,19 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.0.contains("inconsistent PACE protocol"));
+    }
+
+    #[test]
+    fn pace_protocol_rejects_unregistered_oid() {
+        // A valid readable name paired with an OID string that is not in the
+        // registry must be rejected (the consistency guard is not bypassed).
+        let err = OiePaceProtocol::new(
+            "1.2.3.4.5",
+            "id-PACE-ECDH-GM-AES-CBC-CMAC-128",
+            vec![1, 2, 3, 4, 5],
+        )
+        .unwrap_err();
+        assert!(err.0.contains("unknown PACE OID"));
     }
 
     #[test]

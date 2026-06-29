@@ -94,19 +94,24 @@ pub fn pad(data: &[u8], block_size: usize) -> Result<Vec<u8>, Iso9797Error> {
 /// Scans backwards for the last `0x80` byte (skipping trailing `0x00` bytes)
 /// and returns the slice up to (but not including) that byte.
 ///
+/// `block_size` is the cipher block size the data was padded to; the padding
+/// run (the `0x80` marker plus trailing `0x00`s) may not exceed it. Pass `0`
+/// to skip that bound.
+///
 /// # Errors
 /// Returns [`Iso9797Error::UnpadFailed`] if the input is not valid ISO/IEC
 /// 9797-1 Method 2 padding — i.e. there is no `0x80` marker preceding the
-/// trailing run of `0x00` bytes (this includes empty input and all-zero input).
+/// trailing run of `0x00` bytes (this includes empty and all-zero input), or
+/// the padding run is longer than `block_size`.
 ///
 /// # Examples
 /// ```
 /// use dmrtd::crypto::iso9797::unpad;
 ///
 /// let data = vec![0x01, 0x02, 0x03, 0x80, 0x00, 0x00, 0x00, 0x00];
-/// assert_eq!(unpad(&data).unwrap(), &[0x01, 0x02, 0x03]);
+/// assert_eq!(unpad(&data, 8).unwrap(), &[0x01, 0x02, 0x03]);
 /// ```
-pub fn unpad(data: &[u8]) -> Result<&[u8], Iso9797Error> {
+pub fn unpad(data: &[u8], block_size: usize) -> Result<&[u8], Iso9797Error> {
     let mut i = data.len();
     // Skip trailing zero bytes
     while i > 0 && data[i - 1] == 0x00 {
@@ -114,11 +119,18 @@ pub fn unpad(data: &[u8]) -> Result<&[u8], Iso9797Error> {
     }
     // The byte preceding the trailing zeros must be the 0x80 marker; anything
     // else (including no marker at all) is malformed padding.
-    if i > 0 && data[i - 1] == 0x80 {
-        Ok(&data[..i - 1])
-    } else {
-        Err(Iso9797Error::UnpadFailed)
+    if i == 0 || data[i - 1] != 0x80 {
+        return Err(Iso9797Error::UnpadFailed);
     }
+    // ISO 9797-1 Method 2 padding fills the final block, so it spans at most
+    // `block_size` bytes (the 0x80 marker plus up to block_size-1 zeros). A
+    // longer run means malformed / mis-decrypted input — reject rather than
+    // strip into the actual message.
+    let pad_len = data.len() - (i - 1);
+    if block_size != 0 && pad_len > block_size {
+        return Err(Iso9797Error::UnpadFailed);
+    }
+    Ok(&data[..i - 1])
 }
 
 /// Returns the ISO/IEC 9797-1 MAC Algorithm 3 result for `msg` using `key`.
@@ -293,7 +305,7 @@ mod tests {
     #[test]
     fn unpad_three_bytes() {
         let data = vec![0x01, 0x02, 0x03, 0x80, 0x00, 0x00, 0x00, 0x00];
-        assert_eq!(unpad(&data).unwrap(), &[0x01, 0x02, 0x03]);
+        assert_eq!(unpad(&data, 8).unwrap(), &[0x01, 0x02, 0x03]);
     }
 
     #[test]
@@ -301,7 +313,7 @@ mod tests {
         for len in 0..=24usize {
             let original: Vec<u8> = (0..len as u8).collect();
             let padded = pad(&original, DES_BLOCK_SIZE).unwrap();
-            let unpadded = unpad(&padded).unwrap();
+            let unpadded = unpad(&padded, 8).unwrap();
             assert_eq!(
                 unpadded,
                 original.as_slice(),
@@ -314,27 +326,37 @@ mod tests {
     fn unpad_empty_padding_block() {
         // pad of empty = [0x80, 0x00 x7]; unpad should return []
         let data = vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-        assert_eq!(unpad(&data).unwrap(), &[] as &[u8]);
+        assert_eq!(unpad(&data, 8).unwrap(), &[] as &[u8]);
     }
 
     #[test]
     fn unpad_no_marker_errors() {
         // No 0x80 marker anywhere — malformed Method 2 padding.
         let data = vec![0x01, 0x02, 0x03];
-        assert!(matches!(unpad(&data), Err(Iso9797Error::UnpadFailed)));
+        assert!(matches!(unpad(&data, 8), Err(Iso9797Error::UnpadFailed)));
+    }
+
+    #[test]
+    fn unpad_padding_run_longer_than_block_errors() {
+        // 0x80 followed by 8 zeros = a 9-byte padding run, which exceeds the
+        // 8-byte block size — malformed / mis-decrypted, must be rejected.
+        let data = vec![0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        assert!(matches!(unpad(&data, 8), Err(Iso9797Error::UnpadFailed)));
+        // With the bound disabled (block_size = 0) the same input unpads.
+        assert_eq!(unpad(&data, 0).unwrap(), &[0x01]);
     }
 
     #[test]
     fn unpad_all_zeros_errors() {
         // Trailing zeros with no preceding 0x80 marker is malformed.
         let data = vec![0x00; 8];
-        assert!(matches!(unpad(&data), Err(Iso9797Error::UnpadFailed)));
+        assert!(matches!(unpad(&data, 8), Err(Iso9797Error::UnpadFailed)));
     }
 
     #[test]
     fn unpad_empty_errors() {
         let data: Vec<u8> = Vec::new();
-        assert!(matches!(unpad(&data), Err(Iso9797Error::UnpadFailed)));
+        assert!(matches!(unpad(&data, 8), Err(Iso9797Error::UnpadFailed)));
     }
 
     // -----------------------------------------------------------------------
