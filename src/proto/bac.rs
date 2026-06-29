@@ -1,13 +1,16 @@
 //! Basic Access Control (BAC) protocol primitives.
 //!
-//! This port implements the **pure** BAC primitives (nonce handling, session
-//! key derivation, MAC / encryption helpers, SSC construction). The
-//! `initSession` orchestration depends on the async [`Icc`] transport which is
-//! not yet ported — callers can assemble the handshake from the pure helpers
-//! and the port-ready [`establish_sm`] constructor.
+//! This module implements the **pure** BAC primitives (nonce handling, session
+//! key derivation, MAC / encryption helpers, SSC construction). They are
+//! transport-agnostic: callers drive the actual APDU exchange themselves and
+//! build the secure-messaging session with the [`establish_sm`] constructor.
+//!
+//! For a ready-made synchronous handshake driver that sequences the APDUs
+//! around these helpers, see [`BacSession`](crate::proto::bac_session::BacSession).
 
 use thiserror::Error;
 
+use crate::crypto::crypto_utils::constant_time_eq;
 use crate::crypto::des::DesedeCipher;
 use crate::crypto::iso9797;
 use crate::crypto::kdf::DeriveKey;
@@ -98,7 +101,7 @@ pub fn extract_eicc_and_micc(icc_ea_data: &[u8]) -> Result<Pair<Vec<u8>, Vec<u8>
 pub fn verify_eicc(eicc: &[u8], k_mac: &[u8], micc: &[u8]) -> Result<bool, BacError> {
     let expected = mac_e(k_mac, eicc)?;
     check_len(micc, MAC_LEN, "M_icc")?;
-    Ok(expected == micc)
+    Ok(constant_time_eq(&expected, micc))
 }
 
 /// Verifies that the `RND.IFD` slice in `R` matches the one we sent, and

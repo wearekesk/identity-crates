@@ -45,6 +45,24 @@ pub fn random_bytes(length: usize) -> Vec<u8> {
     buf
 }
 
+/// Compares two byte slices in constant time (with respect to their contents).
+///
+/// Returns `false` immediately if the lengths differ; otherwise XOR-folds every
+/// byte pair into an accumulator and only checks the accumulator at the end, so
+/// the comparison does not short-circuit on the first differing byte. This is
+/// used for MAC / authentication-token verification to avoid leaking where a
+/// mismatch occurs via timing.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut acc = 0u8;
+    for i in 0..a.len() {
+        acc |= a[i] ^ b[i];
+    }
+    acc == 0
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -92,5 +110,23 @@ mod tests {
     fn large_buffer() {
         let bytes = random_bytes(4096);
         assert_eq!(bytes.len(), 4096);
+    }
+
+    #[test]
+    fn constant_time_eq_equal_slices() {
+        assert!(constant_time_eq(&[0x01, 0x02, 0x03], &[0x01, 0x02, 0x03]));
+        assert!(constant_time_eq(&[], &[]));
+    }
+
+    #[test]
+    fn constant_time_eq_unequal_same_length() {
+        assert!(!constant_time_eq(&[0x01, 0x02, 0x03], &[0x01, 0x02, 0x04]));
+        assert!(!constant_time_eq(&[0xFF], &[0x00]));
+    }
+
+    #[test]
+    fn constant_time_eq_different_lengths() {
+        assert!(!constant_time_eq(&[0x01, 0x02], &[0x01, 0x02, 0x03]));
+        assert!(!constant_time_eq(&[], &[0x00]));
     }
 }

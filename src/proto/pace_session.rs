@@ -35,6 +35,7 @@ use num_bigint::BigUint;
 use p256::ProjectivePoint;
 use thiserror::Error;
 
+use crate::crypto::crypto_utils::constant_time_eq;
 use crate::lds::asn1_object_identifiers::{
     CipherAlgorithm, OiePaceProtocol, TokenAgreementAlgo,
 };
@@ -45,6 +46,7 @@ use crate::proto::ecdh_pace::{ECDHPace, ECDHPaceError, NIST_P256_ID};
 use crate::proto::iso7816::command_apdu::CommandApdu;
 use crate::proto::iso7816::iso7816::{cla, ins};
 use crate::proto::iso7816::response_apdu::{ResponseApdu, StatusWord};
+use crate::proto::iso7816::sm::SmError;
 use crate::proto::mrtd_sm::MrtdSM;
 use crate::proto::pace::{self, PaceError};
 use crate::proto::public_key_pace::PublicKeyPace;
@@ -91,6 +93,8 @@ pub enum PaceSessionError {
     Ecdh(#[from] ECDHPaceError),
     #[error(transparent)]
     Dh(#[from] DHPaceError),
+    #[error(transparent)]
+    Sm(#[from] SmError),
 }
 
 /// PACE key-agreement engine — ECDH-GM (P-256) or classical DH (RFC 5114
@@ -508,11 +512,11 @@ impl<K: AccessKey> PaceSession<K> {
                     &expected_input,
                     &k_mac,
                 )?;
-                if expected_token != icc_token {
+                if !constant_time_eq(&expected_token, &icc_token) {
                     return Err(PaceSessionError::AuthTokenMismatch);
                 }
 
-                let cipher = AesSmCipher::new(k_enc, k_mac, self.protocol.key_length);
+                let cipher = AesSmCipher::new(k_enc, k_mac, self.protocol.key_length)?;
                 let sm = MrtdSM::new(cipher, AesSSC::default().0);
                 self.state = State::Completed(Some(sm));
                 Ok(())

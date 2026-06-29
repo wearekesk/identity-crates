@@ -44,7 +44,7 @@ impl EfCardAccess {
         let first_seq = set.parse(|parser| {
             if parser.is_empty() {
                 return Err(EfParseError::new(
-                    "Invalid structure of EF.CardAccess. More than one element in set.",
+                    "Invalid structure of EF.CardAccess. Expected exactly one element in set, got none.",
                 ));
             }
             let seq: Sequence<'_> = parser.read_element().map_err(|_| {
@@ -177,6 +177,6 @@ mod tests {
     fn rejects_empty_set() {
         // Empty SET: 0x31, 0x00.
         let err = EfCardAccess::from_bytes(vec![0x31, 0x00]).unwrap_err();
-        assert!(err.0.contains("More than one element"));
+        assert!(err.0.contains("Expected exactly one element in set, got none"));
     }
 }

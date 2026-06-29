@@ -92,13 +92,24 @@ impl BytesExt for [u8] {
             return Err(BytesExtError::InvalidDateLength(self.len()));
         }
 
-        // Convert a single BCD byte (0x00–0x99) to an integer (0–99).
-        let bcd_to_int = |byte: u8| -> u32 { ((byte >> 4) as u32 * 10) + (byte & 0x0F) as u32 };
+        // Convert a single BCD byte (0x00–0x99) to an integer (0–99). Each
+        // nibble must be a valid decimal digit (0–9); otherwise the byte is not
+        // valid BCD and would produce a bogus decimal value.
+        let bcd_to_int = |byte: u8| -> Result<u32, BytesExtError> {
+            let hi = (byte >> 4) as u32;
+            let lo = (byte & 0x0F) as u32;
+            if hi > 9 || lo > 9 {
+                return Err(BytesExtError::InvalidDate(format!(
+                    "invalid BCD byte: {byte:02X}"
+                )));
+            }
+            Ok(hi * 10 + lo)
+        };
 
         // Bytes 0 and 1 encode century and year-within-century.
-        let year = bcd_to_int(self[0]) * 100 + bcd_to_int(self[1]);
-        let month = bcd_to_int(self[2]);
-        let day = bcd_to_int(self[3]);
+        let year = bcd_to_int(self[0])? * 100 + bcd_to_int(self[1])?;
+        let month = bcd_to_int(self[2])?;
+        let day = bcd_to_int(self[3])?;
 
         NaiveDate::from_ymd_opt(year as i32, month, day).ok_or_else(|| {
             BytesExtError::InvalidDate(format!(
@@ -215,6 +226,16 @@ mod tests {
     fn to_date_invalid_day_returns_error() {
         // February 30 is invalid
         let bytes: &[u8] = &[0x20, 0x23, 0x02, 0x30];
+        assert!(matches!(
+            bytes.to_date(),
+            Err(BytesExtError::InvalidDate(_))
+        ));
+    }
+
+    #[test]
+    fn to_date_invalid_bcd_nibble_returns_error() {
+        // 0x1A has a low nibble of 0xA (10), which is not a valid BCD digit.
+        let bytes: &[u8] = &[0x20, 0x1A, 0x01, 0x01];
         assert!(matches!(
             bytes.to_date(),
             Err(BytesExtError::InvalidDate(_))

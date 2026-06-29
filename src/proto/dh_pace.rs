@@ -197,11 +197,16 @@ impl DHPace {
         ephemeral_generator: BigUint,
         seed: Option<u64>,
     ) -> Result<(), DHPaceError> {
-        let spec = DhParameterSpec::new(
+        let mut spec = DhParameterSpec::new(
             self.domain_spec.p().clone(),
             ephemeral_generator,
             self.domain_spec.length(),
         );
+        // Preserve the subgroup order so ephemeral private keys are sampled
+        // unbiased in [1, q-1] rather than from a raw length-bit range.
+        if let Some(q) = self.domain_spec.q() {
+            spec = spec.with_subgroup_order(q.clone());
+        }
         let engine = DHpkcs3Engine::new(spec, None, seed).map_err(|e| DHPaceError(e.0))?;
         self.ephemeral = Some(engine);
         Ok(())
@@ -313,9 +318,12 @@ mod tests {
     }
 
     // Use a tiny custom group for determinism + speed. The real RFC 5114
-    // groups are too big for cheap unit tests.
+    // groups are too big for cheap unit tests. A subgroup order (q < p) is
+    // attached so generated (ephemeral) private keys land in [1, q-1] and pass
+    // the private-key range validation in `DHpkcs3Engine::new`.
     fn small_spec() -> DhParameterSpec {
         DhParameterSpec::new(BigUint::from(23u32), BigUint::from(5u32), 8)
+            .with_subgroup_order(BigUint::from(19u32))
     }
 
     fn build_small(priv_key: u32) -> DHPace {

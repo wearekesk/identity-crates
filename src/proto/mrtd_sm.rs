@@ -7,6 +7,7 @@
 //! a `DO'8E'` MAC. Unprotecting performs the reverse.
 
 use crate::crypto::aes::AES_BLOCK_SIZE;
+use crate::crypto::crypto_utils::constant_time_eq;
 use crate::crypto::des::DesedeCipher;
 use crate::crypto::iso9797;
 use crate::lds::asn1_object_identifiers::CipherAlgorithm;
@@ -215,7 +216,7 @@ impl<C: SmCipher> SecureMessaging for MrtdSM<C> {
             .ok_or_else(|| SmError("Missing response data".into()))?;
         let k = self.generate_k(&body[..do8e_start])?;
         let cc = self.cipher.mac(&k)?;
-        if cc != do8e.value {
+        if !constant_time_eq(&cc, &do8e.value) {
             return Err(SmError("Invalid MAC of response APDU".into()));
         }
 

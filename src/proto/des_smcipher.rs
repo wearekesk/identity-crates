@@ -72,7 +72,7 @@ mod tests {
     fn k() -> DesSmCipher {
         DesSmCipher::new(
             hex::decode("AB94FDECF2674FDFB9B391F85D7F76F2").unwrap(),
-            hex::decode("7862D9ECE03D1ACD4C76089DCE131543").unwrap(),
+            hex::decode("7962D9ECE03D1ACD4C76089DCE131543").unwrap(),
         )
         .unwrap()
     }

@@ -187,6 +187,11 @@ impl EfDG2 {
         self.pose_angle_uncertainty = extract(data, offset, offset + 3);
         offset += 3;
         // Skip 8 bytes per feature point (comment: features not handled).
+        if self.nr_feature_points < 0 {
+            return Err(EfParseError::new(
+                "Negative number of feature points in biometric data block",
+            ));
+        }
         offset += (self.nr_feature_points as usize).saturating_mul(8);
 
         // The remaining static image-information fields occupy 12 bytes; a
@@ -261,14 +266,23 @@ fn read_bht(stream: &[u8]) -> Result<Vec<crate::lds::tlv::DecodedTv>, EfParseErr
 
 /// Reads a big-endian signed integer from `data[start..end]`, matching the
 /// reference `_extractContent` dispatch:
-///   - size 1        → signed 8-bit
-///   - size 2 or 3   → signed 16-bit (reads the first 2 bytes only)
-///   - size 4        → signed 32-bit
+///   - size 1   → signed 8-bit
+///   - size 2   → signed 16-bit
+///   - size 3   → signed 24-bit (all three bytes, sign-extended to i32)
+///   - size 4   → signed 32-bit
 fn extract(data: &[u8], start: usize, end: usize) -> i32 {
     let size = end - start;
     match size {
         1 => data[start] as i8 as i32,
-        2 | 3 => i16::from_be_bytes([data[start], data[start + 1]]) as i32,
+        2 => i16::from_be_bytes([data[start], data[start + 1]]) as i32,
+        3 => {
+            // Read all three bytes big-endian, then sign-extend the 24-bit
+            // value to i32 by shifting up into the high byte and back down.
+            let v = ((data[start] as i32) << 16)
+                | ((data[start + 1] as i32) << 8)
+                | data[start + 2] as i32;
+            (v << 8) >> 8
+        }
         4 => i32::from_be_bytes([
             data[start],
             data[start + 1],

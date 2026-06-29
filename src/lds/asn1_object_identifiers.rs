@@ -232,7 +232,7 @@ pub static CUSTOM_OIDS: Lazy<Vec<Oie>> = Lazy::new(|| {
     vec![
         Oie::new("0.4.0.127.0.7.2.2.4.1.1", "id-PACE-DH-GM-3DES-CBC-CBC",       vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 1]),
         Oie::new("0.4.0.127.0.7.2.2.4.1.2", "id-PACE-DH-GM-AES-CBC-CMAC-128",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 2]),
-        Oie::new("0.4.0.127.0.7.2.2.4.1.3", "ID_PACE_DH_GM_AES_CBC_CMAC_192",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 3]),
+        Oie::new("0.4.0.127.0.7.2.2.4.1.3", "id-PACE-DH-GM-AES-CBC-CMAC-192",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 3]),
         Oie::new("0.4.0.127.0.7.2.2.4.1.4", "id-PACE-DH-GM-AES-CBC-CMAC-256",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 4]),
         Oie::new("0.4.0.127.0.7.2.2.4.3.1", "id-PACE-DH-IM-3DES-CBC-CBC",       vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 1]),
         Oie::new("0.4.0.127.0.7.2.2.4.3.2", "id-PACE-DH-IM-AES-CBC-CMAC-128",   vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 2]),
@@ -412,6 +412,23 @@ mod tests {
     fn pace_protocol_unknown_name() {
         let err = OiePaceProtocol::new("1.2.3", "not-a-real-pace-oid", vec![1, 2, 3]).unwrap_err();
         assert!(err.0.contains("Unknown identifierString"));
+    }
+
+    #[test]
+    fn registry_dh_gm_aes_192_resolves_to_protocol() {
+        // The DH-GM-AES-192 registry entry must use the hyphenated readable
+        // name so `from_oie` can decode its parameters (previously it used
+        // underscores and was rejected as "Unknown identifierString").
+        let reg = Asn1ObjectIdentifierType::instance();
+        let oie = reg
+            .get_oid_by_identifier_string("0.4.0.127.0.7.2.2.4.1.3")
+            .unwrap()
+            .clone();
+        let p = OiePaceProtocol::from_oie(oie).unwrap();
+        assert_eq!(p.cipher_algorithm, CipherAlgorithm::Aes);
+        assert_eq!(p.key_length, KeyLength::S192);
+        assert_eq!(p.token_agreement_algorithm, TokenAgreementAlgo::Dh);
+        assert_eq!(p.mapping_type, MappingType::Gm);
     }
 
     #[test]

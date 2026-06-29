@@ -20,16 +20,35 @@ pub struct AesSmCipher {
 
 impl AesSmCipher {
     /// Creates a new AES SM cipher for the given key size.
+    ///
+    /// # Errors
+    /// Returns [`SmError`] if `ks_enc` or `ks_mac` length does not match
+    /// `size.byte_size()`.
     pub fn new(
         ks_enc: impl Into<Vec<u8>>,
         ks_mac: impl Into<Vec<u8>>,
         size: KeyLength,
-    ) -> Self {
-        Self {
-            ks_enc: ks_enc.into(),
-            ks_mac: ks_mac.into(),
-            cipher: AesCipher::new(size),
+    ) -> Result<Self, SmError> {
+        let ks_enc = ks_enc.into();
+        let ks_mac = ks_mac.into();
+        let expected = size.byte_size();
+        if ks_enc.len() != expected {
+            return Err(SmError(format!(
+                "AES SM K_enc length {} != expected {expected}",
+                ks_enc.len()
+            )));
         }
+        if ks_mac.len() != expected {
+            return Err(SmError(format!(
+                "AES SM K_mac length {} != expected {expected}",
+                ks_mac.len()
+            )));
+        }
+        Ok(Self {
+            ks_enc,
+            ks_mac,
+            cipher: AesCipher::new(size),
+        })
     }
 
     fn iv_from_ssc(&self, ssc: &Ssc) -> Result<Vec<u8>, SmError> {
@@ -77,7 +96,7 @@ mod tests {
     use super::*;
 
     fn build() -> AesSmCipher {
-        AesSmCipher::new([0x11u8; 16], [0x22u8; 16], KeyLength::S128)
+        AesSmCipher::new([0x11u8; 16], [0x22u8; 16], KeyLength::S128).unwrap()
     }
 
     fn ssc() -> Ssc {
@@ -123,5 +142,21 @@ mod tests {
         let c = build();
         let err = c.encrypt(&[0u8; 16], None).unwrap_err();
         assert!(err.0.contains("requires SSC"));
+    }
+
+    #[test]
+    fn new_rejects_wrong_key_lengths() {
+        // K_enc too short for S128.
+        match AesSmCipher::new([0x11u8; 8], [0x22u8; 16], KeyLength::S128) {
+            Err(e) => assert!(e.0.contains("K_enc")),
+            Ok(_) => panic!("expected K_enc length error"),
+        }
+        // K_mac too short for S128.
+        match AesSmCipher::new([0x11u8; 16], [0x22u8; 8], KeyLength::S128) {
+            Err(e) => assert!(e.0.contains("K_mac")),
+            Ok(_) => panic!("expected K_mac length error"),
+        }
+        // Correct lengths succeed.
+        assert!(AesSmCipher::new([0x11u8; 16], [0x22u8; 16], KeyLength::S128).is_ok());
     }
 }

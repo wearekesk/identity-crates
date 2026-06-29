@@ -11,8 +11,8 @@
 //! ICAO Doc 9303 Part 11, Section 9.8.2
 //!
 //! # Concrete sub-types
-//! - [`DESedeSSC`]     – 64-bit SSC for 3DES Secure Messaging (BAC)
-//! - [`DESedePaceSSC`] – 64-bit SSC for 3DES PACE (starts at zero)
+//! - [`DesedeSSC`]     – 64-bit SSC for 3DES Secure Messaging (BAC)
+//! - [`DesedePaceSSC`] – 64-bit SSC for 3DES PACE (starts at zero)
 //! - [`AesSSC`]        – 128-bit SSC for AES Secure Messaging (PACE)
 
 use thiserror::Error;

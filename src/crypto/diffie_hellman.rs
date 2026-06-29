@@ -11,7 +11,7 @@
 //! `[2^(length-1), 2^length)`.
 
 use num_bigint::BigUint;
-use num_traits::One;
+use num_traits::{One, Zero};
 use rand::rand_core::UnwrapErr;
 use rand::{Rng, SeedableRng, rngs::StdRng, rngs::SysRng};
 use thiserror::Error;
@@ -186,6 +186,21 @@ impl DHpkcs3Engine {
             Some(p) => p,
             None => Self::generate_private_key(&parameter_spec, seed)?,
         };
+        // Reject degenerate / out-of-range private keys. A zero key yields a
+        // trivial public key; a key >= the (sub)group order is outside the
+        // valid private-key range.
+        if priv_key.is_zero() {
+            return Err(DhPkcs3EngineError(
+                "Private key must not be zero".to_string(),
+            ));
+        }
+        let upper = parameter_spec.q().unwrap_or_else(|| parameter_spec.p());
+        if &priv_key >= upper {
+            return Err(DhPkcs3EngineError(format!(
+                "Private key must be less than the {} order",
+                if parameter_spec.q().is_some() { "subgroup" } else { "group" }
+            )));
+        }
         let pub_key = Self::generate_public_key(&priv_key, &parameter_spec);
         Ok(Self {
             parameter_spec,
@@ -243,6 +258,14 @@ impl DHpkcs3Engine {
         // — the correct, unbiased range for a DH private key. Falling back to a
         // raw `length`-bit draw (when q is absent) is biased because q < 2^len.
         if let Some(q) = spec.q() {
+            // Guard against a degenerate subgroup order: with q <= 1 the range
+            // [1, q-1] is empty and the rejection-sampling loop would never
+            // terminate.
+            if q <= &BigUint::one() {
+                return Err(DhPkcs3EngineError(format!(
+                    "Invalid subgroup order q - must be greater than 1, got {q}"
+                )));
+            }
             let keep_bits = q.bits();
             let byte_len = (keep_bits as usize).div_ceil(8);
             let upper = q.clone();
@@ -375,11 +398,39 @@ mod tests {
 
     #[test]
     fn seeded_private_key_is_deterministic() {
-        let spec = small_spec();
+        // A subgroup order keeps generated keys in [1, q-1] (q < p), so they
+        // pass the private-key range validation in `new`.
+        let spec = DhParameterSpec::new(BigUint::from(23u32), BigUint::from(5u32), 8)
+            .with_subgroup_order(BigUint::from(11u32));
         let a = DHpkcs3Engine::new(spec.clone(), None, Some(42)).unwrap();
         let b = DHpkcs3Engine::new(spec, None, Some(42)).unwrap();
         assert_eq!(a.private_key(), b.private_key());
         assert_eq!(a.public_key(), b.public_key());
+    }
+
+    #[test]
+    fn zero_private_key_is_rejected() {
+        let spec = small_spec();
+        let err = DHpkcs3Engine::from_private(BigUint::zero(), spec).unwrap_err();
+        assert!(err.0.contains("must not be zero"));
+    }
+
+    #[test]
+    fn out_of_range_private_key_is_rejected() {
+        // p = 23, no subgroup order → private key must be < p.
+        let spec = small_spec();
+        let err = DHpkcs3Engine::from_private(BigUint::from(23u32), spec).unwrap_err();
+        assert!(err.0.contains("less than"));
+    }
+
+    #[test]
+    fn degenerate_subgroup_order_is_rejected() {
+        // q = 1 would make the sampling range [1, 0) empty; the engine must
+        // error instead of looping forever.
+        let spec = DhParameterSpec::new(BigUint::from(23u32), BigUint::from(5u32), 8)
+            .with_subgroup_order(BigUint::one());
+        let err = DHpkcs3Engine::new(spec, None, Some(0)).unwrap_err();
+        assert!(err.0.contains("subgroup order"));
     }
 
     #[test]

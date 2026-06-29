@@ -172,7 +172,6 @@ impl AesCipher {
         padding: bool,
     ) -> Result<Vec<u8>, AesCipherError> {
         self.validate_key(key)?;
-        let iv_bytes = self.resolve_iv(iv)?;
 
         let input = if padding {
             self.zero_pad(data, AES_BLOCK_SIZE)
@@ -184,10 +183,15 @@ impl AesCipher {
             return Err(AesCipherError::InvalidDataLength(input.len()));
         }
 
-        Ok(match mode {
-            BlockCipherMode::Cbc => aes_cbc_encrypt(key, &iv_bytes, &input),
-            BlockCipherMode::Ecb => aes_ecb_encrypt(key, &input),
-        })
+        match mode {
+            // The IV is only meaningful — and only validated — for CBC; ECB
+            // ignores it entirely.
+            BlockCipherMode::Cbc => {
+                let iv_bytes = self.resolve_iv(iv)?;
+                Ok(aes_cbc_encrypt(key, &iv_bytes, &input))
+            }
+            BlockCipherMode::Ecb => Ok(aes_ecb_encrypt(key, &input)),
+        }
     }
 
     /// Decrypts `data` using AES in the given `mode`.
@@ -208,16 +212,20 @@ impl AesCipher {
         mode: BlockCipherMode,
     ) -> Result<Vec<u8>, AesCipherError> {
         self.validate_key(key)?;
-        let iv_bytes = self.resolve_iv(iv)?;
 
         if data.len() % AES_BLOCK_SIZE != 0 {
             return Err(AesCipherError::InvalidDataLength(data.len()));
         }
 
-        Ok(match mode {
-            BlockCipherMode::Cbc => aes_cbc_decrypt(key, &iv_bytes, data),
-            BlockCipherMode::Ecb => aes_ecb_decrypt(key, data),
-        })
+        match mode {
+            // The IV is only meaningful — and only validated — for CBC; ECB
+            // ignores it entirely.
+            BlockCipherMode::Cbc => {
+                let iv_bytes = self.resolve_iv(iv)?;
+                Ok(aes_cbc_decrypt(key, &iv_bytes, data))
+            }
+            BlockCipherMode::Ecb => Ok(aes_ecb_decrypt(key, data)),
+        }
     }
 
     /// Calculates the AES-CMAC of `data` using `key`, returning exactly 8 bytes
@@ -253,7 +261,7 @@ impl AesCipher {
         }
         let pad_len = block_size - remainder;
         let mut padded = data.to_vec();
-        padded.extend(std::iter::repeat(0u8).take(pad_len));
+        padded.resize(padded.len() + pad_len, 0);
         padded
     }
 
@@ -542,6 +550,29 @@ mod tests {
             .decrypt(&ct, &key, None, BlockCipherMode::Ecb)
             .unwrap();
         assert_eq!(dec, pt);
+    }
+
+    #[test]
+    fn ecb_ignores_iv_even_if_wrong_length() {
+        // ECB does not use the IV, so a wrong-length IV must not cause an error.
+        let cipher = AesCipher::new(KeyLength::S128);
+        let key = [0xAAu8; 16];
+        let pt = [0x55u8; 16];
+        let bad_iv = [0u8; 3]; // wrong length — ignored by ECB
+
+        let ct = cipher
+            .encrypt(&pt, &key, Some(&bad_iv), BlockCipherMode::Ecb, false)
+            .unwrap();
+        let dec = cipher
+            .decrypt(&ct, &key, Some(&bad_iv), BlockCipherMode::Ecb)
+            .unwrap();
+        assert_eq!(dec, pt);
+
+        // The result must match the None-IV path (ECB truly ignores the IV).
+        let ct_none = cipher
+            .encrypt(&pt, &key, None, BlockCipherMode::Ecb, false)
+            .unwrap();
+        assert_eq!(ct, ct_none);
     }
 
     #[test]

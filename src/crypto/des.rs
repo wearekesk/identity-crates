@@ -12,7 +12,7 @@
 //! | Type          | Key length(s)         |
 //! |---------------|-----------------------|
 //! | `DESCipher`   | 8 bytes               |
-//! | `DESedeCipher`| 8, 16, or 24 bytes    |
+//! | `DESedeCipher`| 16 or 24 bytes        |
 //!
 //! # IV
 //! Both ciphers use an 8-byte IV (one DES block).
@@ -36,7 +36,7 @@ pub enum DesError {
     #[error("DES key length must be {DES_BLOCK_SIZE} bytes, got {0}")]
     InvalidKeyLength(usize),
 
-    #[error("DESede key length must be 8, 16, or 24 bytes, got {0}")]
+    #[error("DESede key length must be 16 or 24 bytes, got {0}")]
     InvalidDesedeKeyLength(usize),
 
     #[error("DES IV length must be {DES_BLOCK_SIZE} bytes, got {0}")]
@@ -221,21 +221,18 @@ impl DesCipher {
 struct TripleDesKey([u8; 24]);
 
 impl TripleDesKey {
-    /// Expands an 8, 16, or 24-byte key into the internal 24-byte representation.
+    /// Expands a 16- or 24-byte key into the internal 24-byte representation.
     ///
     /// | Input length | Keying option | Expansion rule          |
     /// |-------------|---------------|-------------------------|
-    /// | 8 bytes     | Option 3      | `Ka || Ka || Ka`         |
     /// | 16 bytes    | Option 2      | `Ka || Kb || Ka`         |
     /// | 24 bytes    | Option 1      | `Ka || Kb || Kc` (as-is) |
+    ///
+    /// 8-byte keys are intentionally rejected: silently expanding `Ka || Ka ||
+    /// Ka` would downgrade 3DES to single DES.
     fn from_slice(key: &[u8]) -> Result<Self, DesError> {
         let mut expanded = [0u8; 24];
         match key.len() {
-            8 => {
-                expanded[0..8].copy_from_slice(key);
-                expanded[8..16].copy_from_slice(key);
-                expanded[16..24].copy_from_slice(key);
-            }
             16 => {
                 expanded[0..8].copy_from_slice(&key[0..8]);
                 expanded[8..16].copy_from_slice(&key[8..16]);
@@ -253,7 +250,6 @@ impl TripleDesKey {
 /// Implements Triple-DES (DESede) encryption and decryption in CBC block cipher mode.
 ///
 /// # Key sizes
-/// - 8 bytes  → keying option 3 (all three sub-keys equal)
 /// - 16 bytes → keying option 2 (Ka, Kb, Ka)
 /// - 24 bytes → keying option 1 (Ka, Kb, Kc)
 ///
@@ -291,7 +287,7 @@ impl DesedeCipher {
     /// Creates a new [`DesedeCipher`] with the given `key` and `iv`.
     ///
     /// # Errors
-    /// Returns [`DesError::InvalidDesedeKeyLength`] if key length is not 8, 16, or 24.
+    /// Returns [`DesError::InvalidDesedeKeyLength`] if key length is not 16 or 24.
     /// Returns [`DesError::InvalidIvLength`] if `iv.len() != 8`.
     pub fn new(key: &[u8], iv: &[u8]) -> Result<Self, DesError> {
         if iv.len() != DES_BLOCK_SIZE {
@@ -303,10 +299,10 @@ impl DesedeCipher {
         Ok(Self { triple_key, iv: v })
     }
 
-    /// Sets a new key (8, 16, or 24 bytes).
+    /// Sets a new key (16 or 24 bytes).
     ///
     /// # Errors
-    /// Returns [`DesError::InvalidDesedeKeyLength`] if key length is not 8, 16, or 24.
+    /// Returns [`DesError::InvalidDesedeKeyLength`] if key length is not 16 or 24.
     pub fn set_key(&mut self, key: &[u8]) -> Result<(), DesError> {
         self.triple_key = TripleDesKey::from_slice(key)?;
         Ok(())
@@ -393,7 +389,7 @@ impl DesedeCipher {
 /// Encrypts `data` using Triple-DES in CBC mode.
 ///
 /// # Arguments
-/// - `key`      – 8, 16, or 24-byte key.
+/// - `key`      – 16 or 24-byte key.
 /// - `iv`       – 8-byte initialisation vector.
 /// - `data`     – Plaintext to encrypt.
 /// - `pad_data` – When `true`, `data` is padded with ISO/IEC 9797-1 Method 2.
@@ -422,7 +418,7 @@ pub fn desede_encrypt(
 /// Decrypts `edata` using Triple-DES in CBC mode.
 ///
 /// # Arguments
-/// - `key`         – 8, 16, or 24-byte key.
+/// - `key`         – 16 or 24-byte key.
 /// - `iv`          – 8-byte initialisation vector.
 /// - `edata`       – Ciphertext to decrypt.
 /// - `padded_data` – When `true`, ISO/IEC 9797-1 Method 2 padding is stripped.
@@ -576,12 +572,14 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn desede_expands_8_byte_key_to_24() {
+    fn desede_rejects_8_byte_key() {
+        // An 8-byte key is rejected: silently expanding K||K||K would downgrade
+        // 3DES to single DES.
         let k8 = [0xAAu8; 8];
-        let t = TripleDesKey::from_slice(&k8).unwrap();
-        assert_eq!(&t.0[0..8], &k8);
-        assert_eq!(&t.0[8..16], &k8);
-        assert_eq!(&t.0[16..24], &k8);
+        assert!(matches!(
+            TripleDesKey::from_slice(&k8),
+            Err(DesError::InvalidDesedeKeyLength(8))
+        ));
     }
 
     #[test]

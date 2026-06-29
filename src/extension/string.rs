@@ -84,8 +84,8 @@ pub trait StringDateExt {
     /// treated the same as `"230509"`.
     ///
     /// # Errors
-    /// Returns [`StringExtError::DateParse`] if the string has fewer than 6
-    /// digits, or if the resulting month/day values are out of range.
+    /// Returns [`StringExtError::DateParse`] if the string does not contain
+    /// exactly 6 digits, or if the resulting month/day values are out of range.
     ///
     /// # Examples
     /// ```
@@ -159,13 +159,14 @@ impl StringDateExt for str {
         future_date: bool,
         reference: NaiveDate,
     ) -> Result<NaiveDate, StringExtError> {
-        // Strip non-digit characters, ''))
+        // Strip non-digit characters before parsing.
         let compact: String = self.chars().filter(|c| c.is_ascii_digit()).collect();
 
-        if compact.len() < 6 {
-            return Err(StringExtError::DateParse(
-                "Invalid length of compact date string".to_string(),
-            ));
+        if compact.len() != 6 {
+            return Err(StringExtError::DateParse(format!(
+                "Invalid length of compact date string: expected exactly 6 digits, got {}",
+                compact.len()
+            )));
         }
 
         let yy: i32 = compact[0..2]
