@@ -456,7 +456,8 @@ mod tests {
             num_bigint::BigUint::from(0xAABBCCDDu32),
             num_bigint::BigUint::from(0x11223344u32),
             4,
-        );
+        )
+        .unwrap();
         let out = generate_encoding_input_data(&proto, &pk);
         // Outer tag 0x7F49 is a two-byte BER tag: 0x7F 0x49
         assert_eq!(out[0], 0x7F);

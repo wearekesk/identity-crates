@@ -25,6 +25,7 @@ use cipher::{
 };
 use des::{Des, TdesEde3};
 use thiserror::Error;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 // ---------------------------------------------------------------------------
 // Errors
@@ -81,7 +82,7 @@ pub enum DesError {
 /// let decrypted = cipher.decrypt(&encrypted, false).unwrap();
 /// assert_eq!(&decrypted, plaintext);
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct DesCipher {
     key: [u8; DES_BLOCK_SIZE],
     iv: [u8; DES_BLOCK_SIZE],
@@ -222,7 +223,7 @@ impl DesCipher {
 // ---------------------------------------------------------------------------
 
 /// The expanded 24-byte 3DES key (three independent 8-byte sub-keys).
-#[derive(Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 struct TripleDesKey([u8; 24]);
 
 impl TripleDesKey {
@@ -279,7 +280,7 @@ impl TripleDesKey {
 /// let decrypted = cipher.decrypt(&encrypted, false).unwrap();
 /// assert_eq!(&decrypted, plaintext);
 /// ```
-#[derive(Clone)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct DesedeCipher {
     triple_key: TripleDesKey,
     iv: [u8; DES_BLOCK_SIZE],
@@ -712,6 +713,30 @@ mod tests {
     // -----------------------------------------------------------------------
     // free functions
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Zeroize-on-drop
+    // -----------------------------------------------------------------------
+
+    /// Compile-level proof that the cipher key material is wiped on drop:
+    /// both ciphers implement [`ZeroizeOnDrop`] and can be constructed and
+    /// dropped without disturbing the cbc/cipher usage.
+    #[test]
+    fn ciphers_zeroize_on_drop() {
+        use zeroize::Zeroize;
+        fn assert_zod<T: zeroize::ZeroizeOnDrop>() {}
+        assert_zod::<DesCipher>();
+        assert_zod::<DesedeCipher>();
+
+        // Construct and drop; also verify explicit zeroize clears the key.
+        let mut des = DesCipher::new(&[0xABu8; 8], &[0x00u8; 8]).unwrap();
+        des.zeroize();
+        assert_eq!(des.key(), &[0u8; 8]);
+        drop(des);
+
+        let dede = DesedeCipher::new(&[0xCDu8; 16], &[0x00u8; 8]).unwrap();
+        drop(dede);
+    }
 
     #[test]
     fn free_functions_roundtrip() {

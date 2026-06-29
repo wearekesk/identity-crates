@@ -172,6 +172,12 @@ impl DHPace {
             .ok_or_else(|| DHPaceError("Public key is null. Generate key pair first.".into()))
     }
 
+    /// Byte length of the group modulus `p` — i.e. the size of a full-width DH
+    /// public key. 128 bytes for the 1024-bit group, 256 for the 2048-bit ones.
+    pub fn modulus_byte_len(&self) -> usize {
+        (self.domain_spec.p().bits() as usize).div_ceil(8)
+    }
+
     pub fn ephemeral_public_key(&self) -> Result<&BigUint, DHPaceError> {
         self.ephemeral
             .as_ref()

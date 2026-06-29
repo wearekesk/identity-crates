@@ -13,8 +13,8 @@ use crate::proto::ssc::{Ssc, AES_BLOCK_BITS};
 /// AES-based secure messaging cipher.
 #[derive(Clone)]
 pub struct AesSmCipher {
-    pub ks_enc: Vec<u8>,
-    pub ks_mac: Vec<u8>,
+    ks_enc: Vec<u8>,
+    ks_mac: Vec<u8>,
     cipher: AesCipher,
 }
 
@@ -49,6 +49,16 @@ impl AesSmCipher {
             ks_mac,
             cipher: AesCipher::new(size),
         })
+    }
+
+    /// Returns the encryption session key (`K_enc`).
+    pub fn ks_enc(&self) -> &[u8] {
+        &self.ks_enc
+    }
+
+    /// Returns the MAC session key (`K_mac`).
+    pub fn ks_mac(&self) -> &[u8] {
+        &self.ks_mac
     }
 
     fn iv_from_ssc(&self, ssc: &Ssc) -> Result<Vec<u8>, SmError> {

@@ -179,14 +179,23 @@ impl PaceEngine {
     }
 
     /// Response length (`Le`) to request for the GENERAL AUTHENTICATE steps that
-    /// return a public key. ECDH-GM keys fit comfortably in 256 bytes, but DH
-    /// public keys are modulus-sized (up to 256 bytes for the 2048-bit groups)
-    /// and, once wrapped in the dynamic-authentication TLVs, exceed 256 — so DH
-    /// requests an extended "any length" response.
+    /// return a public key. ECDH-GM keys fit comfortably in 256 bytes. DH public
+    /// keys are modulus-sized: the 1024-bit group (128 B) plus its dynamic-auth
+    /// TLV wrapping still fits the short 256-byte `Le`, so only the 2048-bit
+    /// groups (256 B, which overflow 256 once wrapped) request an extended
+    /// response — avoiding needless extended APDUs that short-only readers may
+    /// reject.
     fn pubkey_response_le(&self) -> u32 {
         match self {
             PaceEngine::Ecdh(_) => 256,
-            PaceEngine::Dh(_) => 65_536,
+            PaceEngine::Dh(e) => {
+                // ~8 bytes of 7C / 81|83 TLV wrapping around the public key.
+                if e.modulus_byte_len() + 8 <= 256 {
+                    256
+                } else {
+                    65_536
+                }
+            }
         }
     }
 }
@@ -817,8 +826,8 @@ mod tests {
         // ---- Completion ----
         match session.next().unwrap() {
             PaceAction::Done(sm) => {
-                assert_eq!(sm.cipher.ks_enc.len(), 16);
-                assert_eq!(sm.cipher.ks_mac.len(), 16);
+                assert_eq!(sm.cipher.ks_enc().len(), 16);
+                assert_eq!(sm.cipher.ks_mac().len(), 16);
                 assert_eq!(sm.ssc().to_bytes().len(), 16); // AES SSC = 128-bit
             }
             _ => panic!("expected Done"),
@@ -939,8 +948,8 @@ mod tests {
         // ---- Completion ----
         match session.next().unwrap() {
             PaceAction::Done(sm) => {
-                assert_eq!(sm.cipher.ks_enc.len(), 16);
-                assert_eq!(sm.cipher.ks_mac.len(), 16);
+                assert_eq!(sm.cipher.ks_enc().len(), 16);
+                assert_eq!(sm.cipher.ks_mac().len(), 16);
                 assert_eq!(sm.ssc().to_bytes().len(), 16); // AES SSC = 128-bit
             }
             _ => panic!("expected Done"),

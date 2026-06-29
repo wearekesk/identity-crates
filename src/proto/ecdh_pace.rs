@@ -57,6 +57,8 @@ pub enum ECDHPaceError {
     InvalidScalar,
     #[error("Seed must be 256 bits long.")]
     InvalidSeedLen,
+    #[error(transparent)]
+    InvalidCoordinate(#[from] crate::proto::public_key_pace::PublicKeyPaceError),
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +280,7 @@ fn point_to_pubkey_pace(point: ProjectivePoint) -> Result<PublicKeyPace, ECDHPac
         BigUint::from_bytes_be(x_bytes),
         BigUint::from_bytes_be(y_bytes),
         coord_len,
-    ))
+    )?)
 }
 
 fn pubkey_from_xy(x: &BigUint, y: &BigUint) -> Result<PublicKey, ECDHPaceError> {
