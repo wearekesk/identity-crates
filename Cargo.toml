@@ -3,6 +3,46 @@
 # Member crates live under `crates/`. `dmrtd` is the eMRTD / ICAO 9303 reader
 # core; additional crates (e.g. transports, CLI, FFI bindings) can be added as
 # new directories under `crates/` and they are picked up automatically.
+#
+# Shared package metadata and dependency versions are defined here and inherited
+# by member crates via `.workspace = true`, so versions stay consistent.
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/wearekesk/dmrtd-rs"
+homepage = "https://github.com/wearekesk/dmrtd-rs"
+
+[workspace.dependencies]
+# encoding / ASN.1 / time
+asn1 = "0.24.1"
+base64 = "0.22"
+hex = "0.4"
+chrono = "0.4.44"
+once_cell = "1.21.4"
+log = "0.4"
+thiserror = "2"
+
+# RustCrypto: block ciphers + MAC + hashes + traits
+aes = "0.9"
+des = "0.9"
+cmac = "0.8"
+sha1 = "0.11"
+sha2 = "0.11"
+digest = "0.11"
+cipher = "0.5"
+cbc = { version = "0.2", features = ["alloc"] }
+subtle = "2"
+zeroize = { version = "1.9", features = ["zeroize_derive"] }
+
+# big integers + elliptic curves (PACE ECDH-GM, P-256)
+num-bigint = "0.4"
+num-traits = "0.2"
+rand = "0.10"
+p256 = { version = "=0.14.0-rc.14", features = ["arithmetic", "ecdh"] }
+elliptic-curve = { version = "0.14", features = ["arithmetic"] }
