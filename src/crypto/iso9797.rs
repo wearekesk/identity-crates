@@ -112,6 +112,11 @@ pub fn pad(data: &[u8], block_size: usize) -> Result<Vec<u8>, Iso9797Error> {
 /// assert_eq!(unpad(&data, 8).unwrap(), &[0x01, 0x02, 0x03]);
 /// ```
 pub fn unpad(data: &[u8], block_size: usize) -> Result<&[u8], Iso9797Error> {
+    // Method-2 padded ciphertext output is always a whole number of blocks;
+    // a non-block-aligned (or empty) input cannot be validly padded.
+    if block_size != 0 && (data.is_empty() || data.len() % block_size != 0) {
+        return Err(Iso9797Error::UnpadFailed);
+    }
     let mut i = data.len();
     // Skip trailing zero bytes
     while i > 0 && data[i - 1] == 0x00 {
@@ -338,12 +343,21 @@ mod tests {
 
     #[test]
     fn unpad_padding_run_longer_than_block_errors() {
-        // 0x80 followed by 8 zeros = a 9-byte padding run, which exceeds the
-        // 8-byte block size — malformed / mis-decrypted, must be rejected.
-        let data = vec![0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+        // Block-aligned (16 bytes for an 8-byte block) but the padding run is
+        // 0x80 + 8 zeros = 9 bytes, exceeding the block size — must be rejected.
+        let data = vec![
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ];
         assert!(matches!(unpad(&data, 8), Err(Iso9797Error::UnpadFailed)));
         // With the bound disabled (block_size = 0) the same input unpads.
-        assert_eq!(unpad(&data, 0).unwrap(), &[0x01]);
+        assert_eq!(unpad(&data, 0).unwrap(), &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07]);
+    }
+
+    #[test]
+    fn unpad_non_block_aligned_input_errors() {
+        // 2 bytes is not a multiple of the 8-byte block — invalid padded input.
+        assert!(matches!(unpad(&[0x01, 0x80], 8), Err(Iso9797Error::UnpadFailed)));
     }
 
     #[test]

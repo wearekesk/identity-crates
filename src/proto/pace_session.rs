@@ -177,6 +177,18 @@ impl PaceEngine {
             }
         }
     }
+
+    /// Response length (`Le`) to request for the GENERAL AUTHENTICATE steps that
+    /// return a public key. ECDH-GM keys fit comfortably in 256 bytes, but DH
+    /// public keys are modulus-sized (up to 256 bytes for the 2048-bit groups)
+    /// and, once wrapped in the dynamic-authentication TLVs, exceed 256 — so DH
+    /// requests an extended "any length" response.
+    fn pubkey_response_le(&self) -> u32 {
+        match self {
+            PaceEngine::Ecdh(_) => 256,
+            PaceEngine::Dh(_) => 65_536,
+        }
+    }
 }
 
 /// Folds up to the first 8 bytes of a 32-byte test seed into a `u64`, the seed
@@ -378,7 +390,7 @@ impl<K: AccessKey> PaceSession<K> {
                     0x00,
                     0x00,
                     Some(data),
-                    256,
+                    self.engine.pubkey_response_le(),
                 )
                 .map_err(|e| PaceSessionError::InvalidResponse(e.to_string()))?;
                 self.state = State::WaitingForStep2 { nonce };
@@ -396,7 +408,7 @@ impl<K: AccessKey> PaceSession<K> {
                     0x00,
                     0x00,
                     Some(data),
-                    256,
+                    self.engine.pubkey_response_le(),
                 )
                 .map_err(|e| PaceSessionError::InvalidResponse(e.to_string()))?;
                 self.state = State::WaitingForStep3;
