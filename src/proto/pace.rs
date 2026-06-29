@@ -153,7 +153,7 @@ pub fn parse_step4_response(data: &[u8]) -> Result<Vec<u8>, Step4Error> {
         ));
     }
     if token_tlv.value.is_empty() {
-        return Err(Step4Error("Mapping data is empty".into()));
+        return Err(Step4Error("Authentication token is empty".into()));
     }
     Ok(token_tlv.value)
 }
@@ -437,6 +437,14 @@ mod tests {
         let outer = Tlv::encode(TAG_DYNAMIC_AUTHENTICATION_DATA, &inner);
         let t = parse_step4_response(&outer).unwrap();
         assert_eq!(t.len(), 8);
+    }
+
+    #[test]
+    fn step4_empty_token_errors_about_authentication_token() {
+        let inner = Tlv::encode(exchanged_data::AUTHENTICATION_TOKEN_RESPONSE, &[]);
+        let outer = Tlv::encode(TAG_DYNAMIC_AUTHENTICATION_DATA, &inner);
+        let err = parse_step4_response(&outer).unwrap_err();
+        assert!(err.0.contains("Authentication token"));
     }
 
     // ---------------- Data generators ----------------

@@ -110,7 +110,7 @@ pub fn verify_rnd_ifd_and_extract_kicc(rnd_ifd: &[u8], r: &[u8]) -> Result<Vec<u
     check_len(rnd_ifd, NONCE_LEN, "RND.IFD")?;
     check_len(r, S_LEN, "R")?;
     let extracted = &r[NONCE_LEN..2 * NONCE_LEN];
-    if extracted != rnd_ifd {
+    if !constant_time_eq(extracted, rnd_ifd) {
         return Err(BacError(format!(
             "Extracted RND.IFD={} from R differs from generated RND.IFD={}",
             hex::encode(extracted),

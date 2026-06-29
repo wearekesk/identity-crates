@@ -24,7 +24,7 @@ use chrono::NaiveDate;
 /// Error returned when byte-slice conversion fails.
 #[derive(Debug, thiserror::Error)]
 pub enum BytesExtError {
-    #[error("Invalid length for date conversion: expected at least 4 bytes, got {0}")]
+    #[error("Invalid length for date conversion: expected exactly 4 bytes, got {0}")]
     InvalidDateLength(usize),
 
     #[error("Invalid BCD date value: {0}")]
@@ -72,7 +72,8 @@ pub trait BytesExt {
     /// | `[3]`      | Day (`DD`)     | `0x31` → 31                     |
     ///
     /// # Errors
-    /// Returns [`BytesExtError::InvalidDateLength`] if `self.len() < 4`.
+    /// Returns [`BytesExtError::InvalidDateLength`] if `self.len() != 4` (the
+    /// `CCYYMMDD` field is fixed-width).
     /// Returns [`BytesExtError::InvalidDate`] if the BCD values produce an
     /// invalid calendar date.
     fn to_date(&self) -> Result<NaiveDate, BytesExtError>;
@@ -88,7 +89,7 @@ impl BytesExt for [u8] {
     }
 
     fn to_date(&self) -> Result<NaiveDate, BytesExtError> {
-        if self.len() < 4 {
+        if self.len() != 4 {
             return Err(BytesExtError::InvalidDateLength(self.len()));
         }
 
@@ -243,10 +244,12 @@ mod tests {
     }
 
     #[test]
-    fn to_date_uses_extra_bytes_harmlessly() {
-        // Only the first 4 bytes are consumed; extra bytes are ignored.
+    fn to_date_extra_bytes_returns_error() {
+        // The CCYYMMDD field is fixed-width: more than 4 bytes is rejected.
         let bytes: &[u8] = &[0x20, 0x23, 0x06, 0x01, 0xFF, 0xFF];
-        let date = bytes.to_date().unwrap();
-        assert_eq!(date.to_string(), "2023-06-01");
+        assert!(matches!(
+            bytes.to_date(),
+            Err(BytesExtError::InvalidDateLength(6))
+        ));
     }
 }

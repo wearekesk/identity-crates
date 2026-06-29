@@ -429,7 +429,12 @@ impl<K: AccessKey> PaceSession<K> {
                     self.state = State::Completed(None);
                     Ok(PaceAction::Done(sm))
                 }
-                None => Err(PaceSessionError::AlreadyTaken),
+                None => {
+                    // The SM session was already taken; restore the Completed(None)
+                    // state instead of leaving the machine corrupted as `Start`.
+                    self.state = State::Completed(None);
+                    Err(PaceSessionError::AlreadyTaken)
+                }
             },
             other @ (State::WaitingForMseSetAt
             | State::WaitingForStep1
@@ -806,6 +811,11 @@ mod tests {
             }
             _ => panic!("expected Done"),
         }
+
+        // Re-taking a consumed session must keep returning AlreadyTaken without
+        // corrupting the state machine (a second call must not regress to Start).
+        assert!(matches!(session.next(), Err(PaceSessionError::AlreadyTaken)));
+        assert!(matches!(session.next(), Err(PaceSessionError::AlreadyTaken)));
     }
 
     #[test]

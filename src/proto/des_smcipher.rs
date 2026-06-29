@@ -25,14 +25,24 @@ impl DesSmCipher {
     /// Creates a new [`DesSmCipher`] with the given `K_enc` and `K_mac`.
     ///
     /// # Errors
-    /// Returns [`DesError`] if `enc_key` is not a valid 3DES key length.
+    /// Returns [`DesError`] if `enc_key` or `mac_key` is not a valid 3DES /
+    /// ISO 9797-1 MAC algorithm 3 key length (16 or 24 bytes).
     pub fn new(
         enc_key: impl AsRef<[u8]>,
         mac_key: impl Into<Vec<u8>>,
     ) -> Result<Self, DesError> {
         let iv = [0u8; DesedeCipher::BLOCK_SIZE];
+        let mac_key = mac_key.into();
+        // The MAC key feeds ISO 9797-1 MAC algorithm 3, which (like 3DES) only
+        // accepts 16- or 24-byte keys. Validate it up front so an invalid SM
+        // session fails fast at construction rather than on the first MAC.
+        if mac_key.len() != iso9797::MAC_ALG3_KEY1_LEN
+            && mac_key.len() != iso9797::MAC_ALG3_KEY2_LEN
+        {
+            return Err(DesError::InvalidDesedeKeyLength(mac_key.len()));
+        }
         Ok(Self {
-            mac_key: mac_key.into(),
+            mac_key,
             enc_cipher: DesedeCipher::new(enc_key.as_ref(), &iv)?,
         })
     }
@@ -96,5 +106,16 @@ mod tests {
         let c = k();
         let mac = c.mac(&[0u8; 8]).unwrap();
         assert_eq!(mac.len(), 8);
+    }
+
+    #[test]
+    fn new_rejects_wrong_mac_key_length() {
+        // Valid 16-byte enc key but an invalid 8-byte MAC key must be rejected.
+        let enc = hex::decode("AB94FDECF2674FDFB9B391F85D7F76F2").unwrap();
+        let bad_mac = vec![0u8; 8];
+        assert!(matches!(
+            DesSmCipher::new(enc, bad_mac),
+            Err(DesError::InvalidDesedeKeyLength(8))
+        ));
     }
 }

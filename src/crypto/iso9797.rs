@@ -45,7 +45,10 @@ pub enum Iso9797Error {
     #[error("ISO9797 data length must be a multiple of {DES_BLOCK_SIZE} bytes, got {0}")]
     InvalidDataLength(usize),
 
-    #[error("ISO9797 unpad failed: no 0x80 marker found")]
+    #[error("ISO9797 block size must be greater than zero")]
+    InvalidBlockSize,
+
+    #[error("ISO9797 unpad failed: malformed Padding Method 2 (no 0x80 marker)")]
     UnpadFailed,
 }
 
@@ -61,23 +64,29 @@ pub enum Iso9797Error {
 /// If `data.len()` is already a multiple of `block_size`, an entire new block
 /// of padding is added (i.e. `0x80 00 00 00 00 00 00 00` for 8-byte blocks).
 ///
+/// # Errors
+/// Returns [`Iso9797Error::InvalidBlockSize`] if `block_size == 0` (instead of
+/// panicking, so misuse from the public API is recoverable).
+///
 /// # Examples
 /// ```
 /// use dmrtd::crypto::iso9797::{pad, DES_BLOCK_SIZE};
 ///
-/// let padded = pad(&[0x01, 0x02, 0x03], DES_BLOCK_SIZE);
+/// let padded = pad(&[0x01, 0x02, 0x03], DES_BLOCK_SIZE).unwrap();
 /// assert_eq!(padded, vec![0x01, 0x02, 0x03, 0x80, 0x00, 0x00, 0x00, 0x00]);
 /// assert_eq!(padded.len() % DES_BLOCK_SIZE, 0);
 /// ```
-pub fn pad(data: &[u8], block_size: usize) -> Vec<u8> {
-    assert!(block_size > 0, "block_size must be > 0");
+pub fn pad(data: &[u8], block_size: usize) -> Result<Vec<u8>, Iso9797Error> {
+    if block_size == 0 {
+        return Err(Iso9797Error::InvalidBlockSize);
+    }
     // Number of padding bytes needed: 1 (the 0x80) + zero or more 0x00 bytes.
     let pad_len = block_size - (data.len() % block_size);
     let mut padded = Vec::with_capacity(data.len() + pad_len);
     padded.extend_from_slice(data);
     padded.push(0x80);
     padded.extend(std::iter::repeat(0x00).take(pad_len - 1));
-    padded
+    Ok(padded)
 }
 
 /// Removes ISO/IEC 9797-1, Padding Method 2 padding from `data`.
@@ -85,27 +94,30 @@ pub fn pad(data: &[u8], block_size: usize) -> Vec<u8> {
 /// Scans backwards for the last `0x80` byte (skipping trailing `0x00` bytes)
 /// and returns the slice up to (but not including) that byte.
 ///
-/// Returns the original slice unchanged if no padding marker is found.
+/// # Errors
+/// Returns [`Iso9797Error::UnpadFailed`] if the input is not valid ISO/IEC
+/// 9797-1 Method 2 padding — i.e. there is no `0x80` marker preceding the
+/// trailing run of `0x00` bytes (this includes empty input and all-zero input).
 ///
 /// # Examples
 /// ```
 /// use dmrtd::crypto::iso9797::unpad;
 ///
 /// let data = vec![0x01, 0x02, 0x03, 0x80, 0x00, 0x00, 0x00, 0x00];
-/// assert_eq!(unpad(&data), &[0x01, 0x02, 0x03]);
+/// assert_eq!(unpad(&data).unwrap(), &[0x01, 0x02, 0x03]);
 /// ```
-pub fn unpad(data: &[u8]) -> &[u8] {
+pub fn unpad(data: &[u8]) -> Result<&[u8], Iso9797Error> {
     let mut i = data.len();
     // Skip trailing zero bytes
     while i > 0 && data[i - 1] == 0x00 {
         i -= 1;
     }
-    // The next byte should be 0x80
+    // The byte preceding the trailing zeros must be the 0x80 marker; anything
+    // else (including no marker at all) is malformed padding.
     if i > 0 && data[i - 1] == 0x80 {
-        &data[..i - 1]
+        Ok(&data[..i - 1])
     } else {
-        // No marker found – return original (mirrors reference behaviour)
-        data
+        Err(Iso9797Error::UnpadFailed)
     }
 }
 
@@ -151,7 +163,7 @@ pub fn mac_alg3(key: &[u8], msg: &[u8], pad_msg: bool) -> Result<Vec<u8>, Iso979
 
     // Step 1 – Encrypt `msg` with Ka in single-DES CBC mode; keep last block.
     let data = if pad_msg {
-        pad(msg, DES_BLOCK_SIZE)
+        pad(msg, DES_BLOCK_SIZE)?
     } else {
         msg.to_vec()
     };
@@ -227,13 +239,13 @@ mod tests {
     #[test]
     fn pad_empty_data() {
         // Empty input: one full block of padding (0x80 followed by 7 zeros)
-        let padded = pad(&[], DES_BLOCK_SIZE);
+        let padded = pad(&[], DES_BLOCK_SIZE).unwrap();
         assert_eq!(padded, vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
     }
 
     #[test]
     fn pad_three_bytes() {
-        let padded = pad(&[0x01, 0x02, 0x03], DES_BLOCK_SIZE);
+        let padded = pad(&[0x01, 0x02, 0x03], DES_BLOCK_SIZE).unwrap();
         assert_eq!(padded, vec![0x01, 0x02, 0x03, 0x80, 0x00, 0x00, 0x00, 0x00]);
         assert_eq!(padded.len(), DES_BLOCK_SIZE);
     }
@@ -242,7 +254,7 @@ mod tests {
     fn pad_full_block_adds_new_block() {
         // Input is already 8 bytes → padding adds another 8-byte block
         let input = vec![0xAA; DES_BLOCK_SIZE];
-        let padded = pad(&input, DES_BLOCK_SIZE);
+        let padded = pad(&input, DES_BLOCK_SIZE).unwrap();
         assert_eq!(padded.len(), 2 * DES_BLOCK_SIZE);
         assert_eq!(padded[DES_BLOCK_SIZE], 0x80);
         assert!(padded[DES_BLOCK_SIZE + 1..].iter().all(|&b| b == 0x00));
@@ -251,7 +263,7 @@ mod tests {
     #[test]
     fn pad_seven_bytes_adds_one_padding_byte() {
         let input: Vec<u8> = (1u8..=7).collect();
-        let padded = pad(&input, DES_BLOCK_SIZE);
+        let padded = pad(&input, DES_BLOCK_SIZE).unwrap();
         assert_eq!(padded.len(), DES_BLOCK_SIZE);
         assert_eq!(padded[7], 0x80);
     }
@@ -260,13 +272,18 @@ mod tests {
     fn pad_result_multiple_of_block_size() {
         for len in 0..=24 {
             let input = vec![0xBBu8; len];
-            let padded = pad(&input, DES_BLOCK_SIZE);
+            let padded = pad(&input, DES_BLOCK_SIZE).unwrap();
             assert_eq!(
                 padded.len() % DES_BLOCK_SIZE,
                 0,
                 "pad({len}) is not a multiple of block size"
             );
         }
+    }
+
+    #[test]
+    fn pad_zero_block_size_errors() {
+        assert!(matches!(pad(&[0x01], 0), Err(Iso9797Error::InvalidBlockSize)));
     }
 
     // -----------------------------------------------------------------------
@@ -276,15 +293,15 @@ mod tests {
     #[test]
     fn unpad_three_bytes() {
         let data = vec![0x01, 0x02, 0x03, 0x80, 0x00, 0x00, 0x00, 0x00];
-        assert_eq!(unpad(&data), &[0x01, 0x02, 0x03]);
+        assert_eq!(unpad(&data).unwrap(), &[0x01, 0x02, 0x03]);
     }
 
     #[test]
     fn unpad_roundtrip() {
         for len in 0..=24usize {
             let original: Vec<u8> = (0..len as u8).collect();
-            let padded = pad(&original, DES_BLOCK_SIZE);
-            let unpadded = unpad(&padded);
+            let padded = pad(&original, DES_BLOCK_SIZE).unwrap();
+            let unpadded = unpad(&padded).unwrap();
             assert_eq!(
                 unpadded,
                 original.as_slice(),
@@ -297,13 +314,27 @@ mod tests {
     fn unpad_empty_padding_block() {
         // pad of empty = [0x80, 0x00 x7]; unpad should return []
         let data = vec![0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-        assert_eq!(unpad(&data), &[] as &[u8]);
+        assert_eq!(unpad(&data).unwrap(), &[] as &[u8]);
     }
 
     #[test]
-    fn unpad_no_marker_returns_original() {
+    fn unpad_no_marker_errors() {
+        // No 0x80 marker anywhere — malformed Method 2 padding.
         let data = vec![0x01, 0x02, 0x03];
-        assert_eq!(unpad(&data), &[0x01, 0x02, 0x03]);
+        assert!(matches!(unpad(&data), Err(Iso9797Error::UnpadFailed)));
+    }
+
+    #[test]
+    fn unpad_all_zeros_errors() {
+        // Trailing zeros with no preceding 0x80 marker is malformed.
+        let data = vec![0x00; 8];
+        assert!(matches!(unpad(&data), Err(Iso9797Error::UnpadFailed)));
+    }
+
+    #[test]
+    fn unpad_empty_errors() {
+        let data: Vec<u8> = Vec::new();
+        assert!(matches!(unpad(&data), Err(Iso9797Error::UnpadFailed)));
     }
 
     // -----------------------------------------------------------------------

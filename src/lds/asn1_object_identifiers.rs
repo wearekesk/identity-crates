@@ -148,6 +148,27 @@ impl OiePaceProtocol {
         let identifier_string = identifier_string.into().to_uppercase();
         let readable_name = readable_name.into().to_uppercase();
         let params = Self::params_from_name(&readable_name, &identifier_string)?;
+
+        // Consistency guard: if this OID string is registered, the supplied arc
+        // sequence and readable name must agree with the canonical registry
+        // entry. Without this, a caller could pair a valid protocol name with a
+        // different protocol's OID (or arc) and get a silently-mismatched
+        // protocol back. Unregistered OIDs are left to `params_from_name` alone.
+        if let Ok(registered) =
+            Asn1ObjectIdentifierType::instance().get_oid_by_identifier_string(&identifier_string)
+        {
+            if registered.readable_name.to_uppercase() != readable_name
+                || registered.identifier != identifier
+            {
+                return Err(OieException(format!(
+                    "OIEPaceProtocol; inconsistent PACE protocol for OID {identifier_string}: \
+                     readable name {readable_name} / arc {identifier:?} does not match the \
+                     registered entry ({})",
+                    registered.readable_name
+                )));
+            }
+        }
+
         Ok(Self {
             oie: Oie {
                 identifier_string,
@@ -412,6 +433,20 @@ mod tests {
     fn pace_protocol_unknown_name() {
         let err = OiePaceProtocol::new("1.2.3", "not-a-real-pace-oid", vec![1, 2, 3]).unwrap_err();
         assert!(err.0.contains("Unknown identifierString"));
+    }
+
+    #[test]
+    fn pace_protocol_rejects_name_oid_mismatch() {
+        // OID string is the DH-GM-AES-128 entry, but the readable name claims
+        // ECDH-GM-AES-128. The name decodes to valid params, yet it disagrees
+        // with the registered OID, so construction must fail.
+        let err = OiePaceProtocol::new(
+            "0.4.0.127.0.7.2.2.4.1.2",
+            "id-PACE-ECDH-GM-AES-CBC-CMAC-128",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 1, 2],
+        )
+        .unwrap_err();
+        assert!(err.0.contains("inconsistent PACE protocol"));
     }
 
     #[test]

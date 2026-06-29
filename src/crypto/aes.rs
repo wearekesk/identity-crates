@@ -107,6 +107,9 @@ pub enum AesCipherError {
 
     #[error("CMAC key is invalid: {0}")]
     CmacKeyError(String),
+
+    #[error("AES block size must be greater than zero")]
+    InvalidBlockSize,
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +177,7 @@ impl AesCipher {
         self.validate_key(key)?;
 
         let input = if padding {
-            self.zero_pad(data, AES_BLOCK_SIZE)
+            self.zero_pad(data, AES_BLOCK_SIZE)?
         } else {
             data.to_vec()
         };
@@ -243,26 +246,32 @@ impl AesCipher {
     /// Zero-pads `data` to the next multiple of `block_size` bytes by appending
     /// `0x00` bytes (not ISO 9797-1 method 2).
     ///
+    /// # Errors
+    /// Returns [`AesCipherError::InvalidBlockSize`] if `block_size == 0`
+    /// (instead of panicking, so misuse from the public API is recoverable).
+    ///
     /// # Examples
     /// ```
     /// use dmrtd::crypto::aes::{AesCipher, KeyLength, AES_BLOCK_SIZE};
     ///
     /// let cipher = AesCipher::new(KeyLength::S128);
-    /// let padded = cipher.zero_pad(&[0x01, 0x02, 0x03], AES_BLOCK_SIZE);
+    /// let padded = cipher.zero_pad(&[0x01, 0x02, 0x03], AES_BLOCK_SIZE).unwrap();
     /// assert_eq!(padded.len(), AES_BLOCK_SIZE);
     /// assert_eq!(&padded[..3], &[0x01, 0x02, 0x03]);
     /// assert!(padded[3..].iter().all(|&b| b == 0));
     /// ```
-    pub fn zero_pad(&self, data: &[u8], block_size: usize) -> Vec<u8> {
-        assert!(block_size > 0);
+    pub fn zero_pad(&self, data: &[u8], block_size: usize) -> Result<Vec<u8>, AesCipherError> {
+        if block_size == 0 {
+            return Err(AesCipherError::InvalidBlockSize);
+        }
         let remainder = data.len() % block_size;
         if remainder == 0 {
-            return data.to_vec();
+            return Ok(data.to_vec());
         }
         let pad_len = block_size - remainder;
         let mut padded = data.to_vec();
         padded.resize(padded.len() + pad_len, 0);
-        padded
+        Ok(padded)
     }
 
     // -----------------------------------------------------------------------
@@ -597,7 +606,7 @@ mod tests {
     #[test]
     fn zero_pad_three_bytes() {
         let cipher = AesCipher::new(KeyLength::S128);
-        let padded = cipher.zero_pad(&[0x01, 0x02, 0x03], AES_BLOCK_SIZE);
+        let padded = cipher.zero_pad(&[0x01, 0x02, 0x03], AES_BLOCK_SIZE).unwrap();
         assert_eq!(padded.len(), AES_BLOCK_SIZE);
         assert_eq!(&padded[..3], &[0x01u8, 0x02, 0x03]);
         assert!(padded[3..].iter().all(|&b| b == 0));
@@ -607,8 +616,17 @@ mod tests {
     fn zero_pad_exact_block_is_unchanged() {
         let cipher = AesCipher::new(KeyLength::S128);
         let data = [0xAAu8; AES_BLOCK_SIZE];
-        let padded = cipher.zero_pad(&data, AES_BLOCK_SIZE);
+        let padded = cipher.zero_pad(&data, AES_BLOCK_SIZE).unwrap();
         assert_eq!(padded, data);
+    }
+
+    #[test]
+    fn zero_pad_zero_block_size_errors() {
+        let cipher = AesCipher::new(KeyLength::S128);
+        assert!(matches!(
+            cipher.zero_pad(&[0x01], 0),
+            Err(AesCipherError::InvalidBlockSize)
+        ));
     }
 
     #[test]

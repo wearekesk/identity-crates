@@ -224,20 +224,36 @@ impl EfDG2 {
         offset += 2;
 
         if offset <= data.len() {
-            self.image_data = Some(data[offset..].to_vec());
+            // The per-image facial record begins right after the fixed facial
+            // header (FAC\0 (4) + version (4) + length_of_record (4) +
+            // number_of_facial_images (2) = 14 bytes) and spans
+            // `facial_record_data_length` bytes. Bound the image data by the end
+            // of that record when the length is valid and in range; fall back to
+            // the remainder of the block for absent/out-of-range lengths.
+            const FACIAL_RECORD_BLOCK_START: usize = 14;
+            let end = if self.facial_record_data_length > 0 {
+                FACIAL_RECORD_BLOCK_START
+                    .checked_add(self.facial_record_data_length as usize)
+                    .filter(|&e| e >= offset && e <= data.len())
+                    .unwrap_or(data.len())
+            } else {
+                data.len()
+            };
+            self.image_data = Some(data[offset..end].to_vec());
         }
         Ok(())
     }
 
-    /// Returns the encoded image type if the BDB was successfully parsed.
+    /// Returns the encoded image type if the BDB was successfully parsed and the
+    /// `image_data_type` field holds a value defined by ISO 19794-5
+    /// (`0` = JPEG, `1` = JPEG2000). Any other value yields `None` rather than
+    /// being silently treated as JPEG2000.
     pub fn image_type(&self) -> Option<ImageType> {
-        self.image_data_type.map(|t| {
-            if t == 0 {
-                ImageType::Jpeg
-            } else {
-                ImageType::Jpeg2000
-            }
-        })
+        match self.image_data_type? {
+            0 => Some(ImageType::Jpeg),
+            1 => Some(ImageType::Jpeg2000),
+            _ => None,
+        }
     }
 }
 
@@ -381,6 +397,83 @@ mod tests {
         let dg2_bytes = build_minimal_dg2(&blob, 1, 100, 50);
         let dg = EfDG2::from_bytes(dg2_bytes).unwrap();
         assert_eq!(dg.image_type(), Some(ImageType::Jpeg2000));
+    }
+
+    #[test]
+    fn unknown_image_type_is_none() {
+        // image_data_type = 2 is not defined by ISO 19794-5; must not default
+        // to JPEG2000.
+        let blob = vec![0xFFu8, 0xD8];
+        let dg2_bytes = build_minimal_dg2(&blob, 2, 1, 1);
+        let dg = EfDG2::from_bytes(dg2_bytes).unwrap();
+        assert_eq!(dg.image_type(), None);
+    }
+
+    /// Builds a DG2 whose facial record sets an explicit
+    /// `facial_record_data_length` and appends `trailing` junk bytes after the
+    /// declared record end.
+    fn build_dg2_with_record_len(
+        image_payload: &[u8],
+        facial_record_data_length: u32,
+        trailing: &[u8],
+    ) -> Vec<u8> {
+        let mut bdb = Vec::new();
+        bdb.extend_from_slice(b"FAC\0");
+        bdb.extend_from_slice(&VERSION_NUMBER.to_be_bytes());
+        bdb.extend_from_slice(&0u32.to_be_bytes()); // length_of_record
+        bdb.extend_from_slice(&1u16.to_be_bytes()); // number_of_facial_images
+        bdb.extend_from_slice(&facial_record_data_length.to_be_bytes());
+        bdb.extend_from_slice(&0u16.to_be_bytes()); // nr_feature_points
+        bdb.push(0); // gender
+        bdb.push(0); // eye color
+        bdb.push(0); // hair color
+        bdb.extend_from_slice(&[0, 0, 0]); // feature mask
+        bdb.extend_from_slice(&0u16.to_be_bytes()); // expression
+        bdb.extend_from_slice(&[0, 0, 0]); // pose angle
+        bdb.extend_from_slice(&[0, 0, 0]); // pose angle uncertainty
+        bdb.push(0); // face_image_type
+        bdb.push(0); // image_data_type = JPEG
+        bdb.extend_from_slice(&1u16.to_be_bytes()); // width
+        bdb.extend_from_slice(&1u16.to_be_bytes()); // height
+        bdb.push(0); // color space
+        bdb.push(0); // source type
+        bdb.extend_from_slice(&0u16.to_be_bytes()); // device type
+        bdb.extend_from_slice(&0u16.to_be_bytes()); // quality
+        bdb.extend_from_slice(image_payload);
+        bdb.extend_from_slice(trailing);
+
+        let bht = Tlv::encode(BIOMETRIC_HEADER_TEMPLATE_BASE_TAG, &[]);
+        let bdb_tlv = Tlv::encode(BIOMETRIC_DATA_BLOCK_TAG, &bdb);
+        let mut bit_body = bht;
+        bit_body.extend_from_slice(&bdb_tlv);
+        let bit = Tlv::encode(BIOMETRIC_INFORMATION_TEMPLATE_TAG, &bit_body);
+        let bict = Tlv::encode(BIOMETRIC_INFORMATION_COUNT_TAG, &[1u8]);
+        let mut bigt_body = bict;
+        bigt_body.extend_from_slice(&bit);
+        let bigt = Tlv::encode(BIOMETRIC_INFORMATION_GROUP_TEMPLATE_TAG, &bigt_body);
+        Tlv::encode(EF_DG2_TAG.value(), &bigt)
+    }
+
+    #[test]
+    fn image_data_is_bounded_by_record_length() {
+        // The fixed header consumed before image data is 46 bytes; the facial
+        // record begins at offset 14, so a 6-byte image gives a record length of
+        // 46 - 14 + 6 = 38. Trailing junk after the record must be excluded.
+        let image = vec![0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66];
+        let trailing = vec![0xDEu8, 0xAD, 0xBE, 0xEF];
+        let dg2 = build_dg2_with_record_len(&image, 38, &trailing);
+        let dg = EfDG2::from_bytes(dg2).unwrap();
+        assert_eq!(dg.image_data.as_ref().unwrap(), &image);
+    }
+
+    #[test]
+    fn image_data_falls_back_for_out_of_range_record_length() {
+        // An absurd record length is ignored; image data falls back to the rest
+        // of the block (image payload, here with no trailing bytes).
+        let image = vec![0x01u8, 0x02, 0x03];
+        let dg2 = build_dg2_with_record_len(&image, 0xFFFF_FFFF, &[]);
+        let dg = EfDG2::from_bytes(dg2).unwrap();
+        assert_eq!(dg.image_data.as_ref().unwrap(), &image);
     }
 
     #[test]

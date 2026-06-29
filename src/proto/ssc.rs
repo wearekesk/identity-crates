@@ -144,10 +144,21 @@ impl Ssc {
     /// Creates a zero-valued [`Ssc`] with the given `bit_size`.
     ///
     /// # Panics
-    /// Panics if `bit_size % 8 != 0`.
+    /// Panics if `bit_size % 8 != 0` or `bit_size > 128`.
     pub fn zeroed(bit_size: usize) -> Self {
+        // Validate the width BEFORE allocating the backing buffer; otherwise an
+        // absurd `bit_size` would trigger a huge `vec![0u8; bit_size / 8]`
+        // allocation before [`Ssc::new`] ever gets a chance to reject it.
+        assert!(
+            bit_size % 8 == 0,
+            "zeroed SSC: bit_size must be a multiple of 8"
+        );
+        assert!(
+            bit_size <= 128,
+            "zeroed SSC: bit_size must be at most 128 bits"
+        );
         Self::new(&vec![0u8; bit_size / 8], bit_size)
-            .expect("zeroed SSC: bit_size must be a multiple of 8")
+            .expect("zeroed SSC with a validated bit_size is always constructible")
     }
 
     /// Increments the counter by one, wrapping to zero on overflow.
@@ -588,6 +599,14 @@ mod tests {
     fn zeroed_produces_all_zero_bytes() {
         let ssc = Ssc::zeroed(64);
         assert_eq!(ssc.to_bytes(), vec![0x00; 8]);
+    }
+
+    #[test]
+    #[should_panic(expected = "at most 128")]
+    fn zeroed_rejects_absurd_bit_size_before_allocating() {
+        // An enormous bit_size must be rejected by the up-front bound check
+        // rather than attempting a multi-exabyte allocation.
+        let _ = Ssc::zeroed(usize::MAX - 7);
     }
 
     // -----------------------------------------------------------------------

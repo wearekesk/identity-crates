@@ -179,21 +179,23 @@ impl StringDateExt for str {
             .parse()
             .map_err(|_| StringExtError::DateParse("Invalid day digits".to_string()))?;
 
-        // Determine the disambiguation threshold (max_year / max_month)
+        // Determine the disambiguation threshold (max_year / max_month / max_day)
         let now = reference;
-        let (max_year, max_month) = if future_date {
+        let (max_year, max_month, max_day) = if future_date {
             // Look ~20 years and 5 months into the future (mirrors logic)
             let future_months = now.month0() as i32 + 5;
             let extra_years = future_months / 12;
             let future_month = (future_months % 12) as u32 + 1;
-            (now.year() + 20 + extra_years as i32, future_month)
+            (now.year() + 20 + extra_years, future_month, now.day())
         } else {
-            (now.year(), now.month())
+            (now.year(), now.month(), now.day())
         };
 
-        // Map two-digit year to four-digit year
+        // Map two-digit year to four-digit year. The threshold includes the day
+        // so a same-year/same-month date that falls after the reference day is
+        // still rolled back a century instead of parsing 100 years off.
         let mut year = yy + 2000;
-        if year > max_year || (year == max_year && max_month < m) {
+        if (year, m, d) > (max_year, max_month, max_day) {
             year -= 100;
         }
 
@@ -316,6 +318,25 @@ mod tests {
             .parse_date_with_ref(false, reference)
             .unwrap();
         assert_eq!(d.year(), 1931);
+
+        // Same year and month as the reference, but a day AFTER the reference
+        // day, is in the future for a past date → rolls back a century.
+        let d = "300616"
+            .parse_date_yymmdd_with_ref(false, reference)
+            .unwrap();
+        assert_eq!(d.year(), 1930);
+
+        // Same year/month, the exact reference day, stays in the current century.
+        let d = "300615"
+            .parse_date_yymmdd_with_ref(false, reference)
+            .unwrap();
+        assert_eq!(d.year(), 2030);
+
+        // Same year/month, a day BEFORE the reference day, stays current century.
+        let d = "300614"
+            .parse_date_yymmdd_with_ref(false, reference)
+            .unwrap();
+        assert_eq!(d.year(), 2030);
     }
 
     #[test]

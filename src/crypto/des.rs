@@ -47,6 +47,9 @@ pub enum DesError {
 
     #[error("DES block length must be exactly {DES_BLOCK_SIZE} bytes, got {0}")]
     InvalidBlockLength(usize),
+
+    #[error(transparent)]
+    Iso9797(#[from] crate::crypto::iso9797::Iso9797Error),
 }
 
 // ---------------------------------------------------------------------------
@@ -152,7 +155,7 @@ impl DesCipher {
     pub fn encrypt(&self, data: &[u8], pad_data: bool) -> Result<Vec<u8>, DesError> {
         let owned;
         let input: &[u8] = if pad_data {
-            owned = pad(data, DES_BLOCK_SIZE);
+            owned = pad(data, DES_BLOCK_SIZE)?;
             &owned
         } else {
             data
@@ -177,7 +180,7 @@ impl DesCipher {
         }
         let plain = cbc_decrypt_single_des(&self.key, &self.iv, edata);
         if padded_data {
-            Ok(unpad(&plain).to_vec())
+            Ok(unpad(&plain)?.to_vec())
         } else {
             Ok(plain)
         }
@@ -330,7 +333,7 @@ impl DesedeCipher {
     pub fn encrypt(&self, data: &[u8], pad_data: bool) -> Result<Vec<u8>, DesError> {
         let owned;
         let input: &[u8] = if pad_data {
-            owned = pad(data, DES_BLOCK_SIZE);
+            owned = pad(data, DES_BLOCK_SIZE)?;
             &owned
         } else {
             data
@@ -353,7 +356,7 @@ impl DesedeCipher {
         }
         let plain = cbc_decrypt_3des(&self.triple_key.0, &self.iv, edata);
         if padded_data {
-            Ok(unpad(&plain).to_vec())
+            Ok(unpad(&plain)?.to_vec())
         } else {
             Ok(plain)
         }

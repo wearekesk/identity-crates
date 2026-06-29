@@ -8,7 +8,7 @@ use crate::crypto::aes::{AesCipher, BlockCipherMode, KeyLength};
 use crate::lds::asn1_object_identifiers::CipherAlgorithm;
 use crate::proto::iso7816::sm::SmError;
 use crate::proto::iso7816::smcipher::SmCipher;
-use crate::proto::ssc::Ssc;
+use crate::proto::ssc::{Ssc, AES_BLOCK_BITS};
 
 /// AES-based secure messaging cipher.
 #[derive(Clone)]
@@ -52,6 +52,14 @@ impl AesSmCipher {
     }
 
     fn iv_from_ssc(&self, ssc: &Ssc) -> Result<Vec<u8>, SmError> {
+        // AES secure messaging requires a 128-bit (16-byte) SSC: the IV is a
+        // single ECB block of the SSC, so a wrong width would derive a bogus IV.
+        if ssc.bit_size() != AES_BLOCK_BITS {
+            return Err(SmError(format!(
+                "AES SM requires a {AES_BLOCK_BITS}-bit SSC, got {}",
+                ssc.bit_size()
+            )));
+        }
         // IV = E(K_enc, SSC)  using ECB (one block).
         self.cipher
             .encrypt(&ssc.to_bytes(), &self.ks_enc, None, BlockCipherMode::Ecb, false)
@@ -142,6 +150,15 @@ mod tests {
         let c = build();
         let err = c.encrypt(&[0u8; 16], None).unwrap_err();
         assert!(err.0.contains("requires SSC"));
+    }
+
+    #[test]
+    fn encrypt_with_wrong_ssc_width_errors() {
+        let c = build();
+        // 64-bit SSC is invalid for AES SM (needs 128-bit).
+        let bad_ssc = Ssc::new(&[0x01], 64).unwrap();
+        let err = c.encrypt(&[0u8; 16], Some(&bad_ssc)).unwrap_err();
+        assert!(err.0.contains("128-bit SSC"));
     }
 
     #[test]

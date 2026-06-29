@@ -61,7 +61,8 @@ impl<C: SmCipher> MrtdSM<C> {
         match cmd.data.as_ref() {
             Some(data) if !data.is_empty() => {
                 let block_len = self.block_len()?;
-                let padded = iso9797::pad(data, block_len);
+                let padded = iso9797::pad(data, block_len)
+                    .map_err(|e| SmError(format!("ISO 9797 pad: {e}")))?;
                 let edata = self.cipher.encrypt(&padded, Some(&self.ssc))?;
                 let out = if cmd.ins == ins::READ_BINARY_EXT {
                     sm::do85(&edata)
@@ -76,7 +77,8 @@ impl<C: SmCipher> MrtdSM<C> {
 
     fn generate_m(&self, cmd: &CommandApdu, data_do: &[u8], do97: &[u8]) -> Result<Vec<u8>, SmError> {
         let block_len = self.block_len()?;
-        let padded_header = iso9797::pad(&cmd.raw_header(), block_len);
+        let padded_header = iso9797::pad(&cmd.raw_header(), block_len)
+            .map_err(|e| SmError(format!("ISO 9797 pad: {e}")))?;
         let mut out = padded_header;
         out.extend_from_slice(data_do);
         out.extend_from_slice(do97);
@@ -87,14 +89,14 @@ impl<C: SmCipher> MrtdSM<C> {
         let block_len = self.block_len()?;
         let mut up_n = self.ssc.to_bytes();
         up_n.extend_from_slice(m);
-        Ok(iso9797::pad(&up_n, block_len))
+        iso9797::pad(&up_n, block_len).map_err(|e| SmError(format!("ISO 9797 pad: {e}")))
     }
 
     fn generate_k(&self, data: &[u8]) -> Result<Vec<u8>, SmError> {
         let block_len = self.block_len()?;
         let mut up_k = self.ssc.to_bytes();
         up_k.extend_from_slice(data);
-        Ok(iso9797::pad(&up_k, block_len))
+        iso9797::pad(&up_k, block_len).map_err(|e| SmError(format!("ISO 9797 pad: {e}")))
     }
 
     /// Decrypts a `DO'85'` or `DO'87'` data object.
@@ -114,11 +116,28 @@ impl<C: SmCipher> MrtdSM<C> {
         }
 
         let is_do87 = tag == TAG_DO87;
-        let padded = !is_do87 || dtv.value[0] == 0x01;
-        let cipher_input = if is_do87 { &dtv.value[1..] } else { &dtv.value[..] };
+        // DO'87' carries a leading padding-content indicator: 0x01 = the
+        // plaintext was ISO 9797-1 padded, 0x02 = it was not. Any other value is
+        // malformed and must be rejected rather than silently treated as
+        // unpadded. DO'85' has no indicator and is always padded.
+        let (padded, cipher_input): (bool, &[u8]) = if is_do87 {
+            match dtv.value[0] {
+                0x01 => (true, &dtv.value[1..]),
+                0x02 => (false, &dtv.value[1..]),
+                other => {
+                    return Err(SmError(format!(
+                        "Invalid DO'87' padding-content indicator: {other:#04X}"
+                    )))
+                }
+            }
+        } else {
+            (true, &dtv.value[..])
+        };
         let mut data = self.cipher.decrypt(cipher_input, Some(&self.ssc))?;
         if padded {
-            data = iso9797::unpad(&data).to_vec();
+            data = iso9797::unpad(&data)
+                .map_err(|e| SmError(format!("ISO 9797 unpad: {e}")))?
+                .to_vec();
         }
         Ok(Some(data))
     }
@@ -285,6 +304,19 @@ mod tests {
     }
 
     #[test]
+    fn decrypt_rejects_invalid_do87_indicator() {
+        let sm = build_sm();
+        // DO'87' whose leading padding-content indicator is neither 0x01 nor
+        // 0x02 must be rejected before any decryption is attempted.
+        let mut body = vec![0x05u8];
+        body.extend_from_slice(&[0u8; 8]); // block-aligned dummy ciphertext
+        let tlv = Tlv::encode(TAG_DO87, &body);
+        let dtv = Tlv::decode(&tlv).unwrap();
+        let err = sm.decrypt_data_do(Some(&dtv)).unwrap_err();
+        assert!(err.0.contains("padding-content indicator"));
+    }
+
+    #[test]
     fn unprotect_rejects_mac_mismatch() {
         let mut sm = build_sm();
         // Bogus SM response: DO'99' with SW=9000 + DO'8E' with zero MAC.
@@ -316,7 +348,7 @@ mod tests {
 
         // Forge a plausible response: encrypt 4 bytes of plaintext, build DO'87' + DO'99' + DO'8E'.
         let plaintext = vec![0xABu8, 0xCD, 0xEF, 0x01];
-        let padded = iso9797::pad(&plaintext, DesedeCipher::BLOCK_SIZE);
+        let padded = iso9797::pad(&plaintext, DesedeCipher::BLOCK_SIZE).unwrap();
         // Use reader's cipher to produce ciphertext with the (incremented) SSC.
         reader.ssc.increment();
         let ct = reader.cipher.encrypt(&padded, Some(&reader.ssc)).unwrap();
@@ -332,7 +364,7 @@ mod tests {
         reader.ssc.increment();
         let mut k = reader.ssc.to_bytes();
         k.extend_from_slice(&body);
-        let k_padded = iso9797::pad(&k, DesedeCipher::BLOCK_SIZE);
+        let k_padded = iso9797::pad(&k, DesedeCipher::BLOCK_SIZE).unwrap();
         let cc = reader.cipher.mac(&k_padded).unwrap();
         // Rewind the SSC so unprotect re-increments it back to the same point.
         reader.ssc = build_sm().ssc;
