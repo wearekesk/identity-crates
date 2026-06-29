@@ -306,7 +306,10 @@ impl<T: Transceiver> MrtdApi<T> {
         })?;
         let parameter_id = u32::try_from(parameter_id_raw)
             .map_err(|_| MrtdApiError::Session("parameter_id out of range".into()))?;
-        let mut session = PaceSession::new_ecdh(access_key, protocol, parameter_id)
+        // Dispatch on the protocol's agreement algorithm (ECDH-GM or DH-GM) so
+        // a DH PACEInfo selected from EF.CardAccess actually runs instead of
+        // failing as unsupported.
+        let mut session = PaceSession::new(access_key, protocol, parameter_id)
             .map_err(|e| MrtdApiError::Session(e.to_string()))?;
         loop {
             match session.next().map_err(|e| MrtdApiError::Session(e.to_string()))? {
