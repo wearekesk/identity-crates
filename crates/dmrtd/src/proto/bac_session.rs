@@ -373,8 +373,9 @@ mod tests {
                                    // SW=9000 but a wrong-length body must not rewind the machine to Start.
         let resp = build_response(&[0u8; 7]);
         assert!(s.feed_response(&resp).is_err());
-        // next() must NOT re-issue GET CHALLENGE; the session is poisoned.
-        assert!(s.next().is_err());
+        // next() must NOT re-issue GET CHALLENGE; the session is specifically
+        // poisoned (the `Failed` error, not the "waiting for a response" one).
+        assert!(s.next().err().unwrap().0.contains("has failed"));
     }
 
     #[test]
@@ -384,14 +385,15 @@ mod tests {
         let _ = s.next().unwrap(); // GET CHALLENGE
         let empty = ResponseApdu::new(StatusWord::SUCCESS, None).to_bytes();
         assert!(s.feed_response(&empty).is_err());
-        assert!(s.next().is_err()); // poisoned
+        // Verify it reached `Failed` (not still waiting) by matching the error.
+        assert!(s.next().err().unwrap().0.contains("has failed"));
 
         // A non-9000 status also poisons.
         let mut s2 = BacSession::new(icao_d3_key());
         let _ = s2.next().unwrap();
         let err_status = ResponseApdu::new(StatusWord::SM_DATA_INVALID, None).to_bytes();
         assert!(s2.feed_response(&err_status).is_err());
-        assert!(s2.next().is_err());
+        assert!(s2.next().err().unwrap().0.contains("has failed"));
 
         // But feeding when NOT awaiting a response is a usage error that does
         // NOT poison — a fresh session can still be driven from the start.

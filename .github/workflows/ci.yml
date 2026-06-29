@@ -18,8 +18,10 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
-# Third-party actions are pinned to immutable commit SHAs (tag in trailing
-# comment) to avoid executing code from mutable tags.
+# Third-party actions are pinned to immutable commit SHAs to avoid executing
+# code from mutable tags/branches. The trailing comment records the source
+# ref the SHA was taken from (a tag like `v4`, or a branch like `master`) — it
+# is documentation only; the SHA is what's actually used.
 jobs:
   fmt:
     name: rustfmt
