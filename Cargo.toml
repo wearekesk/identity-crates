@@ -22,18 +22,18 @@ log = "0.4"
 thiserror = "2"
 
 # RustCrypto: block ciphers + MAC + hashes + traits
-aes = "0.8"
-des = "0.8"
-cmac = "0.7"
-sha1 = "0.10"
-sha2 = "0.10"
-digest = "0.10"
-cipher = "0.4"
-cbc = { version = "0.1", features = ["alloc"] }
+aes = "0.9"
+des = "0.9"
+cmac = "0.8"
+sha1 = "0.11"
+sha2 = "0.11"
+digest = "0.11"
+cipher = "0.5"
+cbc = { version = "0.2", features = ["alloc"] }
 
 # big integers + elliptic curves (PACE ECDH-GM, P-256)
 num-bigint = "0.4"
 num-traits = "0.2"
-rand = "0.8"
-p256 = { version = "0.13", features = ["arithmetic", "ecdh"] }
-elliptic-curve = { version = "0.13", features = ["arithmetic"] }
+rand = "0.10"
+p256 = { version = "=0.14.0-rc.14", features = ["arithmetic", "ecdh"] }
+elliptic-curve = { version = "0.14", features = ["arithmetic"] }

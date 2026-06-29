@@ -11,13 +11,16 @@
 //! }
 //! ```
 
-use rand::RngCore;
+use rand::Rng;
+use rand::rand_core::UnwrapErr;
+use rand::rngs::SysRng;
 
 /// Generates `length` cryptographically secure random bytes.
 ///
-/// Uses [`rand::rngs::OsRng`] as the underlying source, which delegates to the
+/// Uses [`rand::rngs::SysRng`] as the underlying source, which delegates to the
 /// OS entropy source (e.g. `getrandom` / `/dev/urandom` on Linux, `BCryptGenRandom`
-/// on Windows).
+/// on Windows). It is wrapped in [`UnwrapErr`] so the fallible OS read is
+/// surfaced as a panic (see below).
 ///
 /// # Panics
 /// Panics if the OS random source is unavailable (extremely rare / OS fault).
@@ -38,7 +41,7 @@ use rand::RngCore;
 /// ```
 pub fn random_bytes(length: usize) -> Vec<u8> {
     let mut buf = vec![0u8; length];
-    rand::rngs::OsRng.fill_bytes(&mut buf);
+    UnwrapErr(SysRng).fill_bytes(&mut buf);
     buf
 }
 

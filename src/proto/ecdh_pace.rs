@@ -15,12 +15,16 @@
 
 use elliptic_curve::{
     group::Group,
-    sec1::{FromEncodedPoint, ToEncodedPoint},
-    Field, NonZeroScalar, PrimeField,
+    ops::Reduce,
+    sec1::{FromSec1Point, ToSec1Point},
+    Generate, NonZeroScalar, PrimeField,
 };
 use num_bigint::BigUint;
-use p256::{AffinePoint, EncodedPoint, NistP256, ProjectivePoint, PublicKey, Scalar, SecretKey};
-use rand::{rngs::OsRng, rngs::StdRng, RngCore, SeedableRng};
+use p256::{
+    AffinePoint, NistP256, ProjectivePoint, PublicKey, Scalar, Sec1Point as EncodedPoint, SecretKey,
+};
+use rand::rand_core::UnwrapErr;
+use rand::{rngs::StdRng, rngs::SysRng, Rng, SeedableRng};
 use thiserror::Error;
 
 use crate::proto::domain_parameter::{self, DomainParameter};
@@ -104,20 +108,20 @@ impl ECDHPace {
         self.ephemeral_pub.is_some()
     }
 
-    /// Generates a new main key pair using `OsRng` or a seeded RNG if `seed`
-    /// is provided (must be exactly 32 bytes).
+    /// Generates a new main key pair using the OS RNG (`SysRng`) or a seeded
+    /// RNG if `seed` is provided (must be exactly 32 bytes).
     pub fn generate_key_pair(&mut self, seed32: Option<&[u8]>) -> Result<(), ECDHPaceError> {
         let sk = match seed32 {
             None => {
-                let mut rng = OsRng;
-                SecretKey::random(&mut rng)
+                let mut rng = UnwrapErr(SysRng);
+                SecretKey::generate_from_rng(&mut rng)
             }
             Some(s) if s.len() == 32 => {
                 let mut seed_arr = [0u8; 32];
                 seed_arr.copy_from_slice(s);
                 let mut rng = StdRng::from_seed(seed_arr);
-                // `SecretKey::random` requires `CryptoRng`, which `StdRng`
-                // does not implement; sample the scalar manually via rejection.
+                // Sample the scalar manually via rejection so the seeded path
+                // has stable, reproducible output independent of any RNG helper.
                 let scalar = loop {
                     let mut bytes = [0u8; 32];
                     rng.fill_bytes(&mut bytes);
@@ -276,14 +280,14 @@ fn scalar_from_bytes(bytes: &[u8]) -> Scalar {
         // well-formed PACE nonces (16 bytes), but kept defensive.
         buf.copy_from_slice(&bytes[bytes.len() - 32..]);
     }
-    <Scalar as elliptic_curve::ops::Reduce<p256::U256>>::reduce_bytes(&buf.into())
+    <Scalar as Reduce<p256::U256>>::reduce(&p256::U256::from_be_slice(&buf))
 }
 
 fn sample_scalar(seed32: Option<&[u8]>) -> Result<NonZeroScalar<NistP256>, ECDHPaceError> {
     match seed32 {
         None => {
-            let mut rng = OsRng;
-            Ok(NonZeroScalar::random(&mut rng))
+            let mut rng = UnwrapErr(SysRng);
+            Ok(NonZeroScalar::generate_from_rng(&mut rng))
         }
         Some(s) if s.len() == 32 => {
             let mut seed_arr = [0u8; 32];
@@ -320,8 +324,8 @@ fn compute_shared_point(
 
 fn point_to_pubkey_pace(point: ProjectivePoint) -> PublicKeyPace {
     let affine: AffinePoint = point.to_affine();
-    let encoded: EncodedPoint = affine.to_encoded_point(false);
-    // SAFETY: `to_encoded_point(false)` always yields an uncompressed point
+    let encoded: EncodedPoint = affine.to_sec1_point(false);
+    // SAFETY: `to_sec1_point(false)` always yields an uncompressed point
     // (tag 0x04 || X || Y) for a non-infinity affine point.
     let x_bytes = encoded.x().expect("x coordinate");
     let y_bytes = encoded.y().expect("y coordinate");
@@ -344,14 +348,14 @@ fn pubkey_from_xy(x: &BigUint, y: &BigUint) -> Result<PublicKey, ECDHPaceError> 
 
     let encoded = EncodedPoint::from_affine_coordinates(&x_bytes.into(), &y_bytes.into(), false);
     let affine =
-        Option::<AffinePoint>::from(AffinePoint::from_encoded_point(&encoded))
+        Option::<AffinePoint>::from(AffinePoint::from_sec1_point(&encoded))
             .ok_or(ECDHPaceError::InvalidEncoding)?;
     Ok(PublicKey::from_affine(affine).map_err(|_| ECDHPaceError::InvalidEncoding)?)
 }
 
 impl ProjectivePointExt for ProjectivePoint {
     fn encode_uncompressed(&self) -> Vec<u8> {
-        self.to_affine().to_encoded_point(false).as_bytes().to_vec()
+        self.to_affine().to_sec1_point(false).as_bytes().to_vec()
     }
 }
 

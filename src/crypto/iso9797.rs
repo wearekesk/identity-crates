@@ -18,7 +18,7 @@
 //! - ICAO Doc 9303 Part 11, Section 9.8.6
 
 use cbc::cipher::block_padding::NoPadding;
-use cipher::{BlockDecrypt, BlockEncrypt, BlockEncryptMut, KeyInit, KeyIvInit};
+use cipher::{Array, BlockCipherDecrypt, BlockCipherEncrypt, BlockModeEncrypt, KeyInit, KeyIvInit};
 use des::Des;
 use thiserror::Error;
 
@@ -181,30 +181,25 @@ pub fn mac_alg3(key: &[u8], msg: &[u8], pad_msg: bool) -> Result<Vec<u8>, Iso979
 ///
 /// `data` must already be a multiple of 8 bytes.
 fn cbc_encrypt_des(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
-    use cipher::generic_array::GenericArray;
-
     // `data` is block-aligned by the caller, so `NoPadding` is a no-op; the CBC
     // chaining is delegated to the vetted `cbc` crate.
-    cbc::Encryptor::<Des>::new(GenericArray::from_slice(key), GenericArray::from_slice(iv))
-        .encrypt_padded_vec_mut::<NoPadding>(data)
+    cbc::Encryptor::<Des>::new_from_slices(key, iv)
+        .expect("valid DES key/iv")
+        .encrypt_padded_vec::<NoPadding>(data)
 }
 
 /// Encrypts a single 8-byte block using single DES in ECB mode.
 fn ecb_encrypt_des(key: &[u8], block: &[u8]) -> Vec<u8> {
-    use cipher::generic_array::GenericArray;
-
-    let cipher = Des::new(GenericArray::from_slice(key));
-    let mut b = *GenericArray::from_slice(block);
+    let cipher = Des::new_from_slice(key).expect("valid DES key");
+    let mut b = Array::try_from(block).expect("DES block");
     cipher.encrypt_block(&mut b);
     b.to_vec()
 }
 
 /// Decrypts a single 8-byte block using single DES in ECB mode.
 fn ecb_decrypt_des(key: &[u8], block: &[u8]) -> Vec<u8> {
-    use cipher::generic_array::GenericArray;
-
-    let cipher = Des::new(GenericArray::from_slice(key));
-    let mut b = *GenericArray::from_slice(block);
+    let cipher = Des::new_from_slice(key).expect("valid DES key");
+    let mut b = Array::try_from(block).expect("DES block");
     cipher.decrypt_block(&mut b);
     b.to_vec()
 }

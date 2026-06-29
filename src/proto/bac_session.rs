@@ -31,7 +31,8 @@
 //! }
 //! ```
 
-use rand::{rngs::OsRng, RngCore};
+use rand::rand_core::UnwrapErr;
+use rand::{rngs::SysRng, Rng};
 
 use crate::proto::bac::{
     self, BacError, E_LEN, K_LEN, MAC_LEN, NONCE_LEN, S_LEN,
@@ -95,9 +96,9 @@ enum State {
 }
 
 impl BacSession {
-    /// Creates a new session with `RND.IFD` and `K.IFD` drawn from `OsRng`.
+    /// Creates a new session with `RND.IFD` and `K.IFD` drawn from `SysRng`.
     pub fn new(key: DBAKey) -> Self {
-        let mut rng = OsRng;
+        let mut rng = UnwrapErr(SysRng);
         let mut rnd_ifd = [0u8; NONCE_LEN];
         let mut kifd = [0u8; K_LEN];
         rng.fill_bytes(&mut rnd_ifd);

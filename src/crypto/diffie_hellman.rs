@@ -12,7 +12,8 @@
 
 use num_bigint::BigUint;
 use num_traits::One;
-use rand::{RngCore, SeedableRng, rngs::OsRng, rngs::StdRng};
+use rand::rand_core::UnwrapErr;
+use rand::{Rng, SeedableRng, rngs::StdRng, rngs::SysRng};
 use thiserror::Error;
 
 /// Default private-key length (bits) when not specified on the
@@ -248,7 +249,7 @@ impl DHpkcs3Engine {
             let mut bytes = vec![0u8; byte_len.max(1)];
             return Ok(match seed {
                 Some(s) => Self::draw_in_range(&mut StdRng::seed_from_u64(s), &mut bytes, &lower, &upper),
-                None => Self::draw_in_range(&mut OsRng, &mut bytes, &lower, &upper),
+                None => Self::draw_in_range(&mut UnwrapErr(SysRng), &mut bytes, &lower, &upper),
             });
         }
 
@@ -269,14 +270,14 @@ impl DHpkcs3Engine {
                 Ok(Self::draw_in_range(&mut rng, &mut bytes, &lower, &upper))
             }
             None => {
-                let mut rng = OsRng;
+                let mut rng = UnwrapErr(SysRng);
                 Ok(Self::draw_in_range(&mut rng, &mut bytes, &lower, &upper))
             }
         }
     }
 
     /// Rejection-samples a value in the half-open range `[lower, upper)`.
-    fn draw_in_range<R: RngCore>(
+    fn draw_in_range<R: Rng>(
         rng: &mut R,
         buf: &mut [u8],
         lower: &BigUint,

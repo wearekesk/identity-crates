@@ -29,7 +29,7 @@
 //!
 //! [`BacSession`]: crate::proto::bac_session::BacSession
 
-use elliptic_curve::sec1::ToEncodedPoint;
+use elliptic_curve::sec1::ToSec1Point;
 use p256::ProjectivePoint;
 use thiserror::Error;
 
@@ -395,7 +395,7 @@ impl<K: AccessKey> PaceSession<K> {
 }
 
 fn ecdh_shared_secret_x_bytes(shared: ProjectivePoint) -> Result<Vec<u8>, PaceSessionError> {
-    let encoded = shared.to_affine().to_encoded_point(false);
+    let encoded = shared.to_affine().to_sec1_point(false);
     let x = encoded.x().ok_or(PaceSessionError::MissingSharedSecretX)?;
     Ok(x.to_vec())
 }

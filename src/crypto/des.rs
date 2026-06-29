@@ -20,8 +20,8 @@
 use crate::crypto::iso9797::{DES_BLOCK_SIZE, pad, unpad};
 use cbc::cipher::block_padding::NoPadding;
 use cipher::{
-    BlockDecrypt, BlockDecryptMut, BlockEncrypt, BlockEncryptMut, KeyInit, KeyIvInit,
-    generic_array::GenericArray,
+    Array, BlockCipherDecrypt, BlockCipherEncrypt, BlockModeDecrypt, BlockModeEncrypt, KeyInit,
+    KeyIvInit,
 };
 use des::{Des, TdesEde3};
 use thiserror::Error;
@@ -191,8 +191,8 @@ impl DesCipher {
         if block.len() != DES_BLOCK_SIZE {
             return Err(DesError::InvalidBlockLength(block.len()));
         }
-        let cipher = Des::new(GenericArray::from_slice(&self.key));
-        let mut b = *GenericArray::from_slice(block);
+        let cipher = Des::new_from_slice(&self.key).expect("valid DES key");
+        let mut b = Array::try_from(block).expect("DES block");
         cipher.encrypt_block(&mut b);
         Ok(b.to_vec())
     }
@@ -205,8 +205,8 @@ impl DesCipher {
         if eblock.len() != DES_BLOCK_SIZE {
             return Err(DesError::InvalidBlockLength(eblock.len()));
         }
-        let cipher = Des::new(GenericArray::from_slice(&self.key));
-        let mut b = *GenericArray::from_slice(eblock);
+        let cipher = Des::new_from_slice(&self.key).expect("valid DES key");
+        let mut b = Array::try_from(eblock).expect("DES block");
         cipher.decrypt_block(&mut b);
         Ok(b.to_vec())
     }
@@ -457,14 +457,16 @@ pub fn desede_decrypt(
 fn cbc_encrypt_single_des(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
     // `data` is block-aligned by the caller, so `NoPadding` is a no-op and the
     // CBC chaining is delegated to the vetted `cbc` crate.
-    cbc::Encryptor::<Des>::new(GenericArray::from_slice(key), GenericArray::from_slice(iv))
-        .encrypt_padded_vec_mut::<NoPadding>(data)
+    cbc::Encryptor::<Des>::new_from_slices(key, iv)
+        .expect("valid DES key/iv")
+        .encrypt_padded_vec::<NoPadding>(data)
 }
 
 /// Single-DES CBC decrypt.  `data` must be block-aligned.
 fn cbc_decrypt_single_des(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
-    cbc::Decryptor::<Des>::new(GenericArray::from_slice(key), GenericArray::from_slice(iv))
-        .decrypt_padded_vec_mut::<NoPadding>(data)
+    cbc::Decryptor::<Des>::new_from_slices(key, iv)
+        .expect("valid DES key/iv")
+        .decrypt_padded_vec::<NoPadding>(data)
         .expect("CBC NoPadding decrypt of block-aligned data is infallible")
 }
 
@@ -472,29 +474,31 @@ fn cbc_decrypt_single_des(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
 ///
 /// The 24-byte `key` is laid out as `[Ka(8) | Kb(8) | Kc(8)]`.
 fn cbc_encrypt_3des(key: &[u8; 24], iv: &[u8], data: &[u8]) -> Vec<u8> {
-    cbc::Encryptor::<TdesEde3>::new(GenericArray::from_slice(key), GenericArray::from_slice(iv))
-        .encrypt_padded_vec_mut::<NoPadding>(data)
+    cbc::Encryptor::<TdesEde3>::new_from_slices(key, iv)
+        .expect("valid 3DES key/iv")
+        .encrypt_padded_vec::<NoPadding>(data)
 }
 
 /// 3DES CBC decrypt.  `data` must be block-aligned.
 fn cbc_decrypt_3des(key: &[u8; 24], iv: &[u8], data: &[u8]) -> Vec<u8> {
-    cbc::Decryptor::<TdesEde3>::new(GenericArray::from_slice(key), GenericArray::from_slice(iv))
-        .decrypt_padded_vec_mut::<NoPadding>(data)
+    cbc::Decryptor::<TdesEde3>::new_from_slices(key, iv)
+        .expect("valid 3DES key/iv")
+        .decrypt_padded_vec::<NoPadding>(data)
         .expect("CBC NoPadding decrypt of block-aligned data is infallible")
 }
 
 /// 3DES ECB encrypt – single block.
 fn ecb_encrypt_3des(key: &[u8; 24], block: &[u8]) -> Vec<u8> {
-    let cipher = TdesEde3::new(GenericArray::from_slice(key));
-    let mut ga = *GenericArray::from_slice(block);
+    let cipher = TdesEde3::new_from_slice(key).expect("valid 3DES key");
+    let mut ga = Array::try_from(block).expect("3DES block");
     cipher.encrypt_block(&mut ga);
     ga.to_vec()
 }
 
 /// 3DES ECB decrypt – single block.
 fn ecb_decrypt_3des(key: &[u8; 24], block: &[u8]) -> Vec<u8> {
-    let cipher = TdesEde3::new(GenericArray::from_slice(key));
-    let mut ga = *GenericArray::from_slice(block);
+    let cipher = TdesEde3::new_from_slice(key).expect("valid 3DES key");
+    let mut ga = Array::try_from(block).expect("3DES block");
     cipher.decrypt_block(&mut ga);
     ga.to_vec()
 }

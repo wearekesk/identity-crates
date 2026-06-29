@@ -25,8 +25,8 @@
 use aes::{Aes128, Aes192, Aes256};
 use cbc::cipher::block_padding::NoPadding;
 use cipher::{
-    BlockDecrypt, BlockDecryptMut, BlockEncrypt, BlockEncryptMut, KeyInit, KeyIvInit,
-    generic_array::GenericArray,
+    Array, BlockCipherDecrypt, BlockCipherEncrypt, BlockModeDecrypt, BlockModeEncrypt, KeyInit,
+    KeyIvInit,
 };
 use cmac::Cmac;
 use digest::Mac;
@@ -321,30 +321,34 @@ pub fn get_cipher(key_length: KeyLength) -> AesCipher {
 fn aes_cbc_encrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8> {
     // `data` is guaranteed block-aligned by the caller, so `NoPadding` adds
     // nothing — we delegate the CBC chaining to the vetted `cbc` crate.
-    let iv = GenericArray::from_slice(iv);
     match key.len() {
-        16 => cbc::Encryptor::<Aes128>::new(GenericArray::from_slice(key), iv)
-            .encrypt_padded_vec_mut::<NoPadding>(data),
-        24 => cbc::Encryptor::<Aes192>::new(GenericArray::from_slice(key), iv)
-            .encrypt_padded_vec_mut::<NoPadding>(data),
-        32 => cbc::Encryptor::<Aes256>::new(GenericArray::from_slice(key), iv)
-            .encrypt_padded_vec_mut::<NoPadding>(data),
+        16 => cbc::Encryptor::<Aes128>::new_from_slices(key, iv)
+            .expect("valid AES-128 key/iv")
+            .encrypt_padded_vec::<NoPadding>(data),
+        24 => cbc::Encryptor::<Aes192>::new_from_slices(key, iv)
+            .expect("valid AES-192 key/iv")
+            .encrypt_padded_vec::<NoPadding>(data),
+        32 => cbc::Encryptor::<Aes256>::new_from_slices(key, iv)
+            .expect("valid AES-256 key/iv")
+            .encrypt_padded_vec::<NoPadding>(data),
         n => panic!("Invalid AES key length: {n}"),
     }
 }
 
 /// Decrypts `data` using AES in CBC mode.
 fn aes_cbc_decrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8> {
-    let iv = GenericArray::from_slice(iv);
     // `NoPadding` decrypt cannot fail for block-aligned input (which the caller
     // validates), so the unpad result is infallible here.
     match key.len() {
-        16 => cbc::Decryptor::<Aes128>::new(GenericArray::from_slice(key), iv)
-            .decrypt_padded_vec_mut::<NoPadding>(data),
-        24 => cbc::Decryptor::<Aes192>::new(GenericArray::from_slice(key), iv)
-            .decrypt_padded_vec_mut::<NoPadding>(data),
-        32 => cbc::Decryptor::<Aes256>::new(GenericArray::from_slice(key), iv)
-            .decrypt_padded_vec_mut::<NoPadding>(data),
+        16 => cbc::Decryptor::<Aes128>::new_from_slices(key, iv)
+            .expect("valid AES-128 key/iv")
+            .decrypt_padded_vec::<NoPadding>(data),
+        24 => cbc::Decryptor::<Aes192>::new_from_slices(key, iv)
+            .expect("valid AES-192 key/iv")
+            .decrypt_padded_vec::<NoPadding>(data),
+        32 => cbc::Decryptor::<Aes256>::new_from_slices(key, iv)
+            .expect("valid AES-256 key/iv")
+            .decrypt_padded_vec::<NoPadding>(data),
         n => panic!("Invalid AES key length: {n}"),
     }
     .expect("CBC NoPadding decrypt of block-aligned data is infallible")
@@ -390,16 +394,22 @@ impl AesKeySchedule {
     /// Panics if `key.len()` is not 16, 24, or 32.
     fn new(key: &[u8]) -> Self {
         match key.len() {
-            16 => Self::A128(Box::new(Aes128::new(GenericArray::from_slice(key)))),
-            24 => Self::A192(Box::new(Aes192::new(GenericArray::from_slice(key)))),
-            32 => Self::A256(Box::new(Aes256::new(GenericArray::from_slice(key)))),
+            16 => Self::A128(Box::new(
+                Aes128::new_from_slice(key).expect("valid AES-128 key"),
+            )),
+            24 => Self::A192(Box::new(
+                Aes192::new_from_slice(key).expect("valid AES-192 key"),
+            )),
+            32 => Self::A256(Box::new(
+                Aes256::new_from_slice(key).expect("valid AES-256 key"),
+            )),
             n => panic!("Invalid AES key length: {n}"),
         }
     }
 
     /// Encrypts a single 16-byte block in-place.
     fn encrypt_block_inplace(&self, block: &mut [u8; AES_BLOCK_SIZE]) {
-        let ga = GenericArray::from_mut_slice(block);
+        let ga: &mut Array<u8, _> = block.into();
         match self {
             Self::A128(c) => c.encrypt_block(ga),
             Self::A192(c) => c.encrypt_block(ga),
@@ -409,7 +419,7 @@ impl AesKeySchedule {
 
     /// Decrypts a single 16-byte block in-place.
     fn decrypt_block_inplace(&self, block: &mut [u8; AES_BLOCK_SIZE]) {
-        let ga = GenericArray::from_mut_slice(block);
+        let ga: &mut Array<u8, _> = block.into();
         match self {
             Self::A128(c) => c.decrypt_block(ga),
             Self::A192(c) => c.decrypt_block(ga),
