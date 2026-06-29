@@ -14,7 +14,7 @@
 //! # let key = DBAKey::new("L898902C",
 //! #     NaiveDate::from_ymd_opt(1969, 8, 6).unwrap(),
 //! #     NaiveDate::from_ymd_opt(1994, 6, 23).unwrap(),
-//! #     false);
+//! #     false).unwrap();
 //! let mut session = BacSession::new(key);
 //! loop {
 //!     match session.next().unwrap() {
@@ -312,6 +312,7 @@ mod tests {
             NaiveDate::from_ymd_opt(1994, 6, 23).unwrap(),
             false,
         )
+        .unwrap()
     }
 
     fn build_response(data: &[u8]) -> Vec<u8> {

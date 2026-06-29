@@ -587,7 +587,7 @@ mod tests {
     //! is produced.
 
     use super::*;
-    use crate::crypto::aes::{AesCipher, BlockCipherMode};
+    use crate::crypto::aes::{AES_BLOCK_SIZE, AesCipher, BlockCipherMode};
     use crate::lds::tlv::Tlv;
     use crate::proto::can_key::CanKey;
 
@@ -762,8 +762,9 @@ mod tests {
         let kpi = can_chip
             .kpi(protocol.cipher_algorithm, protocol.key_length)
             .unwrap();
+        let zero_iv = [0u8; AES_BLOCK_SIZE];
         let enc_nonce = cipher
-            .encrypt(&nonce, &kpi, None, BlockCipherMode::Cbc, false)
+            .encrypt(&nonce, &kpi, Some(&zero_iv), BlockCipherMode::Cbc, false)
             .unwrap();
         let step1_body = dyn_auth_wrap(0x80, &enc_nonce);
         session.feed_response(&build_response(Some(&step1_body))).unwrap();
@@ -882,8 +883,9 @@ mod tests {
         let kpi = can_chip
             .kpi(protocol.cipher_algorithm, protocol.key_length)
             .unwrap();
+        let zero_iv = [0u8; AES_BLOCK_SIZE];
         let enc_nonce = cipher
-            .encrypt(&nonce, &kpi, None, BlockCipherMode::Cbc, false)
+            .encrypt(&nonce, &kpi, Some(&zero_iv), BlockCipherMode::Cbc, false)
             .unwrap();
         let step1_body = dyn_auth_wrap(0x80, &enc_nonce);
         session.feed_response(&build_response(Some(&step1_body))).unwrap();

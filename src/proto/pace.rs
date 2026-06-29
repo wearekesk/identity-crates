@@ -7,7 +7,7 @@
 
 use thiserror::Error;
 
-use crate::crypto::aes::{AesCipher, BlockCipherMode};
+use crate::crypto::aes::{AES_BLOCK_SIZE, AesCipher, BlockCipherMode};
 use crate::crypto::des::DesedeCipher;
 use crate::crypto::iso9797;
 use crate::crypto::kdf::DeriveKey;
@@ -315,9 +315,11 @@ pub fn decrypt_nonce(
     match protocol.cipher_algorithm {
         CipherAlgorithm::Aes => {
             let cipher = AesCipher::new(protocol.key_length);
-            // IV omitted → zero IV (reference behaviour).
+            // PACE decrypts the encrypted nonce with an all-zero IV (ICAO 9303
+            // p11 §4.4.1); the IV must now be passed explicitly.
+            let iv = [0u8; AES_BLOCK_SIZE];
             cipher
-                .decrypt(nonce, &k_pi, None, BlockCipherMode::Cbc)
+                .decrypt(nonce, &k_pi, Some(&iv), BlockCipherMode::Cbc)
                 .map_err(|e| PaceError(format!("AES decrypt failed: {e}")))
         }
         CipherAlgorithm::DeSede => {
@@ -574,9 +576,10 @@ mod tests {
         let k_pi = can.kpi(proto.cipher_algorithm, proto.key_length).unwrap();
         // Encrypt a 16-byte nonce under k_pi / zero IV.
         let cipher = AesCipher::new(proto.key_length);
+        let iv = [0u8; AES_BLOCK_SIZE];
         let pt = [0xA1u8; 16];
         let ct = cipher
-            .encrypt(&pt, &k_pi, None, BlockCipherMode::Cbc, false)
+            .encrypt(&pt, &k_pi, Some(&iv), BlockCipherMode::Cbc, false)
             .unwrap();
         let decrypted = decrypt_nonce(&proto, &ct, &can).unwrap();
         assert_eq!(decrypted, pt);
@@ -620,8 +623,9 @@ mod tests {
         let nonce = hex::decode("A1A2A3A4A5A6A7A8A9AAABACADAEAFB0").unwrap();
 
         let cipher = AesCipher::new(KeyLength::S256);
+        let iv = [0u8; AES_BLOCK_SIZE];
         let encrypted = cipher
-            .encrypt(&nonce, &kpi, None, BlockCipherMode::Cbc, false)
+            .encrypt(&nonce, &kpi, Some(&iv), BlockCipherMode::Cbc, false)
             .unwrap();
 
         let dummy = DummyKey { kpi: kpi.clone() };

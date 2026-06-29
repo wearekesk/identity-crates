@@ -7,6 +7,7 @@
 
 use chrono::NaiveDate;
 use sha1::{Digest, Sha1};
+use thiserror::Error;
 
 use crate::crypto::kdf::DeriveKey;
 use crate::extension::datetime::DateTimeFormatExt;
@@ -18,6 +19,28 @@ use crate::proto::access_key::{AccessKey, PACE_REF_KEY_TAG_MRZ};
 pub const SEED_LEN_BAC: usize = 16;
 /// Seed length for PACE (20 bytes — uncut SHA-1 digest).
 pub const SEED_LEN_PACE: usize = 20;
+
+/// Error returned when constructing a [`DBAKey`].
+#[derive(Debug, Error)]
+pub enum DbaKeyError {
+    /// The MRTD number contained a character outside the MRZ alphabet
+    /// (`0-9`, `A-Z`, `<`), which would silently corrupt the derived seed.
+    #[error("invalid MRZ character {0:?} in document number; only 0-9, A-Z and '<' are allowed")]
+    InvalidMrzCharacter(char),
+}
+
+/// Returns `true` if every character of `s` is a valid MRZ character
+/// (`0-9`, `A-Z`, or `<`) — the alphabet accepted by the ICAO check-digit
+/// computation that derives the BAC/PACE seed.
+fn is_valid_mrz(s: &str) -> Result<(), DbaKeyError> {
+    if let Some(c) = s
+        .chars()
+        .find(|c| !(c.is_ascii_digit() || c.is_ascii_uppercase() || *c == '<'))
+    {
+        return Err(DbaKeyError::InvalidMrzCharacter(c));
+    }
+    Ok(())
+}
 
 /// Document Basic Access key.
 #[derive(Debug, Clone)]
@@ -36,22 +59,35 @@ impl DBAKey {
     ///
     /// If `pace_mode` is `true`, the seed length is set to 20 bytes (uncut
     /// SHA-1 digest); otherwise it is 16 bytes (BAC).
+    ///
+    /// # Errors
+    /// Returns [`DbaKeyError::InvalidMrzCharacter`] if `mrtd_number` contains a
+    /// character outside the MRZ alphabet (`0-9`, `A-Z`, `<`). The
+    /// `date_of_birth` / `date_of_expiry` inputs are typed [`NaiveDate`]s and
+    /// always format to MRZ-valid `YYMMDD` digits, so they cannot be invalid.
     pub fn new(
         mrtd_number: impl Into<String>,
         date_of_birth: NaiveDate,
         date_of_expiry: NaiveDate,
         pace_mode: bool,
-    ) -> Self {
-        Self {
-            mrtd_number: mrtd_number.into(),
+    ) -> Result<Self, DbaKeyError> {
+        let mrtd_number = mrtd_number.into();
+        is_valid_mrz(&mrtd_number)?;
+        Ok(Self {
+            mrtd_number,
             dob: date_of_birth,
             doe: date_of_expiry,
             seed_len: if pace_mode { SEED_LEN_PACE } else { SEED_LEN_BAC },
-        }
+        })
     }
 
     /// Constructs a [`DBAKey`] from a parsed [`Mrz`] (BAC mode).
-    pub fn from_mrz(mrz: &Mrz) -> Self {
+    ///
+    /// # Errors
+    /// Returns [`DbaKeyError::InvalidMrzCharacter`] if the MRZ document number
+    /// contains a character outside the MRZ alphabet. (A document number parsed
+    /// from a valid MRZ is always within the alphabet.)
+    pub fn from_mrz(mrz: &Mrz) -> Result<Self, DbaKeyError> {
         Self::new(
             mrz.document_number(),
             mrz.date_of_birth,
@@ -66,9 +102,10 @@ impl DBAKey {
         let padded_mrtd = pad_right(&self.mrtd_number, 9, '<');
         let dob = self.dob.format_yymmdd();
         let doe = self.doe.format_yymmdd();
-        // The seed inputs (doc number, YYMMDD dates) are expected to use the MRZ
-        // alphabet; an unsupported character only ever produces a wrong seed
-        // (GIGO), so fall back to 0 rather than failing key derivation here.
+        // The seed inputs are guaranteed to use the MRZ alphabet: `new`/`from_mrz`
+        // validate the document number, '<'-padding is itself valid, and the
+        // YYMMDD dates are formatted from typed `NaiveDate`s (always digits). The
+        // check-digit computation therefore never returns `None` here.
         let cdn = Mrz::calculate_check_digit(&padded_mrtd).unwrap_or(0);
         let cdb = Mrz::calculate_check_digit(&dob).unwrap_or(0);
         let cde = Mrz::calculate_check_digit(&doe).unwrap_or(0);
@@ -168,7 +205,8 @@ mod tests {
             NaiveDate::from_ymd_opt(1969, 8, 6).unwrap(),
             NaiveDate::from_ymd_opt(1994, 6, 23).unwrap(),
             false,
-        );
+        )
+        .unwrap();
         let seed = key.key_seed();
         assert_eq!(
             hex::encode_upper(&seed),
@@ -183,7 +221,8 @@ mod tests {
             NaiveDate::from_ymd_opt(1969, 8, 6).unwrap(),
             NaiveDate::from_ymd_opt(1994, 6, 23).unwrap(),
             true,
-        );
+        )
+        .unwrap();
         assert_eq!(key.key_seed().len(), 20);
         assert!(key.is_pace_mode());
     }
@@ -195,7 +234,8 @@ mod tests {
             NaiveDate::from_ymd_opt(1969, 8, 6).unwrap(),
             NaiveDate::from_ymd_opt(1994, 6, 23).unwrap(),
             false,
-        );
+        )
+        .unwrap();
         assert_eq!(key.key_seed().len(), 16);
         assert!(!key.is_pace_mode());
     }
@@ -207,7 +247,8 @@ mod tests {
             NaiveDate::from_ymd_opt(2000, 1, 1).unwrap(),
             NaiveDate::from_ymd_opt(2010, 1, 1).unwrap(),
             false,
-        );
+        )
+        .unwrap();
         assert_eq!(key.pace_ref_key_tag(), PACE_REF_KEY_TAG_MRZ);
     }
 
@@ -218,7 +259,8 @@ mod tests {
             NaiveDate::from_ymd_opt(1969, 8, 6).unwrap(),
             NaiveDate::from_ymd_opt(1994, 6, 23).unwrap(),
             true,
-        );
+        )
+        .unwrap();
         let kpi = key.kpi(CipherAlgorithm::DeSede, KeyLength::S128).unwrap();
         // DeriveKey::des_ede produces a 16-byte 3DES key.
         assert_eq!(kpi.len(), 16);
@@ -231,7 +273,8 @@ mod tests {
             NaiveDate::from_ymd_opt(1969, 8, 6).unwrap(),
             NaiveDate::from_ymd_opt(1994, 6, 23).unwrap(),
             true,
-        );
+        )
+        .unwrap();
         assert_eq!(
             key.kpi(CipherAlgorithm::Aes, KeyLength::S128).unwrap().len(),
             16
@@ -253,7 +296,8 @@ mod tests {
             NaiveDate::from_ymd_opt(1969, 8, 6).unwrap(),
             NaiveDate::from_ymd_opt(1994, 6, 23).unwrap(),
             false,
-        );
+        )
+        .unwrap();
         // 3DES key (K_enc) and MAC key are each 16 bytes per ICAO 9303.
         assert_eq!(key.enc_key().len(), 16);
         assert_eq!(key.mac_key().len(), 16);
@@ -265,7 +309,7 @@ mod tests {
         // still be reported exactly as supplied to `new`.
         let dob = NaiveDate::from_ymd_opt(2005, 3, 9).unwrap();
         let doe = NaiveDate::from_ymd_opt(2045, 12, 31).unwrap();
-        let key = DBAKey::new("D23145890", dob, doe, false);
+        let key = DBAKey::new("D23145890", dob, doe, false).unwrap();
         assert_eq!(key.date_of_birth(), dob);
         assert_eq!(key.date_of_expiry(), doe);
     }
@@ -276,7 +320,7 @@ mod tests {
             "P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<L898902C36UTO7408122F1204159ZE184226B<<<<<10".as_bytes().to_vec(),
         )
         .unwrap();
-        let key = DBAKey::from_mrz(&mrz);
+        let key = DBAKey::from_mrz(&mrz).unwrap();
         assert_eq!(key.mrtd_number(), "L898902C3");
         assert_eq!(key.date_of_birth(), NaiveDate::from_ymd_opt(1974, 8, 12).unwrap());
         assert_eq!(key.date_of_expiry(), NaiveDate::from_ymd_opt(2012, 4, 15).unwrap());
@@ -292,7 +336,8 @@ mod tests {
             NaiveDate::from_ymd_opt(1964, 8, 12).unwrap(),
             NaiveDate::from_ymd_opt(2010, 10, 31).unwrap(),
             true,
-        );
+        )
+        .unwrap();
         assert_eq!(
             hex::encode(key.key_seed()),
             "7e2d2a41c74ea0b38cd36f863939bfa8e9032aad"
@@ -321,7 +366,8 @@ mod tests {
             NaiveDate::from_ymd_opt(1934, 7, 12).unwrap(),
             NaiveDate::from_ymd_opt(1995, 7, 12).unwrap(),
             false,
-        );
+        )
+        .unwrap();
         assert_eq!(
             hex::encode(key.key_seed()),
             "b366ad857ddca2b08c0e299811714730"
@@ -337,10 +383,36 @@ mod tests {
                 .to_vec(),
         )
         .unwrap();
-        let key = DBAKey::from_mrz(&mrz);
+        let key = DBAKey::from_mrz(&mrz).unwrap();
         assert_eq!(
             hex::encode(key.key_seed()),
             "b366ad857ddca2b08c0e299811714730"
         );
+    }
+
+    #[test]
+    fn new_rejects_invalid_mrz_character_in_document_number() {
+        // Lowercase letters and spaces are outside the MRZ alphabet and would
+        // silently corrupt the derived seed, so construction must fail.
+        let dob = NaiveDate::from_ymd_opt(1969, 8, 6).unwrap();
+        let doe = NaiveDate::from_ymd_opt(1994, 6, 23).unwrap();
+
+        assert!(matches!(
+            DBAKey::new("L898902c", dob, doe, false),
+            Err(DbaKeyError::InvalidMrzCharacter('c'))
+        ));
+        assert!(matches!(
+            DBAKey::new("L89 902C", dob, doe, false),
+            Err(DbaKeyError::InvalidMrzCharacter(' '))
+        ));
+    }
+
+    #[test]
+    fn new_accepts_valid_mrz_document_number() {
+        // All-uppercase / digit / '<' document numbers are accepted.
+        let dob = NaiveDate::from_ymd_opt(1969, 8, 6).unwrap();
+        let doe = NaiveDate::from_ymd_opt(1994, 6, 23).unwrap();
+        assert!(DBAKey::new("L898902C<", dob, doe, false).is_ok());
+        assert!(DBAKey::new("D23145890734", dob, doe, true).is_ok());
     }
 }

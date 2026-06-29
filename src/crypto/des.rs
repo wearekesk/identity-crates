@@ -1,29 +1,23 @@
-//! DES and Triple-DES (DESede) cipher implementations.
+//! Triple-DES (DESede) cipher implementation.
 //!
-//! Implements DES and 3DES encryption/decryption in CBC block cipher mode,
-//! and standalone ECB block operations, mirroring the `DESCipher` and
-//! `DESedeCipher` classes.
+//! Implements 3DES encryption/decryption in CBC block cipher mode, used
+//! internally by BAC and the DES secure-messaging cipher. This is a
+//! crate-internal primitive (`pub(crate)`), not part of the public API.
 //!
 //! Uses RustCrypto crates:
 //! - [`des`] for the block cipher primitives
 //! - [`cbc`] for CBC mode
 //!
 //! # Key sizes
-//! | Type          | Key length(s)         |
-//! |---------------|-----------------------|
-//! | `DESCipher`   | 8 bytes               |
-//! | `DESedeCipher`| 16 or 24 bytes        |
+//! [`DesedeCipher`] accepts a 16- or 24-byte key.
 //!
 //! # IV
-//! Both ciphers use an 8-byte IV (one DES block).
+//! The cipher uses an 8-byte IV (one DES block).
 
 use crate::crypto::iso9797::{DES_BLOCK_SIZE, pad, unpad};
 use cbc::cipher::block_padding::NoPadding;
-use cipher::{
-    Array, BlockCipherDecrypt, BlockCipherEncrypt, BlockModeDecrypt, BlockModeEncrypt, KeyInit,
-    KeyIvInit,
-};
-use des::{Des, TdesEde3};
+use cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
+use des::TdesEde3;
 use thiserror::Error;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -51,171 +45,6 @@ pub enum DesError {
 
     #[error(transparent)]
     Iso9797(#[from] crate::crypto::iso9797::Iso9797Error),
-}
-
-// ---------------------------------------------------------------------------
-// DESCipher  (single DES, CBC mode)
-// ---------------------------------------------------------------------------
-
-/// Implements single-DES encryption and decryption in CBC block cipher mode.
-///
-/// # Key / IV size
-/// Both key and IV must be exactly 8 bytes (`DES_BLOCK_SIZE`).
-///
-/// # Padding
-/// By default, data is padded / unpadded using ISO/IEC 9797-1 Method 2
-/// (append `0x80` then zero bytes).  Pass `pad_data: false` / `padded_data:
-/// false` to skip padding.
-///
-/// # Examples
-/// ```
-/// use dmrtd::crypto::des::DesCipher;
-///
-/// let key = [0x01u8; 8];
-/// let iv  = [0x00u8; 8];
-/// let cipher = DesCipher::new(&key, &iv).unwrap();
-///
-/// let plaintext = b"Hello!!!"; // 8 bytes – exactly one block
-/// let encrypted = cipher.encrypt(plaintext, false).unwrap();
-/// assert_eq!(encrypted.len(), 8);
-///
-/// let decrypted = cipher.decrypt(&encrypted, false).unwrap();
-/// assert_eq!(&decrypted, plaintext);
-/// ```
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
-pub struct DesCipher {
-    key: [u8; DES_BLOCK_SIZE],
-    iv: [u8; DES_BLOCK_SIZE],
-}
-
-impl DesCipher {
-    /// Block size for DES (8 bytes / 64 bits).
-    pub const BLOCK_SIZE: usize = DES_BLOCK_SIZE;
-
-    /// Creates a new [`DesCipher`] with the given `key` and initial vector `iv`.
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidKeyLength`] if `key.len() != 8`.
-    /// Returns [`DesError::InvalidIvLength`]  if `iv.len()  != 8`.
-    pub fn new(key: &[u8], iv: &[u8]) -> Result<Self, DesError> {
-        if key.len() != DES_BLOCK_SIZE {
-            return Err(DesError::InvalidKeyLength(key.len()));
-        }
-        if iv.len() != DES_BLOCK_SIZE {
-            return Err(DesError::InvalidIvLength(iv.len()));
-        }
-        let mut k = [0u8; DES_BLOCK_SIZE];
-        let mut v = [0u8; DES_BLOCK_SIZE];
-        k.copy_from_slice(key);
-        v.copy_from_slice(iv);
-        Ok(Self { key: k, iv: v })
-    }
-
-    /// Returns the current key.
-    pub fn key(&self) -> &[u8; DES_BLOCK_SIZE] {
-        &self.key
-    }
-
-    /// Sets a new 8-byte key.
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidKeyLength`] if `key.len() != 8`.
-    pub fn set_key(&mut self, key: &[u8]) -> Result<(), DesError> {
-        if key.len() != DES_BLOCK_SIZE {
-            return Err(DesError::InvalidKeyLength(key.len()));
-        }
-        self.key.copy_from_slice(key);
-        Ok(())
-    }
-
-    /// Returns the current IV.
-    pub fn iv(&self) -> &[u8; DES_BLOCK_SIZE] {
-        &self.iv
-    }
-
-    /// Sets a new 8-byte IV.
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidIvLength`] if `iv.len() != 8`.
-    pub fn set_iv(&mut self, iv: &[u8]) -> Result<(), DesError> {
-        if iv.len() != DES_BLOCK_SIZE {
-            return Err(DesError::InvalidIvLength(iv.len()));
-        }
-        self.iv.copy_from_slice(iv);
-        Ok(())
-    }
-
-    /// Encrypts `data` using single DES in CBC mode.
-    ///
-    /// If `pad_data` is `true`, `data` is padded with ISO/IEC 9797-1 Method 2
-    /// before encryption.  Otherwise `data` must already be a multiple of 8 bytes.
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidDataLength`] if `pad_data` is `false` and
-    /// `data.len()` is not a multiple of 8.
-    pub fn encrypt(&self, data: &[u8], pad_data: bool) -> Result<Vec<u8>, DesError> {
-        let owned;
-        let input: &[u8] = if pad_data {
-            owned = pad(data, DES_BLOCK_SIZE)?;
-            &owned
-        } else {
-            data
-        };
-        if input.len() % DES_BLOCK_SIZE != 0 {
-            return Err(DesError::InvalidDataLength(input.len()));
-        }
-        Ok(cbc_encrypt_single_des(&self.key, &self.iv, input))
-    }
-
-    /// Decrypts `edata` using single DES in CBC mode.
-    ///
-    /// If `padded_data` is `true`, the padding inserted during encryption is
-    /// removed from the decrypted plaintext.
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidDataLength`] if `edata.len()` is not a
-    /// multiple of 8. When `padded_data` is `true`, also returns
-    /// [`DesError::Iso9797`] if the decrypted plaintext is not valid ISO/IEC
-    /// 9797-1 Method 2 padding.
-    pub fn decrypt(&self, edata: &[u8], padded_data: bool) -> Result<Vec<u8>, DesError> {
-        if edata.len() % DES_BLOCK_SIZE != 0 {
-            return Err(DesError::InvalidDataLength(edata.len()));
-        }
-        let plain = cbc_decrypt_single_des(&self.key, &self.iv, edata);
-        if padded_data {
-            Ok(unpad(&plain, DES_BLOCK_SIZE)?.to_vec())
-        } else {
-            Ok(plain)
-        }
-    }
-
-    /// Encrypts a single block of exactly 8 bytes using ECB mode (no IV, no padding).
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidBlockLength`] if `block.len() != 8`.
-    pub fn encrypt_block(&self, block: &[u8]) -> Result<Vec<u8>, DesError> {
-        if block.len() != DES_BLOCK_SIZE {
-            return Err(DesError::InvalidBlockLength(block.len()));
-        }
-        let cipher = Des::new_from_slice(&self.key).expect("valid DES key");
-        let mut b = Array::try_from(block).expect("DES block");
-        cipher.encrypt_block(&mut b);
-        Ok(b.to_vec())
-    }
-
-    /// Decrypts a single block of exactly 8 bytes using ECB mode (no IV, no padding).
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidBlockLength`] if `eblock.len() != 8`.
-    pub fn decrypt_block(&self, eblock: &[u8]) -> Result<Vec<u8>, DesError> {
-        if eblock.len() != DES_BLOCK_SIZE {
-            return Err(DesError::InvalidBlockLength(eblock.len()));
-        }
-        let cipher = Des::new_from_slice(&self.key).expect("valid DES key");
-        let mut b = Array::try_from(eblock).expect("DES block");
-        cipher.decrypt_block(&mut b);
-        Ok(b.to_vec())
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -265,23 +94,13 @@ impl TripleDesKey {
 /// # Padding
 /// By default, data is padded / unpadded using ISO/IEC 9797-1 Method 2.
 ///
-/// # Examples
-/// ```
-/// use dmrtd::crypto::des::DesedeCipher;
-///
-/// let key = [0x01u8; 16]; // 16-byte key
-/// let iv  = [0x00u8; 8];
-/// let cipher = DesedeCipher::new(&key, &iv).unwrap();
-///
-/// let plaintext = b"Hello!!!"; // 8 bytes – exactly one block
-/// let encrypted = cipher.encrypt(plaintext, false).unwrap();
-/// assert_eq!(encrypted.len(), 8);
-///
-/// let decrypted = cipher.decrypt(&encrypted, false).unwrap();
-/// assert_eq!(&decrypted, plaintext);
-/// ```
+/// # Usage
+/// Construct with [`DesedeCipher::new`] (16- or 24-byte key, 8-byte IV), then
+/// call [`encrypt`](DesedeCipher::encrypt) / [`decrypt`](DesedeCipher::decrypt)
+/// for CBC mode. This is a crate-internal primitive; see the unit tests for
+/// worked round-trips.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
-pub struct DesedeCipher {
+pub(crate) struct DesedeCipher {
     triple_key: TripleDesKey,
     iv: [u8; DES_BLOCK_SIZE],
 }
@@ -303,27 +122,6 @@ impl DesedeCipher {
         let mut v = [0u8; DES_BLOCK_SIZE];
         v.copy_from_slice(iv);
         Ok(Self { triple_key, iv: v })
-    }
-
-    /// Sets a new key (16 or 24 bytes).
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidDesedeKeyLength`] if key length is not 16 or 24.
-    pub fn set_key(&mut self, key: &[u8]) -> Result<(), DesError> {
-        self.triple_key = TripleDesKey::from_slice(key)?;
-        Ok(())
-    }
-
-    /// Sets a new 8-byte IV.
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidIvLength`] if `iv.len() != 8`.
-    pub fn set_iv(&mut self, iv: &[u8]) -> Result<(), DesError> {
-        if iv.len() != DES_BLOCK_SIZE {
-            return Err(DesError::InvalidIvLength(iv.len()));
-        }
-        self.iv.copy_from_slice(iv);
-        Ok(())
     }
 
     /// Encrypts `data` using 3DES in CBC mode.
@@ -366,113 +164,11 @@ impl DesedeCipher {
             Ok(plain)
         }
     }
-
-    /// Encrypts a single 8-byte block using 3DES in ECB mode.
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidBlockLength`] if `block.len() != 8`.
-    pub fn encrypt_block(&self, block: &[u8]) -> Result<Vec<u8>, DesError> {
-        if block.len() != DES_BLOCK_SIZE {
-            return Err(DesError::InvalidBlockLength(block.len()));
-        }
-        Ok(ecb_encrypt_3des(&self.triple_key.0, block))
-    }
-
-    /// Decrypts a single 8-byte block using 3DES in ECB mode.
-    ///
-    /// # Errors
-    /// Returns [`DesError::InvalidBlockLength`] if `eblock.len() != 8`.
-    pub fn decrypt_block(&self, eblock: &[u8]) -> Result<Vec<u8>, DesError> {
-        if eblock.len() != DES_BLOCK_SIZE {
-            return Err(DesError::InvalidBlockLength(eblock.len()));
-        }
-        Ok(ecb_decrypt_3des(&self.triple_key.0, eblock))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Free-function API  (mirrors top-level functions DESedeEncrypt / DESedeDecrypt)
-// ---------------------------------------------------------------------------
-
-/// Encrypts `data` using Triple-DES in CBC mode.
-///
-/// # Arguments
-/// - `key`      – 16 or 24-byte key.
-/// - `iv`       – 8-byte initialisation vector.
-/// - `data`     – Plaintext to encrypt.
-/// - `pad_data` – When `true`, `data` is padded with ISO/IEC 9797-1 Method 2.
-///
-/// # Errors
-/// See [`DesedeCipher::encrypt`].
-///
-/// # Examples
-/// ```
-/// use dmrtd::crypto::des::desede_encrypt;
-///
-/// let key = [0x01u8; 16];
-/// let iv  = [0x00u8; 8];
-/// let ct  = desede_encrypt(&key, &iv, b"Hello!!!", false).unwrap();
-/// assert_eq!(ct.len(), 8);
-/// ```
-pub fn desede_encrypt(
-    key: &[u8],
-    iv: &[u8],
-    data: &[u8],
-    pad_data: bool,
-) -> Result<Vec<u8>, DesError> {
-    DesedeCipher::new(key, iv)?.encrypt(data, pad_data)
-}
-
-/// Decrypts `edata` using Triple-DES in CBC mode.
-///
-/// # Arguments
-/// - `key`         – 16 or 24-byte key.
-/// - `iv`          – 8-byte initialisation vector.
-/// - `edata`       – Ciphertext to decrypt.
-/// - `padded_data` – When `true`, ISO/IEC 9797-1 Method 2 padding is stripped.
-///
-/// # Errors
-/// See [`DesedeCipher::decrypt`].
-///
-/// # Examples
-/// ```
-/// use dmrtd::crypto::des::{desede_encrypt, desede_decrypt};
-///
-/// let key = [0x01u8; 16];
-/// let iv  = [0x00u8; 8];
-/// let ct = desede_encrypt(&key, &iv, b"Hello!!!", false).unwrap();
-/// let pt = desede_decrypt(&key, &iv, &ct, false).unwrap();
-/// assert_eq!(&pt, b"Hello!!!");
-/// ```
-pub fn desede_decrypt(
-    key: &[u8],
-    iv: &[u8],
-    edata: &[u8],
-    padded_data: bool,
-) -> Result<Vec<u8>, DesError> {
-    DesedeCipher::new(key, iv)?.decrypt(edata, padded_data)
 }
 
 // ---------------------------------------------------------------------------
 // Low-level block cipher helpers
 // ---------------------------------------------------------------------------
-
-/// Single-DES CBC encrypt.  `data` must be block-aligned.
-fn cbc_encrypt_single_des(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
-    // `data` is block-aligned by the caller, so `NoPadding` is a no-op and the
-    // CBC chaining is delegated to the vetted `cbc` crate.
-    cbc::Encryptor::<Des>::new_from_slices(key, iv)
-        .expect("valid DES key/iv")
-        .encrypt_padded_vec::<NoPadding>(data)
-}
-
-/// Single-DES CBC decrypt.  `data` must be block-aligned.
-fn cbc_decrypt_single_des(key: &[u8], iv: &[u8], data: &[u8]) -> Vec<u8> {
-    cbc::Decryptor::<Des>::new_from_slices(key, iv)
-        .expect("valid DES key/iv")
-        .decrypt_padded_vec::<NoPadding>(data)
-        .expect("CBC NoPadding decrypt of block-aligned data is infallible")
-}
 
 /// 3DES CBC encrypt (EDE order: Ka-enc, Kb-dec, Kc-enc).  `data` must be block-aligned.
 ///
@@ -491,22 +187,6 @@ fn cbc_decrypt_3des(key: &[u8; 24], iv: &[u8], data: &[u8]) -> Vec<u8> {
         .expect("CBC NoPadding decrypt of block-aligned data is infallible")
 }
 
-/// 3DES ECB encrypt – single block.
-fn ecb_encrypt_3des(key: &[u8; 24], block: &[u8]) -> Vec<u8> {
-    let cipher = TdesEde3::new_from_slice(key).expect("valid 3DES key");
-    let mut ga = Array::try_from(block).expect("3DES block");
-    cipher.encrypt_block(&mut ga);
-    ga.to_vec()
-}
-
-/// 3DES ECB decrypt – single block.
-fn ecb_decrypt_3des(key: &[u8; 24], block: &[u8]) -> Vec<u8> {
-    let cipher = TdesEde3::new_from_slice(key).expect("valid 3DES key");
-    let mut ga = Array::try_from(block).expect("3DES block");
-    cipher.decrypt_block(&mut ga);
-    ga.to_vec()
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -514,66 +194,6 @@ fn ecb_decrypt_3des(key: &[u8; 24], block: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // -----------------------------------------------------------------------
-    // DesCipher
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn des_roundtrip_no_padding() {
-        let key = [0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF];
-        let iv = [0x00u8; 8];
-        let cipher = DesCipher::new(&key, &iv).unwrap();
-
-        let plaintext = b"TESTDATA"; // exactly 8 bytes
-        let ct = cipher.encrypt(plaintext, false).unwrap();
-        assert_eq!(ct.len(), 8);
-
-        let pt = cipher.decrypt(&ct, false).unwrap();
-        assert_eq!(pt, plaintext);
-    }
-
-    #[test]
-    fn des_roundtrip_with_padding() {
-        let key = [0x01u8; 8];
-        let iv = [0x00u8; 8];
-        let cipher = DesCipher::new(&key, &iv).unwrap();
-
-        let plaintext = b"HELLO";
-        let ct = cipher.encrypt(plaintext, true).unwrap();
-        assert_eq!(ct.len(), 8); // padded to 8 bytes
-
-        let pt = cipher.decrypt(&ct, true).unwrap();
-        assert_eq!(pt, plaintext);
-    }
-
-    #[test]
-    fn des_encrypt_block_roundtrip() {
-        let key = [0x01u8; 8];
-        let iv = [0x00u8; 8];
-        let cipher = DesCipher::new(&key, &iv).unwrap();
-
-        let block = [0xAA; 8];
-        let enc = cipher.encrypt_block(&block).unwrap();
-        let dec = cipher.decrypt_block(&enc).unwrap();
-        assert_eq!(dec, block);
-    }
-
-    #[test]
-    fn des_invalid_key_length() {
-        assert!(matches!(
-            DesCipher::new(&[0u8; 7], &[0u8; 8]),
-            Err(DesError::InvalidKeyLength(7))
-        ));
-    }
-
-    #[test]
-    fn des_invalid_iv_length() {
-        assert!(matches!(
-            DesCipher::new(&[0u8; 8], &[0u8; 7]),
-            Err(DesError::InvalidIvLength(7))
-        ));
-    }
 
     // -----------------------------------------------------------------------
     // DesedeCipher – key expansion
@@ -655,18 +275,6 @@ mod tests {
         assert_eq!(pt.as_slice(), plaintext.as_ref());
     }
 
-    #[test]
-    fn desede_encrypt_block_roundtrip() {
-        let key = [0x04u8; 16];
-        let iv = [0x00u8; 8];
-        let cipher = DesedeCipher::new(&key, &iv).unwrap();
-
-        let block = [0xCCu8; 8];
-        let enc = cipher.encrypt_block(&block).unwrap();
-        let dec = cipher.decrypt_block(&enc).unwrap();
-        assert_eq!(dec, block);
-    }
-
     // -----------------------------------------------------------------------
     // ICAO 9303 Part 11 – Appendix D.1 BAC test vector
     // -----------------------------------------------------------------------
@@ -687,7 +295,10 @@ mod tests {
             hex::decode("72C29C2371CC9BDB65B779B8E8D37B29ECC154AA56A8799FAE2F498F76ED92F2")
                 .unwrap();
 
-        let eifd = desede_encrypt(&kenc, &[0u8; 8], &s, false).unwrap();
+        let eifd = DesedeCipher::new(&kenc, &[0u8; 8])
+            .unwrap()
+            .encrypt(&s, false)
+            .unwrap();
         assert_eq!(eifd, expected_eifd);
     }
 
@@ -706,45 +317,46 @@ mod tests {
             hex::decode("4608F91988702212781723860C06C2260B4F80323EB3191CB04970CB4052790B")
                 .unwrap();
 
-        let r = desede_decrypt(&kenc, &[0u8; 8], &eicc, false).unwrap();
+        let r = DesedeCipher::new(&kenc, &[0u8; 8])
+            .unwrap()
+            .decrypt(&eicc, false)
+            .unwrap();
         assert_eq!(r, expected_r);
     }
-
-    // -----------------------------------------------------------------------
-    // free functions
-    // -----------------------------------------------------------------------
 
     // -----------------------------------------------------------------------
     // Zeroize-on-drop
     // -----------------------------------------------------------------------
 
     /// Compile-level proof that the cipher key material is wiped on drop:
-    /// both ciphers implement [`ZeroizeOnDrop`] and can be constructed and
+    /// [`DesedeCipher`] implements [`ZeroizeOnDrop`] and can be constructed and
     /// dropped without disturbing the cbc/cipher usage.
     #[test]
-    fn ciphers_zeroize_on_drop() {
-        use zeroize::Zeroize;
+    fn cipher_zeroize_on_drop() {
         fn assert_zod<T: zeroize::ZeroizeOnDrop>() {}
-        assert_zod::<DesCipher>();
         assert_zod::<DesedeCipher>();
-
-        // Construct and drop; also verify explicit zeroize clears the key.
-        let mut des = DesCipher::new(&[0xABu8; 8], &[0x00u8; 8]).unwrap();
-        des.zeroize();
-        assert_eq!(des.key(), &[0u8; 8]);
-        drop(des);
 
         let dede = DesedeCipher::new(&[0xCDu8; 16], &[0x00u8; 8]).unwrap();
         drop(dede);
     }
 
+    // -----------------------------------------------------------------------
+    // Former doc example, preserved as a unit test after [`DesedeCipher`] was
+    // narrowed to `pub(crate)` (its `use dmrtd::crypto::des::...` import can no
+    // longer compile as a doctest).
+    // -----------------------------------------------------------------------
+
     #[test]
-    fn free_functions_roundtrip() {
-        let key = [0xAAu8; 16];
+    fn desedecipher_doc_example_roundtrip() {
+        let key = [0x01u8; 16]; // 16-byte key
         let iv = [0x00u8; 8];
-        let plain = [0x01u8; 8];
-        let ct = desede_encrypt(&key, &iv, &plain, false).unwrap();
-        let pt = desede_decrypt(&key, &iv, &ct, false).unwrap();
-        assert_eq!(pt, plain);
+        let cipher = DesedeCipher::new(&key, &iv).unwrap();
+
+        let plaintext = b"Hello!!!"; // 8 bytes – exactly one block
+        let encrypted = cipher.encrypt(plaintext, false).unwrap();
+        assert_eq!(encrypted.len(), 8);
+
+        let decrypted = cipher.decrypt(&encrypted, false).unwrap();
+        assert_eq!(&decrypted, plaintext);
     }
 }

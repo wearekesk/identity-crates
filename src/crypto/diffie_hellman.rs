@@ -17,10 +17,6 @@ use rand::rand_core::UnwrapErr;
 use rand::{Rng, SeedableRng, rngs::StdRng, rngs::SysRng};
 use thiserror::Error;
 
-/// Default private-key length (bits) when not specified on the
-/// [`DhParameterSpec`].
-pub const DEFAULT_PRIVATE_KEY_LENGTH: u32 = 256;
-
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
@@ -28,7 +24,7 @@ pub const DEFAULT_PRIVATE_KEY_LENGTH: u32 = 256;
 /// Error returned by [`DHpkcs3Engine`] operations.
 #[derive(Debug, Error)]
 #[error("DHpkcs3EngineError: {0}")]
-pub struct DhPkcs3EngineError(pub String);
+pub(crate) struct DhPkcs3EngineError(pub String);
 
 // ---------------------------------------------------------------------------
 // DhParameterSpec
@@ -36,7 +32,7 @@ pub struct DhPkcs3EngineError(pub String);
 
 /// Diffie-Hellman group parameters.
 #[derive(Debug, Clone)]
-pub struct DhParameterSpec {
+pub(crate) struct DhParameterSpec {
     p: BigUint,
     g: BigUint,
     length: u32,
@@ -57,11 +53,6 @@ impl DhParameterSpec {
             length,
             q: None,
         }
-    }
-
-    /// Creates a new [`DhParameterSpec`] with [`DEFAULT_PRIVATE_KEY_LENGTH`].
-    pub fn with_default_length(p: BigUint, g: BigUint) -> Self {
-        Self::new(p, g, DEFAULT_PRIVATE_KEY_LENGTH)
     }
 
     /// Attaches the prime-order subgroup order `q`, enabling unbiased private
@@ -105,63 +96,13 @@ impl std::fmt::Display for DhParameterSpec {
 }
 
 // ---------------------------------------------------------------------------
-// DhKeyPair
-// ---------------------------------------------------------------------------
-
-/// Diffie-Hellman key pair.
-#[derive(Debug, Clone)]
-pub struct DhKeyPair {
-    public_key: BigUint,
-    private_key: BigUint,
-}
-
-impl DhKeyPair {
-    /// Creates a new [`DhKeyPair`].
-    pub fn new(public_key: BigUint, private_key: BigUint) -> Self {
-        Self {
-            public_key,
-            private_key,
-        }
-    }
-
-    /// Public key.
-    pub fn public_key(&self) -> &BigUint {
-        &self.public_key
-    }
-
-    /// Private key.
-    pub fn private_key(&self) -> &BigUint {
-        &self.private_key
-    }
-
-    /// Renders the private key in addition to the public key — debugging only.
-    pub fn to_string_also_private(&self) -> String {
-        format!(
-            "DhKeyPair; PublicKey: {:?}, PrivateKey: {:?}",
-            self.public_key.to_bytes_be(),
-            self.private_key.to_bytes_be(),
-        )
-    }
-}
-
-impl std::fmt::Display for DhKeyPair {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "DhKeyPair; PublicKey: {:?} ",
-            self.public_key.to_bytes_be()
-        )
-    }
-}
-
-// ---------------------------------------------------------------------------
 // DHpkcs3Engine
 // ---------------------------------------------------------------------------
 
 /// PKCS#3 Diffie-Hellman engine. Holds a [`DhParameterSpec`] and a key pair;
 /// derives shared secrets and the PACE-GM ephemeral generator.
 #[derive(Debug, Clone)]
-pub struct DHpkcs3Engine {
+pub(crate) struct DHpkcs3Engine {
     parameter_spec: DhParameterSpec,
     public_key: BigUint,
     private_key: BigUint,
@@ -169,6 +110,10 @@ pub struct DHpkcs3Engine {
 
 impl DHpkcs3Engine {
     /// Constructs an engine from a fixed `private_key`.
+    ///
+    /// Test-only convenience over [`DHpkcs3Engine::new`]; production callers
+    /// always let the engine generate the key pair.
+    #[cfg(test)]
     pub fn from_private(
         private_key: BigUint,
         parameter_spec: DhParameterSpec,
@@ -220,24 +165,16 @@ impl DHpkcs3Engine {
         })
     }
 
-    /// Parameters used by this engine.
-    pub fn parameter_spec(&self) -> &DhParameterSpec {
-        &self.parameter_spec
-    }
-
     /// Public key.
     pub fn public_key(&self) -> &BigUint {
         &self.public_key
     }
 
-    /// Private key.
+    /// Private key. Test-only accessor; production code never reads the private
+    /// key back out of the engine.
+    #[cfg(test)]
     pub fn private_key(&self) -> &BigUint {
         &self.private_key
-    }
-
-    /// Returns a [`DhKeyPair`] snapshot of the engine's keys.
-    pub fn key_pair(&self) -> DhKeyPair {
-        DhKeyPair::new(self.public_key.clone(), self.private_key.clone())
     }
 
     /// Validates a peer's DH public key before it is used in an exponentiation.
@@ -589,12 +526,4 @@ mod tests {
         assert!(err.0.contains("No valid private-key range"));
     }
 
-    #[test]
-    fn key_pair_snapshot_returns_both_keys() {
-        let spec = small_spec();
-        let engine = DHpkcs3Engine::from_private(BigUint::from(6u32), spec).unwrap();
-        let kp = engine.key_pair();
-        assert_eq!(kp.public_key(), engine.public_key());
-        assert_eq!(kp.private_key(), engine.private_key());
-    }
 }

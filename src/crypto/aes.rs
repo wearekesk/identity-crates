@@ -15,8 +15,9 @@
 //! | `S256`        | 32 bytes  |
 //!
 //! # IV
-//! AES IV must be exactly 16 bytes (one AES block). If not provided for CBC
-//! mode, an all-zero IV is used automatically.
+//! AES IV must be exactly 16 bytes (one AES block). CBC mode requires an
+//! explicit IV; passing `None` for CBC returns [`AesCipherError::MissingIv`].
+//! ECB mode ignores the IV entirely.
 //!
 //! # CMAC output
 //! [`AesCipher::calculate_cmac`] returns 8 bytes (64 bits), truncated from the
@@ -102,6 +103,9 @@ pub enum AesCipherError {
     #[error("AES IV length must be {AES_BLOCK_SIZE} bytes, got {0}")]
     InvalidIvLength(usize),
 
+    #[error("AES CBC mode requires an explicit IV")]
+    MissingIv,
+
     #[error("AES data length must be a multiple of {AES_BLOCK_SIZE} bytes, got {0}")]
     InvalidDataLength(usize),
 
@@ -154,8 +158,8 @@ impl AesCipher {
     /// # Arguments
     /// - `data`    – Plaintext bytes.
     /// - `key`     – Must be exactly [`key_size()`] bytes.
-    /// - `iv`      – 16-byte IV. If `None` and mode is CBC, an all-zero IV is used.
-    ///               Ignored for ECB mode.
+    /// - `iv`      – 16-byte IV. Required for CBC mode (`None` returns
+    ///               [`AesCipherError::MissingIv`]). Ignored for ECB mode.
     /// - `mode`    – [`BlockCipherMode::Cbc`] (default) or [`BlockCipherMode::Ecb`].
     /// - `padding` – If `true`, `data` is zero-padded to the next 16-byte boundary
     ///               before encryption. If `false`, `data` must already be a multiple
@@ -164,6 +168,7 @@ impl AesCipher {
     /// # Errors
     /// - [`AesCipherError::InvalidKeyLength`] if `key.len() != key_size`.
     /// - [`AesCipherError::InvalidIvLength`] if `iv` is `Some` and `iv.len() != 16`.
+    /// - [`AesCipherError::MissingIv`] if `mode` is CBC and `iv` is `None`.
     /// - [`AesCipherError::InvalidDataLength`] if `padding` is `false` and
     ///   `data.len()` is not a multiple of 16.
     pub fn encrypt(
@@ -202,7 +207,8 @@ impl AesCipher {
     /// # Arguments
     /// - `data` – Ciphertext bytes; must be a multiple of 16 bytes.
     /// - `key`  – Must be exactly [`key_size()`] bytes.
-    /// - `iv`   – 16-byte IV. If `None` and mode is CBC, an all-zero IV is used.
+    /// - `iv`   – 16-byte IV. Required for CBC mode (`None` returns
+    ///            [`AesCipherError::MissingIv`]). Ignored for ECB mode.
     /// - `mode` – [`BlockCipherMode::Cbc`] or [`BlockCipherMode::Ecb`].
     ///
     /// # Errors
@@ -298,7 +304,9 @@ impl AesCipher {
                 arr.copy_from_slice(v);
                 Ok(arr)
             }
-            None => Ok([0u8; AES_BLOCK_SIZE]), // default zero IV (CBC or ignored for ECB)
+            // CBC requires an explicit IV; do not silently fall back to a
+            // zero IV (this helper is only ever reached for CBC mode).
+            None => Err(AesCipherError::MissingIv),
         }
     }
 }
@@ -633,39 +641,51 @@ mod tests {
     fn encrypt_with_padding_roundtrip() {
         let cipher = AesCipher::new(KeyLength::S128);
         let key = [0x01u8; 16];
+        let iv = [0u8; 16];
         let pt = b"Hello".as_ref(); // 5 bytes
 
         let ct = cipher
-            .encrypt(pt, &key, None, BlockCipherMode::Cbc, true)
+            .encrypt(pt, &key, Some(&iv), BlockCipherMode::Cbc, true)
             .unwrap();
         assert_eq!(ct.len(), AES_BLOCK_SIZE); // padded to one block
 
         // Decrypt gives zero-padded plaintext; strip trailing zeros to compare
         let dec = cipher
-            .decrypt(&ct, &key, None, BlockCipherMode::Cbc)
+            .decrypt(&ct, &key, Some(&iv), BlockCipherMode::Cbc)
             .unwrap();
         assert_eq!(&dec[..5], pt);
         assert!(dec[5..].iter().all(|&b| b == 0));
     }
 
     // -----------------------------------------------------------------------
-    // Null IV defaults to zero IV
+    // CBC requires an explicit IV
     // -----------------------------------------------------------------------
 
     #[test]
-    fn null_iv_same_as_zero_iv() {
+    fn cbc_without_iv_returns_missing_iv_error() {
         let cipher = AesCipher::new(KeyLength::S128);
         let key = [0x01u8; 16];
         let pt = [0xFFu8; 16];
-        let zero_iv = [0u8; 16];
 
-        let ct_null = cipher
-            .encrypt(&pt, &key, None, BlockCipherMode::Cbc, false)
-            .unwrap();
-        let ct_zero = cipher
+        // CBC with no IV must error rather than defaulting to an all-zero IV.
+        assert!(matches!(
+            cipher.encrypt(&pt, &key, None, BlockCipherMode::Cbc, false),
+            Err(AesCipherError::MissingIv)
+        ));
+        assert!(matches!(
+            cipher.decrypt(&pt, &key, None, BlockCipherMode::Cbc),
+            Err(AesCipherError::MissingIv)
+        ));
+
+        // An explicit IV (here all-zero) still works and round-trips.
+        let zero_iv = [0u8; 16];
+        let ct = cipher
             .encrypt(&pt, &key, Some(&zero_iv), BlockCipherMode::Cbc, false)
             .unwrap();
-        assert_eq!(ct_null, ct_zero);
+        let dec = cipher
+            .decrypt(&ct, &key, Some(&zero_iv), BlockCipherMode::Cbc)
+            .unwrap();
+        assert_eq!(dec, pt);
     }
 
     // -----------------------------------------------------------------------
@@ -723,13 +743,14 @@ mod tests {
         let nonce = hex::decode("A1A2A3A4A5A6A7A8A9AAABACADAEAFB0").unwrap();
 
         let cipher = AesCipher::new(KeyLength::S256);
+        let zero_iv = [0u8; AES_BLOCK_SIZE];
         let encrypted = cipher
-            .encrypt(&nonce, &kpi, None, BlockCipherMode::Cbc, false)
+            .encrypt(&nonce, &kpi, Some(&zero_iv), BlockCipherMode::Cbc, false)
             .unwrap();
         assert_eq!(encrypted.len(), AES_BLOCK_SIZE);
 
         let decrypted = cipher
-            .decrypt(&encrypted, &kpi, None, BlockCipherMode::Cbc)
+            .decrypt(&encrypted, &kpi, Some(&zero_iv), BlockCipherMode::Cbc)
             .unwrap();
         assert_eq!(decrypted, nonce);
     }
