@@ -396,7 +396,9 @@ mod tests {
         // But feeding when NOT awaiting a response is a usage error that does
         // NOT poison — a fresh session can still be driven from the start.
         let mut s3 = BacSession::new(icao_d3_key());
-        assert!(s3.feed_response(&build_response(&[0u8; NONCE_LEN])).is_err());
+        assert!(s3
+            .feed_response(&build_response(&[0u8; NONCE_LEN]))
+            .is_err());
         assert!(s3.next().is_ok()); // still usable (emits GET CHALLENGE)
     }
 
