@@ -37,7 +37,7 @@ use thiserror::Error;
 
 use crate::crypto::crypto_utils::constant_time_eq;
 use crate::lds::asn1_object_identifiers::{
-    CipherAlgorithm, OiePaceProtocol, TokenAgreementAlgo,
+    CipherAlgorithm, MappingType, OiePaceProtocol, TokenAgreementAlgo,
 };
 use crate::proto::access_key::AccessKey;
 use crate::proto::aes_smcipher::AesSmCipher;
@@ -66,6 +66,8 @@ pub enum PaceAction {
 pub enum PaceSessionError {
     #[error("PACE session: token-agreement algorithm not supported here (got {0:?})")]
     UnsupportedAgreement(TokenAgreementAlgo),
+    #[error("PACE session: only Generic Mapping (GM) is supported (got {0:?})")]
+    UnsupportedMapping(MappingType),
     #[error("PACE session: only AES cipher is supported (got {0:?})")]
     UnsupportedCipher(CipherAlgorithm),
     #[error("PACE session: only NIST P-256 (id 12) is supported (got id {0})")]
@@ -255,6 +257,9 @@ impl<K: AccessKey> PaceSession<K> {
         if protocol.cipher_algorithm != CipherAlgorithm::Aes {
             return Err(PaceSessionError::UnsupportedCipher(protocol.cipher_algorithm));
         }
+        if protocol.mapping_type != MappingType::Gm {
+            return Err(PaceSessionError::UnsupportedMapping(protocol.mapping_type));
+        }
         if parameter_id != NIST_P256_ID {
             return Err(PaceSessionError::UnsupportedCurve(parameter_id));
         }
@@ -282,6 +287,9 @@ impl<K: AccessKey> PaceSession<K> {
         }
         if protocol.cipher_algorithm != CipherAlgorithm::Aes {
             return Err(PaceSessionError::UnsupportedCipher(protocol.cipher_algorithm));
+        }
+        if protocol.mapping_type != MappingType::Gm {
+            return Err(PaceSessionError::UnsupportedMapping(protocol.mapping_type));
         }
         let engine = dh_pace::get_domain_parameter(parameter_id)?;
         Ok(Self {
@@ -611,6 +619,39 @@ mod tests {
         match PaceSession::new_ecdh(can, dh_protocol, 2) {
             Err(PaceSessionError::UnsupportedAgreement(_)) => {}
             _ => panic!("expected UnsupportedAgreement"),
+        }
+    }
+
+    #[test]
+    fn rejects_im_mapping_ecdh() {
+        // Integrated Mapping is parsed but the engine only implements GM.
+        let im_protocol = OiePaceProtocol::new(
+            "0.4.0.127.0.7.2.2.4.4.2",
+            "id-PACE-ECDH-IM-AES-CBC-CMAC-128",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 4, 2],
+        )
+        .unwrap();
+        let can = CanKey::new("123456").unwrap();
+        match PaceSession::new_ecdh(can, im_protocol, NIST_P256_ID) {
+            Err(PaceSessionError::UnsupportedMapping(MappingType::Im)) => {}
+            Err(e) => panic!("expected UnsupportedMapping(Im), got {e:?}"),
+            Ok(_) => panic!("expected UnsupportedMapping(Im), got Ok"),
+        }
+    }
+
+    #[test]
+    fn rejects_im_mapping_dh() {
+        let im_protocol = OiePaceProtocol::new(
+            "0.4.0.127.0.7.2.2.4.3.2",
+            "id-PACE-DH-IM-AES-CBC-CMAC-128",
+            vec![0, 4, 0, 127, 0, 7, 2, 2, 4, 3, 2],
+        )
+        .unwrap();
+        let can = CanKey::new("123456").unwrap();
+        match PaceSession::new_dh(can, im_protocol, 0) {
+            Err(PaceSessionError::UnsupportedMapping(MappingType::Im)) => {}
+            Err(e) => panic!("expected UnsupportedMapping(Im), got {e:?}"),
+            Ok(_) => panic!("expected UnsupportedMapping(Im), got Ok"),
         }
     }
 

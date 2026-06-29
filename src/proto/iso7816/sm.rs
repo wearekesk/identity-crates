@@ -77,9 +77,13 @@ pub fn do97(ne: u32) -> Vec<u8> {
     build_do(TAG_DO97, &int_to_bin(ne as u64, 0))
 }
 
-/// Builds `DO'99'` = `99 <len> <SW1 SW2>` (minimal-length encoding).
-pub fn do99(ne: u32) -> Vec<u8> {
-    build_do(TAG_DO99, &int_to_bin(ne as u64, 0))
+/// Builds `DO'99'` = `99 02 <SW1 SW2>`.
+///
+/// The status word is always exactly 2 bytes. A minimal-integer encoding would
+/// drop leading zero bytes (e.g. a status with `SW1 == 0x00`), emitting a
+/// 1-byte or empty DO'99'; the SW must be carried verbatim as two bytes.
+pub fn do99(sw: u32) -> Vec<u8> {
+    build_do(TAG_DO99, &int_to_bin(sw as u64, 2))
 }
 
 fn build_do(tag: u32, data: &[u8]) -> Vec<u8> {
@@ -153,5 +157,13 @@ mod tests {
     fn do99_minimal() {
         let d = do99(0x9000);
         assert_eq!(d, vec![0x99, 0x02, 0x90, 0x00]);
+    }
+
+    #[test]
+    fn do99_leading_zero_status_is_two_bytes() {
+        // A status word whose SW1 byte is 0x00 must still encode as 2 bytes,
+        // not be shortened by minimal-integer encoding.
+        let d = do99(0x0090);
+        assert_eq!(d, vec![0x99, 0x02, 0x00, 0x90]);
     }
 }

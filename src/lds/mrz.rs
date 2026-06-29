@@ -94,9 +94,11 @@ impl Mrz {
 
     /// Calculates the ICAO 9303 MRZ check digit over `check_string`.
     ///
-    /// Returns `0` if the input contains an unrecognised character, matching
-    /// the reference (which silently returns `0` in that case).
-    pub fn calculate_check_digit(check_string: &str) -> u32 {
+    /// Returns `None` if the input contains an unrecognised character.
+    /// Coercing such inputs to `0` (as the reference does) would let malformed
+    /// MRZ data slip through whenever the stored check digit happens to be `0`,
+    /// so unsupported characters are rejected instead.
+    pub fn calculate_check_digit(check_string: &str) -> Option<u32> {
         const MULTIPLIERS: [u32; 3] = [7, 3, 1];
         let mut sum: u32 = 0;
         let mut m = 0;
@@ -105,12 +107,12 @@ impl Mrz {
                 '0'..='9' => (c as u32) - ('0' as u32),
                 'A'..='Z' => (c as u32) - ('A' as u32) + 10,
                 '<' | ' ' => 0,
-                _ => return 0,
+                _ => return None,
             };
             sum += value * MULTIPLIERS[m];
             m = (m + 1) % MULTIPLIERS.len();
         }
-        sum % 10
+        Some(sum % 10)
     }
 
     // -----------------------------------------------------------------------
@@ -342,7 +344,8 @@ fn read_name_identifiers(
 }
 
 fn assert_check_digit(value: &str, cdigit: u32, err_msg: &str) -> Result<(), MrzParseError> {
-    if Mrz::calculate_check_digit(value) != cdigit {
+    // `None` (unsupported character) is treated as a mismatch and rejected.
+    if Mrz::calculate_check_digit(value) != Some(cdigit) {
         return Err(MrzParseError(err_msg.into()));
     }
     Ok(())
@@ -368,12 +371,18 @@ fn parse_extended_document_number(
                 "Document Number extension is empty".into(),
             ));
         }
-        let body = &dn_second_part[..dn_second_part.len() - 1];
-        let last_char = &dn_second_part[dn_second_part.len() - 1..];
-        doc_num.push_str(body);
+        // Operate on characters, not bytes: MRZ bytes are mapped 1:1 to chars,
+        // so bytes >= 0x80 become multi-byte UTF-8 and byte-indexed slicing
+        // would panic on a char boundary. Split off the trailing check digit.
+        let mut chars: Vec<char> = dn_second_part.chars().collect();
+        let last_char = chars
+            .pop()
+            .ok_or_else(|| MrzParseError("Document Number extension is empty".into()))?;
+        let body: String = chars.into_iter().collect();
+        doc_num.push_str(&body);
         cd_doc_num = last_char
-            .parse::<u32>()
-            .map_err(|_| MrzParseError("Invalid extended document number check digit".into()))?;
+            .to_digit(10)
+            .ok_or_else(|| MrzParseError("Invalid extended document number check digit".into()))?;
         *opt_data = opt_data2.take().unwrap_or_default();
     } else {
         cd_doc_num = str_cd_doc_num
@@ -395,20 +404,26 @@ mod tests {
     // ICAO 9303 Appendix A to Part 3 check-digit examples.
     #[test]
     fn check_digit_examples() {
-        assert_eq!(Mrz::calculate_check_digit("520727"), 3);
-        assert_eq!(Mrz::calculate_check_digit("AB2134<<<"), 5);
+        assert_eq!(Mrz::calculate_check_digit("520727"), Some(3));
+        assert_eq!(Mrz::calculate_check_digit("AB2134<<<"), Some(5));
         assert_eq!(
             Mrz::calculate_check_digit("HA672242<658022549601086<<<<<<<<<<<<<<0"),
-            8
+            Some(8)
         );
         assert_eq!(
             Mrz::calculate_check_digit("D231458907<<<<<<<<<<<<<<<34071279507122<<<<<<<<<<<"),
-            2
+            Some(2)
         );
         assert_eq!(
             Mrz::calculate_check_digit("HA672242<658022549601086<<<<<<<0"),
-            8
+            Some(8)
         );
+    }
+
+    #[test]
+    fn check_digit_rejects_unsupported_character() {
+        // '*' is not in the MRZ alphabet → rejected rather than coerced to 0.
+        assert_eq!(Mrz::calculate_check_digit("12*456"), None);
     }
 
     #[test]

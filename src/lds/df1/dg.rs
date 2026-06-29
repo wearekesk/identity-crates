@@ -35,12 +35,19 @@ impl std::fmt::Display for DgTag {
 /// Returns [`EfParseError`] if the wrapper is malformed or its tag does not
 /// equal `expected_tag`.
 pub fn parse_dg_content(content: &[u8], expected_tag: u32) -> Result<Vec<u8>, EfParseError> {
-    let tlv = Tlv::from_bytes(content)
+    let tlv = Tlv::decode(content)
         .map_err(|e| EfParseError::new(format!("Invalid DG wrapper: {e}")))?;
-    if tlv.tag != expected_tag {
+    if tlv.tag.value != expected_tag {
         return Err(EfParseError::new(format!(
             "Invalid tag={:X}, expected tag={:X}",
-            tlv.tag, expected_tag
+            tlv.tag.value, expected_tag
+        )));
+    }
+    // An elementary file is exactly one BER-TLV; reject any trailing bytes.
+    if tlv.encoded_len != content.len() {
+        return Err(EfParseError::new(format!(
+            "Trailing bytes after DG TLV: {} extra byte(s)",
+            content.len() - tlv.encoded_len
         )));
     }
     Ok(tlv.value)
@@ -125,5 +132,13 @@ mod tests {
     fn parse_rejects_malformed_input() {
         let err = parse_dg_content(&[], 0x61).unwrap_err();
         assert!(err.0.contains("Invalid DG wrapper"));
+    }
+
+    #[test]
+    fn parse_rejects_trailing_bytes() {
+        let mut wrapped = Tlv::encode(0x6A, &[0xAA, 0xBB]);
+        wrapped.push(0xFF); // extra byte after the TLV
+        let err = parse_dg_content(&wrapped, 0x6A).unwrap_err();
+        assert!(err.0.contains("Trailing bytes"));
     }
 }

@@ -55,17 +55,21 @@ impl DataRow {
 
     /// Serialises the row as `[tag, length_byte, ...value]`.
     ///
+    /// The length byte is derived from `value.len()`, not the public `length`
+    /// field, so a caller mutating `length` independently cannot emit a length
+    /// that disagrees with the actual value.
+    ///
     /// # Panics
-    /// Panics if `self.length > 255` (length field is a single byte).
+    /// Panics if `value.len() > 255` (length field is a single byte).
     pub fn to_bytes(&self) -> Vec<u8> {
+        let len = self.value.len();
         assert!(
-            self.length <= 0xFF,
-            "DataRow length {} exceeds maximum single-byte length (255)",
-            self.length
+            len <= 0xFF,
+            "DataRow value length {len} exceeds maximum single-byte length (255)"
         );
-        let mut bytes = Vec::with_capacity(2 + self.value.len());
+        let mut bytes = Vec::with_capacity(2 + len);
         bytes.push(self.tag);
-        bytes.push(self.length as u8);
+        bytes.push(len as u8);
         bytes.extend_from_slice(&self.value);
         bytes
     }
@@ -150,6 +154,14 @@ mod tests {
     fn data_row_length_is_derived() {
         let row = DataRow::new(0x01, vec![0xAA, 0xBB]);
         assert_eq!(row.length, 2);
+    }
+
+    #[test]
+    fn data_row_to_bytes_uses_value_len_not_stored_length() {
+        // A desynced `length` field must not affect serialisation.
+        let mut row = DataRow::new(0x5A, vec![0x01, 0x02, 0x03]);
+        row.length = 99; // tampered, diverges from value.len()
+        assert_eq!(row.to_bytes(), vec![0x5A, 0x03, 0x01, 0x02, 0x03]);
     }
 
     #[test]

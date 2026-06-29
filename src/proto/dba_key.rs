@@ -10,7 +10,6 @@ use sha1::{Digest, Sha1};
 
 use crate::crypto::kdf::DeriveKey;
 use crate::extension::datetime::DateTimeFormatExt;
-use crate::extension::string::StringDateExt;
 use crate::lds::asn1_object_identifiers::{CipherAlgorithm, KeyLength};
 use crate::lds::mrz::Mrz;
 use crate::proto::access_key::{AccessKey, PACE_REF_KEY_TAG_MRZ};
@@ -24,8 +23,11 @@ pub const SEED_LEN_PACE: usize = 20;
 #[derive(Debug, Clone)]
 pub struct DBAKey {
     mrtd_number: String,
-    dob: String, // YYMMDD
-    doe: String, // YYMMDD
+    /// Original date of birth, stored verbatim so the getter round-trips the
+    /// input exactly (the MRZ `YYMMDD` form loses the century).
+    dob: NaiveDate,
+    /// Original date of expiry (see [`DBAKey::dob`]).
+    doe: NaiveDate,
     seed_len: usize,
 }
 
@@ -42,8 +44,8 @@ impl DBAKey {
     ) -> Self {
         Self {
             mrtd_number: mrtd_number.into(),
-            dob: date_of_birth.format_yymmdd(),
-            doe: date_of_expiry.format_yymmdd(),
+            dob: date_of_birth,
+            doe: date_of_expiry,
             seed_len: if pace_mode { SEED_LEN_PACE } else { SEED_LEN_BAC },
         }
     }
@@ -62,16 +64,21 @@ impl DBAKey {
     /// Appendix D.2 of ICAO 9303 Part 11.
     pub fn key_seed(&self) -> Vec<u8> {
         let padded_mrtd = pad_right(&self.mrtd_number, 9, '<');
-        let cdn = Mrz::calculate_check_digit(&padded_mrtd);
-        let cdb = Mrz::calculate_check_digit(&self.dob);
-        let cde = Mrz::calculate_check_digit(&self.doe);
+        let dob = self.dob.format_yymmdd();
+        let doe = self.doe.format_yymmdd();
+        // The seed inputs (doc number, YYMMDD dates) are expected to use the MRZ
+        // alphabet; an unsupported character only ever produces a wrong seed
+        // (GIGO), so fall back to 0 rather than failing key derivation here.
+        let cdn = Mrz::calculate_check_digit(&padded_mrtd).unwrap_or(0);
+        let cdb = Mrz::calculate_check_digit(&dob).unwrap_or(0);
+        let cde = Mrz::calculate_check_digit(&doe).unwrap_or(0);
         let kmrz = format!(
             "{padded_mrtd}{cdn}{dob}{cdb}{doe}{cde}",
             padded_mrtd = padded_mrtd,
             cdn = cdn,
-            dob = self.dob,
+            dob = dob,
             cdb = cdb,
-            doe = self.doe,
+            doe = doe,
             cde = cde,
         );
         let mut hasher = Sha1::new();
@@ -95,14 +102,14 @@ impl DBAKey {
         &self.mrtd_number
     }
 
-    /// Parses the stored date of birth.
+    /// Returns the date of birth exactly as supplied to [`DBAKey::new`].
     pub fn date_of_birth(&self) -> NaiveDate {
-        self.dob.parse_date_yymmdd(false).unwrap()
+        self.dob
     }
 
-    /// Parses the stored date of expiry.
+    /// Returns the date of expiry exactly as supplied to [`DBAKey::new`].
     pub fn date_of_expiry(&self) -> NaiveDate {
-        self.doe.parse_date_yymmdd(true).unwrap()
+        self.doe
     }
 
     /// Returns `true` when the key was constructed with the PACE seed length.
@@ -250,6 +257,17 @@ mod tests {
         // 3DES key (K_enc) and MAC key are each 16 bytes per ICAO 9303.
         assert_eq!(key.enc_key().len(), 16);
         assert_eq!(key.mac_key().len(), 16);
+    }
+
+    #[test]
+    fn date_getters_round_trip_input_century() {
+        // Dates whose century the YYMMDD pivot heuristic could get wrong must
+        // still be reported exactly as supplied to `new`.
+        let dob = NaiveDate::from_ymd_opt(2005, 3, 9).unwrap();
+        let doe = NaiveDate::from_ymd_opt(2045, 12, 31).unwrap();
+        let key = DBAKey::new("D23145890", dob, doe, false);
+        assert_eq!(key.date_of_birth(), dob);
+        assert_eq!(key.date_of_expiry(), doe);
     }
 
     #[test]

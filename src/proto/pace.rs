@@ -267,7 +267,9 @@ pub fn calculate_mac_key(protocol: &OiePaceProtocol, seed: &[u8]) -> Result<Vec<
         (CipherAlgorithm::Aes, KeyLength::S128) => Ok(DeriveKey::cmac128(seed)),
         (CipherAlgorithm::Aes, KeyLength::S192) => Ok(DeriveKey::cmac192(seed)),
         (CipherAlgorithm::Aes, KeyLength::S256) => Ok(DeriveKey::cmac256(seed)),
-        (CipherAlgorithm::DeSede, _) => Ok(DeriveKey::des_ede(seed, false)),
+        // K_mac for 3DES uses the MAC-mode KDF (counter 2), NOT the ENC KDF.
+        // ICAO 9303 Part 11 §9.7.1: K_enc = KDF(K,1), K_mac = KDF(K,2).
+        (CipherAlgorithm::DeSede, _) => Ok(DeriveKey::iso9797_mac_alg3(seed)),
     }
 }
 
@@ -337,6 +339,10 @@ pub fn decrypt_nonce(
 /// onwards, each cast to a single byte. See [`generate_encoding_input_data`]
 /// for why this shortcut is safe for every defined PACE OID.
 fn oid_body_bytes(oie: &Oie) -> Vec<u8> {
+    // An empty identifier has no arcs to skip; `[1..]` would panic on it.
+    if oie.identifier.is_empty() {
+        return Vec::new();
+    }
     oie.identifier[1..].iter().map(|&a| a as u8).collect()
 }
 
@@ -438,9 +444,10 @@ mod tests {
     #[test]
     fn encoding_input_data_has_expected_outer_tag() {
         let proto = oie_aes128_ecdh_gm();
-        let pk = PublicKeyPace::new_ecdh(
+        let pk = PublicKeyPace::new_ecdh_fixed(
             num_bigint::BigUint::from(0xAABBCCDDu32),
             num_bigint::BigUint::from(0x11223344u32),
+            4,
         );
         let out = generate_encoding_input_data(&proto, &pk);
         // Outer tag 0x7F49 is a two-byte BER tag: 0x7F 0x49
@@ -509,6 +516,26 @@ mod tests {
         let seed = [0x22u8; 32];
         assert_eq!(calculate_enc_key(&proto, &seed).unwrap().len(), 16);
         assert_eq!(calculate_mac_key(&proto, &seed).unwrap().len(), 16);
+    }
+
+    /// K_mac for 3DES must be derived with the MAC-mode KDF (counter 2), not
+    /// the ENC KDF (counter 1) — so it must differ from K_enc and must equal
+    /// the ISO 9797-1 MAC alg 3 derivation. ICAO 9303 Part 11 §9.7.1.
+    #[test]
+    fn desede_mac_key_uses_mac_kdf_not_enc_kdf() {
+        let proto = oie_desede_dh_gm();
+        let seed = [0x22u8; 32];
+        let enc = calculate_enc_key(&proto, &seed).unwrap();
+        let mac = calculate_mac_key(&proto, &seed).unwrap();
+        assert_ne!(enc, mac, "3DES K_enc and K_mac must differ");
+        assert_eq!(mac, DeriveKey::iso9797_mac_alg3(&seed));
+        assert_eq!(enc, DeriveKey::des_ede(&seed, false));
+    }
+
+    #[test]
+    fn oid_body_bytes_handles_empty_identifier() {
+        let oie = Oie::new("", "", Vec::new());
+        assert!(oid_body_bytes(&oie).is_empty());
     }
 
     // ---------------- Auth token ----------------

@@ -40,24 +40,43 @@ impl EfCardAccess {
             EfParseError::new("Invalid structure of EF.CardAccess. No data to parse.")
         })?;
 
-        // Pull the first element of the set (must be a SEQUENCE per the spec).
-        let first_seq = set.parse(|parser| {
+        // EF.CardAccess is a SET OF SecurityInfo; it may carry several elements
+        // (e.g. PACEInfo alongside PACEDomainParameterInfo or other infos).
+        // Consume *all* SEQUENCE elements — leaving any unread would make the
+        // ASN.1 parser fail with ExtraData — and keep the first that parses as
+        // a PACEInfo.
+        let pace_info = set.parse(|parser| {
             if parser.is_empty() {
                 return Err(EfParseError::new(
-                    "Invalid structure of EF.CardAccess. Expected exactly one element in set, got none.",
+                    "Invalid structure of EF.CardAccess. Expected at least one element in set, got none.",
                 ));
             }
-            let seq: Sequence<'_> = parser.read_element().map_err(|_| {
-                EfParseError::new(
-                    "Invalid structure of EF.CardAccess. First element in set is not ASN1Sequence.",
-                )
-            })?;
-            Ok::<Sequence<'_>, EfParseError>(seq)
+            let mut found: Option<PaceInfo> = None;
+            let mut last_err: Option<EfParseError> = None;
+            while !parser.is_empty() {
+                let seq: Sequence<'_> = parser.read_element().map_err(|_| {
+                    EfParseError::new(
+                        "Invalid structure of EF.CardAccess. Set element is not an ASN1Sequence.",
+                    )
+                })?;
+                // PACEDomainParameterInfo (ICAO 9303 p11 §9.2.1) and other
+                // SecurityInfos fail to parse as PaceInfo; skip them and keep
+                // looking for the first PACEInfo.
+                if found.is_none() {
+                    match PaceInfo::from_sequence(seq) {
+                        Ok(pi) => found = Some(pi),
+                        Err(e) => last_err = Some(e),
+                    }
+                }
+            }
+            found.ok_or_else(|| {
+                last_err.unwrap_or_else(|| {
+                    EfParseError::new(
+                        "Invalid structure of EF.CardAccess. No PACEInfo found in set.",
+                    )
+                })
+            })
         })?;
-
-        let pace_info = PaceInfo::from_sequence(first_seq)?;
-
-        // PACEDomainParameterInfo (ICAO 9303 p11 §9.2.1) is not yet parsed.
 
         Ok(Self {
             encoded,
@@ -147,7 +166,7 @@ mod tests {
 
         let pi = ef.pace_info().unwrap();
         assert_eq!(pi.version, 2);
-        assert_eq!(pi.parameter_id, 12);
+        assert_eq!(pi.parameter_id, Some(12));
         assert_eq!(pi.protocol.cipher_algorithm, CipherAlgorithm::Aes);
         assert_eq!(pi.protocol.key_length, KeyLength::S128);
         assert_eq!(
@@ -177,6 +196,29 @@ mod tests {
     fn rejects_empty_set() {
         // Empty SET: 0x31, 0x00.
         let err = EfCardAccess::from_bytes(vec![0x31, 0x00]).unwrap_err();
-        assert!(err.0.contains("Expected exactly one element in set, got none"));
+        assert!(err.0.contains("got none"));
+    }
+
+    /// A multi-element SET (two SEQUENCEs) must parse and use the first
+    /// PACEInfo instead of failing with trailing-data (ExtraData).
+    #[test]
+    fn parses_multi_element_set_uses_first_pace_info() {
+        let pi = make_pace_info_sequence();
+        // SET { SEQUENCE(pi), SEQUENCE(pi) } with two elements.
+        let content_len = pi.len() * 2;
+        let mut out = vec![0x31];
+        if content_len < 128 {
+            out.push(content_len as u8);
+        } else if content_len < 256 {
+            out.extend_from_slice(&[0x81, content_len as u8]);
+        } else {
+            out.extend_from_slice(&[0x82, (content_len >> 8) as u8, content_len as u8]);
+        }
+        out.extend_from_slice(&pi);
+        out.extend_from_slice(&pi);
+
+        let ef = EfCardAccess::from_bytes(out).unwrap();
+        assert!(ef.is_pace_info_set());
+        assert_eq!(ef.pace_info().unwrap().parameter_id, Some(12));
     }
 }

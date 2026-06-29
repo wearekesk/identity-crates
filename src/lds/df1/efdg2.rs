@@ -122,8 +122,14 @@ impl EfDG2 {
         if (bht.tag.value & 0xA0) == 0xA0 {
             let elements = read_bht(&tvl.value)?;
             self.read_biometric_data_block(&elements)?;
+            return Ok(());
         }
-        Ok(())
+        // Anything else is an unrecognized BIT structure — reject it rather
+        // than silently succeeding.
+        Err(EfParseError::new(format!(
+            "Unrecognized DG2 BHT tag={:X}",
+            bht.tag.value
+        )))
     }
 
     fn read_biometric_data_block(
@@ -375,6 +381,21 @@ mod tests {
         let dg2_bytes = build_minimal_dg2(&blob, 1, 100, 50);
         let dg = EfDG2::from_bytes(dg2_bytes).unwrap();
         assert_eq!(dg.image_type(), Some(ImageType::Jpeg2000));
+    }
+
+    #[test]
+    fn rejects_unrecognized_bht_tag() {
+        // BIT(7F60) whose first inner TLV has a tag that is neither the SMT tag
+        // nor an A0-masked BHT — must be rejected, not silently accepted.
+        let weird = Tlv::encode(0x80, &[0x00]);
+        let bit = Tlv::encode(BIOMETRIC_INFORMATION_TEMPLATE_TAG, &weird);
+        let bict = Tlv::encode(BIOMETRIC_INFORMATION_COUNT_TAG, &[1u8]);
+        let mut bigt_body = bict;
+        bigt_body.extend_from_slice(&bit);
+        let bigt = Tlv::encode(BIOMETRIC_INFORMATION_GROUP_TEMPLATE_TAG, &bigt_body);
+        let dg2 = Tlv::encode(EF_DG2_TAG.value(), &bigt);
+        let err = EfDG2::from_bytes(dg2).unwrap_err();
+        assert!(err.0.contains("Unrecognized DG2 BHT tag"));
     }
 
     #[test]

@@ -103,7 +103,12 @@ impl<T: Transceiver> Passport<T> {
 
     /// Returns a mutable reference to the underlying ICC API — useful for
     /// sending custom APDUs that aren't wrapped by this class.
+    ///
+    /// The caller may send APDUs (e.g. a `SELECT`) that change the chip's
+    /// current DF, which would desync our cache; invalidate it so the next
+    /// DF-scoped operation issues a fresh `SELECT`.
     pub fn api_mut(&mut self) -> &mut MrtdApi<T> {
+        self.df = SelectedDf::None;
         &mut self.api
     }
 
@@ -294,7 +299,12 @@ mod tests {
             if self.script.is_empty() {
                 return Err(TransceiveError::new("no more scripted responses"));
             }
-            let (_prefix, resp) = self.script.remove(0);
+            let (prefix, resp) = self.script.remove(0);
+            if !apdu.starts_with(&prefix) {
+                return Err(TransceiveError::new(format!(
+                    "unexpected APDU: expected prefix {prefix:02X?}, got {apdu:02X?}"
+                )));
+            }
             Ok(resp)
         }
     }
@@ -377,7 +387,8 @@ mod tests {
         // status not satisfied). Passport should surface it as an error.
         let tx = MockTransceiver {
             script: vec![
-                (vec![0x00, 0xA4, 0x04, 0x0C], ok_response(&[])),
+                // SELECT DF1 by AID: 00 A4 04 00 <Lc> <AID>.
+                (vec![0x00, 0xA4, 0x04, 0x00], ok_response(&[])),
                 (vec![0x00, 0xB0, 0x83, 0x00], vec![0x69, 0x82]),
             ],
             sent: vec![],
@@ -403,7 +414,7 @@ mod tests {
         let first = ef_com[..8].to_vec();
         let tail = ef_com[8..].to_vec();
         let script = vec![
-            (vec![0x00, 0xA4, 0x04, 0x0C], ok_response(&[])), // SELECT DF1
+            (vec![0x00, 0xA4, 0x04, 0x00], ok_response(&[])), // SELECT DF1 by AID
             (vec![0x00, 0xB0, 0x9E, 0x00], ok_response(&first)), // READ BINARY SFI=0x1E
             (vec![0x00, 0xB0], ok_response(&tail)),             // READ BINARY tail
             (vec![0x00, 0xB0, 0x81, 0x00], vec![0x69, 0x82]),   // EF.DG1 missing

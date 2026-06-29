@@ -14,8 +14,8 @@
 //!
 //! **Extended form** is used when `data.len() > 255` OR `ne > 256`.
 //!
-//! Special Le values: `ne == 256` → encoded as `0x00` (short);
-//! `ne == 65536` → encoded as `0x0000` (extended).
+//! Special Le values: in short form `ne == 256` → `0x00`. In extended form
+//! `ne == 256` → `0x0100` (the literal value); only `ne == 65536` → `0x0000`.
 
 use std::fmt;
 use thiserror::Error;
@@ -127,12 +127,9 @@ impl CommandApdu {
             // ---- Le field (if ne > 0) ----
             if self.ne > 0 {
                 if extended {
-                    // Extended Le: two-byte big-endian; 256 and 65536 → 0x0000.
-                    let le_val = if self.ne == 256 || self.ne == 65536 {
-                        0u16
-                    } else {
-                        self.ne as u16
-                    };
+                    // Extended Le: two-byte big-endian. Only 65536 maps to the
+                    // 0x0000 "any length" sentinel; 256 is the literal 0x0100.
+                    let le_val = if self.ne == 65536 { 0u16 } else { self.ne as u16 };
                     out.extend_from_slice(&le_val.to_be_bytes());
                 } else {
                     // Short Le: single byte; 256 → 0x00.
@@ -145,12 +142,9 @@ impl CommandApdu {
             if self.ne > 0 {
                 if extended {
                     // Extended Case 2: prefix 0x00 (addByte) then two-byte Le.
+                    // Only 65536 maps to 0x0000; 256 is the literal 0x0100.
                     out.push(0x00);
-                    let le_val = if self.ne == 256 || self.ne == 65536 {
-                        0u16
-                    } else {
-                        self.ne as u16
-                    };
+                    let le_val = if self.ne == 65536 { 0u16 } else { self.ne as u16 };
                     out.extend_from_slice(&le_val.to_be_bytes());
                 } else {
                     // Short Case 2: single Le byte; 256 → 0x00.
@@ -425,7 +419,8 @@ mod tests {
         let data = vec![0xAAu8; 256];
         let mut expected = hex::decode("00102030000100").unwrap();
         expected.extend_from_slice(&data);
-        expected.extend_from_slice(&[0x00, 0x00]); // 256 → 0x0000 in extended
+        // In extended form 256 is the literal 0x0100 (0x0000 would mean 65536).
+        expected.extend_from_slice(&[0x01, 0x00]);
         assert_eq!(apdu(0x00, 0x10, 0x20, 0x30, Some(&data), 256), expected);
     }
 

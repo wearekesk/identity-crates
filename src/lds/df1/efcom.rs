@@ -40,12 +40,19 @@ impl EfCOM {
     /// Returns [`EfParseError`] for any structural mismatch.
     pub fn from_bytes(data: impl Into<Vec<u8>>) -> Result<Self, EfParseError> {
         let encoded = data.into();
-        let tlv = Tlv::from_bytes(&encoded)
+        let tlv = Tlv::decode(&encoded)
             .map_err(|e| EfParseError::new(format!("Invalid EF.COM wrapper: {e}")))?;
-        if tlv.tag != EF_COM_TAG {
+        if tlv.tag.value != EF_COM_TAG {
             return Err(EfParseError::new(format!(
                 "Invalid EF.COM tag={:X}, expected tag={:X}",
-                tlv.tag, EF_COM_TAG
+                tlv.tag.value, EF_COM_TAG
+            )));
+        }
+        // EF.COM is exactly one BER-TLV; reject any trailing bytes.
+        if tlv.encoded_len != encoded.len() {
+            return Err(EfParseError::new(format!(
+                "Trailing bytes after EF.COM TLV: {} extra byte(s)",
+                encoded.len() - tlv.encoded_len
             )));
         }
 
@@ -181,6 +188,14 @@ mod tests {
         let bytes = Tlv::encode(EF_COM_TAG, &body);
         let err = EfCOM::from_bytes(bytes).unwrap_err();
         assert!(err.0.contains("expected version object with tag=5F01"));
+    }
+
+    #[test]
+    fn rejects_trailing_bytes_after_outer_tlv() {
+        let mut bytes = build_ef_com(b"0107", b"040000", &[0x61]);
+        bytes.push(0x00); // trailing byte after the EF.COM TLV
+        let err = EfCOM::from_bytes(bytes).unwrap_err();
+        assert!(err.0.contains("Trailing bytes"));
     }
 
     #[test]

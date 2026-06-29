@@ -91,6 +91,10 @@ enum State {
     WaitingForAuth { rnd_icc: [u8; NONCE_LEN] },
     /// Handshake finished; `Done` is ready to be taken.
     Completed(Option<MrtdSM<DesSmCipher>>),
+    /// A response failed to validate; the session is poisoned and cannot be
+    /// reused. This preserves the linear contract — a bad (even SW=9000)
+    /// response must not silently rewind the machine to `Start`.
+    Failed,
 }
 
 impl BacSession {
@@ -175,7 +179,53 @@ impl BacSession {
             State::WaitingForChallenge | State::WaitingForAuth { .. } => Err(BacError(
                 "BAC session is waiting for a response; call feed_response first".into(),
             )),
+            State::Failed => Err(BacError(
+                "BAC session has failed and cannot continue".into(),
+            )),
         }
+    }
+
+    /// Validates a GET CHALLENGE response body and returns `RND.IC`.
+    fn handle_challenge(data: &[u8]) -> Result<[u8; NONCE_LEN], BacError> {
+        if data.len() != NONCE_LEN {
+            return Err(BacError(format!(
+                "Expected {NONCE_LEN}-byte challenge, got {}",
+                data.len()
+            )));
+        }
+        let mut rnd_icc = [0u8; NONCE_LEN];
+        rnd_icc.copy_from_slice(data);
+        Ok(rnd_icc)
+    }
+
+    /// Validates an EXTERNAL AUTHENTICATE response body and builds the SM.
+    fn handle_auth(
+        &self,
+        data: &[u8],
+        rnd_icc: &[u8; NONCE_LEN],
+    ) -> Result<MrtdSM<DesSmCipher>, BacError> {
+        if data.len() != E_LEN + MAC_LEN {
+            return Err(BacError(format!(
+                "Expected {} bytes for external-auth response, got {}",
+                E_LEN + MAC_LEN,
+                data.len()
+            )));
+        }
+        // Split E_IC || M_IC, verify MAC, decrypt, extract K.IC.
+        let pair = bac::extract_eicc_and_micc(data)?;
+        let k_enc = self.key.enc_key();
+        let k_mac = self.key.mac_key();
+
+        if !bac::verify_eicc(&pair.first, &k_mac, &pair.second)? {
+            return Err(BacError("Verifying MAC of E.IC failed".into()));
+        }
+
+        let r = bac::decrypt_e_icc(&k_enc, &pair.first)?;
+        let kicc = bac::verify_rnd_ifd_and_extract_kicc(&self.rnd_ifd, &r)?;
+        let ks = bac::calculate_session_keys(&self.kifd, &kicc)?;
+        let ssc = bac::calculate_ssc(&self.rnd_ifd, rnd_icc)?;
+        let sm = bac::establish_sm(&ks.first, &ks.second, ssc)?;
+        Ok(sm)
     }
 
     /// Consumes the full APDU response (data || SW) for the most recent
@@ -192,44 +242,32 @@ impl BacSession {
         let data = rapdu.data.ok_or_else(|| BacError("Empty response data".into()))?;
 
         match std::mem::replace(&mut self.state, State::Start) {
-            State::WaitingForChallenge => {
-                if data.len() != NONCE_LEN {
-                    return Err(BacError(format!(
-                        "Expected {NONCE_LEN}-byte challenge, got {}",
-                        data.len()
-                    )));
+            State::WaitingForChallenge => match Self::handle_challenge(&data) {
+                Ok(rnd_icc) => {
+                    self.state = State::ReadyForExternalAuth { rnd_icc };
+                    Ok(())
                 }
-                let mut rnd_icc = [0u8; NONCE_LEN];
-                rnd_icc.copy_from_slice(&data);
-                self.state = State::ReadyForExternalAuth { rnd_icc };
-                Ok(())
-            }
-            State::WaitingForAuth { rnd_icc } => {
-                if data.len() != E_LEN + MAC_LEN {
-                    return Err(BacError(format!(
-                        "Expected {} bytes for external-auth response, got {}",
-                        E_LEN + MAC_LEN,
-                        data.len()
-                    )));
+                Err(e) => {
+                    // A malformed (even SW=9000) response poisons the session
+                    // rather than silently rewinding it to `Start`.
+                    self.state = State::Failed;
+                    Err(e)
                 }
-                // Split E_IC || M_IC, verify MAC, decrypt, extract K.IC.
-                let pair = bac::extract_eicc_and_micc(&data)?;
-                let k_enc = self.key.enc_key();
-                let k_mac = self.key.mac_key();
-
-                if !bac::verify_eicc(&pair.first, &k_mac, &pair.second)? {
-                    return Err(BacError("Verifying MAC of E.IC failed".into()));
+            },
+            State::WaitingForAuth { rnd_icc } => match self.handle_auth(&data, &rnd_icc) {
+                Ok(sm) => {
+                    self.state = State::Completed(Some(sm));
+                    Ok(())
                 }
-
-                let r = bac::decrypt_e_icc(&k_enc, &pair.first)?;
-                let kicc = bac::verify_rnd_ifd_and_extract_kicc(&self.rnd_ifd, &r)?;
-                let ks = bac::calculate_session_keys(&self.kifd, &kicc)?;
-                let ssc = bac::calculate_ssc(&self.rnd_ifd, &rnd_icc)?;
-                let sm = bac::establish_sm(&ks.first, &ks.second, ssc)?;
-                self.state = State::Completed(Some(sm));
-                Ok(())
-            }
-            s @ (State::Start | State::ReadyForExternalAuth { .. } | State::Completed(_)) => {
+                Err(e) => {
+                    self.state = State::Failed;
+                    Err(e)
+                }
+            },
+            s @ (State::Start
+            | State::ReadyForExternalAuth { .. }
+            | State::Completed(_)
+            | State::Failed) => {
                 // Not waiting for a response — restore and reject.
                 self.state = s;
                 Err(BacError(
@@ -323,6 +361,17 @@ mod tests {
         let _ = s.next().unwrap();
         let resp = build_response(&[0u8; 7]); // too short
         assert!(s.feed_response(&resp).is_err());
+    }
+
+    #[test]
+    fn malformed_challenge_poisons_session_not_resets_to_start() {
+        let mut s = BacSession::new(icao_d3_key());
+        let _ = s.next().unwrap(); // GET CHALLENGE
+        // SW=9000 but a wrong-length body must not rewind the machine to Start.
+        let resp = build_response(&[0u8; 7]);
+        assert!(s.feed_response(&resp).is_err());
+        // next() must NOT re-issue GET CHALLENGE; the session is poisoned.
+        assert!(s.next().is_err());
     }
 
     #[test]

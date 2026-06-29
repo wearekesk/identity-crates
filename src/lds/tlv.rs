@@ -7,6 +7,8 @@
 
 use thiserror::Error;
 
+use crate::utils::{byte_count, int_to_bin};
+
 // ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
@@ -31,6 +33,11 @@ pub enum TlvError {
 
     #[error("Encoded length is too big")]
     LengthTooBig,
+
+    /// BER indefinite-length form (`0x80`) is not permitted in the DER subset
+    /// used by ICAO 9303 / ISO 7816-4.
+    #[error("Indefinite length (0x80) is not allowed")]
+    IndefiniteLength,
 
     /// Returned when the declared value length exceeds the available bytes
     /// (mirrors the `RangeError` thrown by `Uint8List.sublist`).
@@ -356,6 +363,11 @@ impl Tlv {
         if (first & 0x80) == 0x80 {
             // Long form: lower 7 bits = number of subsequent length bytes.
             let num_len_bytes = (first & 0x7F) as usize;
+            if num_len_bytes == 0 {
+                // 0x80 on its own is the BER indefinite-length marker, which is
+                // forbidden in DER — reject rather than treating it as length 0.
+                return Err(TlvError::IndefiniteLength);
+            }
             if num_len_bytes > 3 {
                 return Err(TlvError::LengthTooBig);
             }
@@ -384,44 +396,8 @@ impl Tlv {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers  (mirrors the Utils.byteCount / Utils.intToBin)
-// ---------------------------------------------------------------------------
-
-/// Returns the number of bytes needed to represent `n`.
-///
-/// - `byte_count(0)` = 0
-/// - `byte_count(1)` = 1
-/// - `byte_count(0xFF)` = 1
-/// - `byte_count(0x100)` = 2
-fn byte_count(n: u64) -> usize {
-    if n == 0 {
-        0
-    } else {
-        let bits = (64 - n.leading_zeros()) as usize;
-        (bits + 7) / 8
-    }
-}
-
-/// Serialises `n` as big-endian bytes, stripping leading zeros.
-/// The result length is at least `min_len` (zero-padded on the left if needed).
-/// If `min_len == 0` and `n == 0`, returns an empty `Vec`.
-fn int_to_bin(n: u64, min_len: usize) -> Vec<u8> {
-    let raw = n.to_be_bytes(); // always 8 bytes, big-endian
-
-    // Index of the first non-zero byte (8 if all zeros).
-    let first_nonzero = raw.iter().position(|&b| b != 0).unwrap_or(8);
-    let sig_bytes = 8 - first_nonzero; // number of significant bytes
-
-    if sig_bytes >= min_len {
-        raw[first_nonzero..].to_vec()
-    } else if min_len == 0 {
-        vec![]
-    } else {
-        // Need to left-pad with zeros to reach min_len.
-        raw[8 - min_len..].to_vec()
-    }
-}
+// `byte_count` and `int_to_bin` are shared with the rest of the crate; see
+// [`crate::utils`]. They were previously duplicated here.
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -533,6 +509,21 @@ mod tests {
     #[test]
     fn decode_length_empty_errors() {
         assert_eq!(Tlv::decode_length(&[]).unwrap_err(), TlvError::EmptyLength);
+    }
+
+    #[test]
+    fn decode_length_indefinite_0x80_is_rejected() {
+        // 0x80 is the BER indefinite-length marker — must be rejected, not
+        // decoded as a zero length.
+        assert_eq!(
+            Tlv::decode_length(&[0x80]).unwrap_err(),
+            TlvError::IndefiniteLength
+        );
+        // Also when followed by content bytes.
+        assert_eq!(
+            Tlv::decode_length(&[0x80, 0x01, 0x02]).unwrap_err(),
+            TlvError::IndefiniteLength
+        );
     }
 
     #[test]

@@ -191,7 +191,14 @@ impl<T: Transceiver> MrtdApi<T> {
                 self.read_binary_ext(offset, ne)?
             };
             if chunk.is_empty() {
-                break;
+                // The chip stopped returning data before the declared TLV
+                // length was reached — surface a short read instead of
+                // silently returning a truncated file.
+                return Err(MrtdApiError::Response(format!(
+                    "short read: got {} of {} declared bytes for file",
+                    data.len(),
+                    total_len
+                )));
             }
             data.extend_from_slice(&chunk);
         }
@@ -289,7 +296,15 @@ impl<T: Transceiver> MrtdApi<T> {
             .pace_info()
             .ok_or(MrtdApiError::MissingPaceInfo)?;
         let protocol = pi.protocol.clone();
-        let parameter_id = u32::try_from(pi.parameter_id)
+        // parameterId is OPTIONAL in PACEInfo, but this PACE flow needs an
+        // explicit domain-parameter id to pick the curve/group.
+        let parameter_id_raw = pi.parameter_id.ok_or_else(|| {
+            MrtdApiError::Session(
+                "PACEInfo has no parameterId; standardized domain parameters are not supported"
+                    .into(),
+            )
+        })?;
+        let parameter_id = u32::try_from(parameter_id_raw)
             .map_err(|_| MrtdApiError::Session("parameter_id out of range".into()))?;
         let mut session = PaceSession::new_ecdh(access_key, protocol, parameter_id)
             .map_err(|e| MrtdApiError::Session(e.to_string()))?;

@@ -133,7 +133,7 @@ impl ECDHPace {
     /// Returns the main public key as a [`PublicKeyPace::Ecdh`].
     pub fn get_pub_key(&self) -> Result<PublicKeyPace, ECDHPaceError> {
         let pk = self.pub_key.as_ref().ok_or(ECDHPaceError::NoPublicKey)?;
-        Ok(point_to_pubkey_pace(pk.to_projective()))
+        point_to_pubkey_pace(pk.to_projective())
     }
 
     /// Returns the ephemeral public key as a [`PublicKeyPace::Ecdh`].
@@ -142,13 +142,13 @@ impl ECDHPace {
             .ephemeral_pub
             .as_ref()
             .ok_or(ECDHPaceError::NoEphemeralPublicKey)?;
-        Ok(point_to_pubkey_pace(*pk))
+        point_to_pubkey_pace(*pk)
     }
 
     /// Converts a [`PublicKeyPace::Ecdh`] into an on-curve [`PublicKey`].
     pub fn transform_public(pub_key: &PublicKeyPace) -> Result<PublicKey, ECDHPaceError> {
         match pub_key {
-            PublicKeyPace::Ecdh { x, y } => pubkey_from_xy(x, y),
+            PublicKeyPace::Ecdh { x, y, .. } => pubkey_from_xy(x, y),
             _ => Err(ECDHPaceError::InvalidEncoding),
         }
     }
@@ -264,17 +264,21 @@ fn compute_shared_point(
     Ok(shared)
 }
 
-fn point_to_pubkey_pace(point: ProjectivePoint) -> PublicKeyPace {
+fn point_to_pubkey_pace(point: ProjectivePoint) -> Result<PublicKeyPace, ECDHPaceError> {
     let affine: AffinePoint = point.to_affine();
     let encoded: EncodedPoint = affine.to_sec1_point(false);
-    // SAFETY: `to_sec1_point(false)` always yields an uncompressed point
-    // (tag 0x04 || X || Y) for a non-infinity affine point.
-    let x_bytes = encoded.x().expect("x coordinate");
-    let y_bytes = encoded.y().expect("y coordinate");
-    PublicKeyPace::new_ecdh(
+    // The identity (point at infinity) has no affine coordinates; reject it
+    // instead of panicking on the missing X/Y.
+    let x_bytes = encoded.x().ok_or(ECDHPaceError::InfinityPoint)?;
+    let y_bytes = encoded.y().ok_or(ECDHPaceError::InfinityPoint)?;
+    // SEC1 uncompressed coordinates are fixed-width (32 bytes for P-256); carry
+    // that width so the X||Y form is always emitted at full length.
+    let coord_len = x_bytes.len();
+    Ok(PublicKeyPace::new_ecdh_fixed(
         BigUint::from_bytes_be(x_bytes),
         BigUint::from_bytes_be(y_bytes),
-    )
+        coord_len,
+    ))
 }
 
 fn pubkey_from_xy(x: &BigUint, y: &BigUint) -> Result<PublicKey, ECDHPaceError> {
@@ -370,7 +374,7 @@ mod tests {
         let pk = e.get_pub_key().unwrap();
         let back = ECDHPace::transform_public(&pk).unwrap();
         // Re-serialise and compare.
-        let pk2 = point_to_pubkey_pace(back.to_projective());
+        let pk2 = point_to_pubkey_pace(back.to_projective()).unwrap();
         assert_eq!(pk.to_bytes(), pk2.to_bytes());
     }
 

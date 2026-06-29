@@ -8,9 +8,9 @@
 //! }
 //! ```
 //!
-//! The reference implementation requires the SET to have **at least** 3
-//! elements and treats `parameterId` as mandatory; this port preserves that
-//! behaviour.
+//! `parameterId` is OPTIONAL per the spec (it identifies the standardized or
+//! conveyed domain parameters when several PACEInfos are present). Records that
+//! omit it are accepted, with `parameter_id == None`.
 
 use asn1::{ObjectIdentifier, Sequence};
 
@@ -28,7 +28,8 @@ pub const PACE_VERSION: i64 = 2;
 pub struct PaceInfo {
     pub protocol: OiePaceProtocol,
     pub version: i64,
-    pub parameter_id: i64,
+    /// `parameterId` from the record, or `None` when omitted (it is OPTIONAL).
+    pub parameter_id: Option<i64>,
     /// `true` when the `parameter_id` names a domain parameter that this
     /// library can evaluate (i.e. the entry exists in the ICAO 9303 table
     /// with `is_supported = true` and the correct GF(p) / EC(p) kind for the
@@ -73,15 +74,25 @@ impl PaceInfo {
                     )));
                 }
 
-                // --- parameterId (required by the reference) ---
-                let parameter_id: i64 = p.read_element().map_err(|_| {
-                    EfParseError::new(
-                        "Invalid structure of PaceInfo. Less than 3 elements in set.",
-                    )
-                })?;
+                // --- parameterId (OPTIONAL) ---
+                let parameter_id: Option<i64> = if p.is_empty() {
+                    None
+                } else {
+                    Some(p.read_element().map_err(|_| {
+                        EfParseError::new(
+                            "Invalid parameterId in PaceInfo. Expected INTEGER.",
+                        )
+                    })?)
+                };
 
-                let is_supported =
-                    check_domain_parameter_supported(parameter_id, protocol.token_agreement_algorithm);
+                let is_supported = parameter_id
+                    .map(|id| {
+                        check_domain_parameter_supported(
+                            id,
+                            protocol.token_agreement_algorithm,
+                        )
+                    })
+                    .unwrap_or(false);
 
                 Ok::<PaceInfo, EfParseError>(PaceInfo {
                     protocol,
@@ -187,7 +198,7 @@ mod tests {
         let info = PaceInfo::from_der(&der).unwrap();
 
         assert_eq!(info.version, 2);
-        assert_eq!(info.parameter_id, 12);
+        assert_eq!(info.parameter_id, Some(12));
         assert_eq!(info.protocol.cipher_algorithm, CipherAlgorithm::Aes);
         assert_eq!(info.protocol.key_length, KeyLength::S128);
         assert_eq!(
@@ -207,11 +218,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_parameter_id() {
-        // Only two elements — should fail the "Less than 3 elements" check.
+    fn accepts_missing_parameter_id() {
+        // parameterId is OPTIONAL — a two-element record must parse, with the
+        // parameter id reported as absent and the domain parameter unsupported.
         let der = build_pace_info(OID_ECDH_GM_AES128, 2, None);
-        let err = PaceInfo::from_der(&der).unwrap_err();
-        assert!(err.0.contains("Less than 3 elements"));
+        let info = PaceInfo::from_der(&der).unwrap();
+        assert_eq!(info.parameter_id, None);
+        assert!(!info.is_pace_domain_parameter_supported);
     }
 
     #[test]

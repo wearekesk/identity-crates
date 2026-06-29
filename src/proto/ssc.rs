@@ -74,8 +74,10 @@ pub struct Ssc {
     /// size), so a stack-allocated `u128` holds it without any heap allocation
     /// — important because the counter is incremented on every APDU exchange.
     value: u128,
-    /// Maximum allowed bit width of the counter.
-    pub bit_size: usize,
+    /// Maximum allowed bit width of the counter. Private so callers cannot
+    /// mutate it and break the constructor invariants (multiple of 8, <= 128,
+    /// and value-fits-in-width); read it via [`Ssc::bit_size`].
+    bit_size: usize,
 }
 
 impl Ssc {
@@ -194,6 +196,11 @@ impl Ssc {
         // `16 - byte_len` bytes of the big-endian encoding are always zero.
         self.value.to_be_bytes()[16 - byte_len..].to_vec()
     }
+
+    /// Returns the counter's bit width.
+    pub fn bit_size(&self) -> usize {
+        self.bit_size
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +243,7 @@ impl DesedeSSC {
 
     /// Returns the underlying bit size.
     pub fn bit_size(&self) -> usize {
-        self.0.bit_size
+        self.0.bit_size()
     }
 }
 

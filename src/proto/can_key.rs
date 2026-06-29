@@ -57,7 +57,12 @@ impl AccessKey for CanKey {
         key_length: KeyLength,
     ) -> Result<Vec<u8>, String> {
         match (cipher_algorithm, key_length) {
-            (CipherAlgorithm::DeSede, _) => Ok(DeriveKey::des_ede(&self.can, true)),
+            // ICAO 3DES PACE uses a single 128-bit (two-key) 3DES key; any other
+            // key length with 3DES is unsupported and must be rejected.
+            (CipherAlgorithm::DeSede, KeyLength::S128) => Ok(DeriveKey::des_ede(&self.can, true)),
+            (CipherAlgorithm::DeSede, other) => Err(format!(
+                "AccessKey.CanKeys; 3DES only supports a 128-bit key, got {other:?}"
+            )),
             (CipherAlgorithm::Aes, KeyLength::S128) => Ok(DeriveKey::aes128(&self.can, true)),
             (CipherAlgorithm::Aes, KeyLength::S192) => Ok(DeriveKey::aes192(&self.can, true)),
             (CipherAlgorithm::Aes, KeyLength::S256) => Ok(DeriveKey::aes256(&self.can, true)),
@@ -129,5 +134,12 @@ mod tests {
         let key = CanKey::new("123456").unwrap();
         let kpi = key.kpi(CipherAlgorithm::DeSede, KeyLength::S128).unwrap();
         assert_eq!(kpi.len(), 16);
+    }
+
+    #[test]
+    fn kpi_desede_rejects_non_128_key_length() {
+        let key = CanKey::new("123456").unwrap();
+        assert!(key.kpi(CipherAlgorithm::DeSede, KeyLength::S192).is_err());
+        assert!(key.kpi(CipherAlgorithm::DeSede, KeyLength::S256).is_err());
     }
 }

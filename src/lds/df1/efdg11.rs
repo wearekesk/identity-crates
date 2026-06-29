@@ -126,6 +126,13 @@ fn parse_full_dob(value: &[u8]) -> Result<NaiveDate, EfParseError> {
             .to_date()
             .map_err(|e| EfParseError::new(format!("Invalid DG11 packed date: {e}")))
     } else {
+        // The ASCII form is exactly 8 digits (CCYYMMDD); `parse_date` alone is
+        // too permissive (it would also accept e.g. a 6-digit YYMMDD).
+        if value.len() != 8 || !value.iter().all(|b| b.is_ascii_digit()) {
+            return Err(EfParseError::new(
+                "Invalid DG11 date string: expected 8 ASCII digits (CCYYMMDD)",
+            ));
+        }
         let s: String = value.iter().map(|&b| b as char).collect();
         s.parse_date(false)
             .map_err(|e| EfParseError::new(format!("Invalid DG11 date string: {e}")))
@@ -197,6 +204,19 @@ mod tests {
             dg.full_date_of_birth,
             Some(NaiveDate::from_ymd_opt(1974, 8, 12).unwrap())
         );
+    }
+
+    #[test]
+    fn rejects_non_8_digit_ascii_dob() {
+        // 6-digit YYMMDD must be rejected for the full DOB string form.
+        let fields = vec![field(TAG_FULL_DATE_OF_BIRTH, b"740812")];
+        let err = EfDG11::from_bytes(build_dg11(&[0x2B], fields)).unwrap_err();
+        assert!(err.0.contains("8 ASCII digits"));
+
+        // Non-digit characters are rejected too (7 bytes, non-digit present).
+        let fields = vec![field(TAG_FULL_DATE_OF_BIRTH, b"1974AB12")];
+        let err = EfDG11::from_bytes(build_dg11(&[0x2B], fields)).unwrap_err();
+        assert!(err.0.contains("8 ASCII digits"));
     }
 
     #[test]

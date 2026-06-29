@@ -240,21 +240,63 @@ impl DHpkcs3Engine {
         DhKeyPair::new(self.public_key.clone(), self.private_key.clone())
     }
 
+    /// Validates a peer's DH public key before it is used in an exponentiation.
+    ///
+    /// Rejects out-of-range values (`y < 2` or `y > p-2`, which covers the
+    /// degenerate `0`, `1`, and `p-1` keys) and, when the subgroup order `q` is
+    /// known, performs the small-subgroup confinement check `y^q mod p == 1`.
+    /// This prevents small-subgroup / invalid-key attacks against PACE-DH.
+    fn validate_peer_public_key(&self, y: &BigUint) -> Result<(), DhPkcs3EngineError> {
+        let p = self.parameter_spec.p();
+        let two = BigUint::from(2u32);
+        // p must be large enough for a meaningful range; guards the `p - 2`.
+        if p < &two {
+            return Err(DhPkcs3EngineError(
+                "Invalid DH modulus p (must be >= 2)".to_string(),
+            ));
+        }
+        let upper = p - &two; // p - 2
+        if y < &two || y > &upper {
+            return Err(DhPkcs3EngineError(
+                "Peer DH public key out of range; require 2 <= y <= p-2".to_string(),
+            ));
+        }
+        if let Some(q) = self.parameter_spec.q() {
+            if y.modpow(q, p) != BigUint::one() {
+                return Err(DhPkcs3EngineError(
+                    "Peer DH public key fails small-subgroup check (y^q mod p != 1)".to_string(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Computes the shared secret `otherPublicKey^privateKey mod p`.
-    pub fn compute_secret_key(&self, other_public_key: &BigUint) -> BigUint {
-        other_public_key.modpow(&self.private_key, self.parameter_spec.p())
+    ///
+    /// The peer public key is validated first (range + small-subgroup check);
+    /// see [`validate_peer_public_key`](Self::validate_peer_public_key).
+    pub fn compute_secret_key(
+        &self,
+        other_public_key: &BigUint,
+    ) -> Result<BigUint, DhPkcs3EngineError> {
+        self.validate_peer_public_key(other_public_key)?;
+        Ok(other_public_key.modpow(&self.private_key, self.parameter_spec.p()))
     }
 
     /// Computes the PACE-GM ephemeral generator:
     /// `G_ephemeral = (g^nonce mod p * H) mod p` where `H` is the shared
     /// secret derived from `other_public_key`.
-    pub fn compute_generator(&self, other_public_key: &BigUint, nonce: &BigUint) -> BigUint {
-        let h = self.compute_secret_key(other_public_key);
+    pub fn compute_generator(
+        &self,
+        other_public_key: &BigUint,
+        nonce: &BigUint,
+    ) -> Result<BigUint, DhPkcs3EngineError> {
+        let h = self.compute_secret_key(other_public_key)?;
         let g_exp = self
             .parameter_spec
             .g()
             .modpow(nonce, self.parameter_spec.p());
-        (g_exp * h) % self.parameter_spec.p()
+        Ok((g_exp * h) % self.parameter_spec.p())
     }
 
     // -----------------------------------------------------------------------
@@ -397,8 +439,8 @@ mod tests {
         let alice = DHpkcs3Engine::from_private(BigUint::from(6u32), spec.clone()).unwrap();
         let bob = DHpkcs3Engine::from_private(BigUint::from(15u32), spec).unwrap();
 
-        let s_ab = alice.compute_secret_key(bob.public_key());
-        let s_ba = bob.compute_secret_key(alice.public_key());
+        let s_ab = alice.compute_secret_key(bob.public_key()).unwrap();
+        let s_ba = bob.compute_secret_key(alice.public_key()).unwrap();
         assert_eq!(s_ab, s_ba);
     }
 
@@ -410,11 +452,11 @@ mod tests {
         let alice = DHpkcs3Engine::from_private(BigUint::from(6u32), spec.clone()).unwrap();
         let bob = DHpkcs3Engine::from_private(BigUint::from(15u32), spec.clone()).unwrap();
 
-        let h = alice.compute_secret_key(bob.public_key());
+        let h = alice.compute_secret_key(bob.public_key()).unwrap();
         let g_exp = spec.g().modpow(&nonce, spec.p());
         let expected = (&g_exp * &h) % spec.p();
 
-        let got = alice.compute_generator(bob.public_key(), &nonce);
+        let got = alice.compute_generator(bob.public_key(), &nonce).unwrap();
         assert_eq!(got, expected);
     }
 
@@ -428,6 +470,38 @@ mod tests {
         let b = DHpkcs3Engine::new(spec, None, Some(42)).unwrap();
         assert_eq!(a.private_key(), b.private_key());
         assert_eq!(a.public_key(), b.public_key());
+    }
+
+    #[test]
+    fn compute_secret_key_rejects_out_of_range_peer() {
+        // p = 23, no q → only the 2 <= y <= p-2 range check applies.
+        let spec = small_spec();
+        let engine = DHpkcs3Engine::from_private(BigUint::from(6u32), spec).unwrap();
+        // Degenerate / out-of-range peers: 0, 1, p-1.
+        assert!(engine.compute_secret_key(&BigUint::zero()).is_err());
+        assert!(engine.compute_secret_key(&BigUint::one()).is_err());
+        assert!(engine.compute_secret_key(&BigUint::from(22u32)).is_err()); // p-1
+        // In-range peer succeeds.
+        assert!(engine.compute_secret_key(&BigUint::from(8u32)).is_ok());
+    }
+
+    #[test]
+    fn compute_secret_key_rejects_small_subgroup_peer() {
+        // p = 467, p-1 = 2 * 233. The order-233 subgroup is the quadratic
+        // residues; g = 4 (= 2^2) generates it, q = 233.
+        let spec = DhParameterSpec::new(
+            BigUint::from(467u32),
+            BigUint::from(4u32),
+            8,
+        )
+        .with_subgroup_order(BigUint::from(233u32));
+        let engine = DHpkcs3Engine::from_private(BigUint::from(5u32), spec).unwrap();
+
+        // 4 is a quadratic residue → 4^233 mod 467 == 1 → accepted.
+        assert!(engine.compute_secret_key(&BigUint::from(4u32)).is_ok());
+        // 2 is a non-residue (467 ≡ 3 mod 8) → 2^233 mod 467 == -1 → rejected.
+        let err = engine.compute_secret_key(&BigUint::from(2u32)).unwrap_err();
+        assert!(err.0.contains("small-subgroup"));
     }
 
     #[test]

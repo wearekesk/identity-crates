@@ -248,9 +248,16 @@ macro_rules! sd_error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialises tests that read/write the process-global sensitive-data flag,
+    /// which would otherwise race under cargo's parallel test runner. Poisoning
+    /// is recovered from so one failing test doesn't cascade into the rest.
+    static FLAG_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn default_sensitive_logging_is_disabled() {
+        let _guard = FLAG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Reset to known state
         set_log_sensitive_data(false);
         assert!(!log_sensitive_data());
@@ -258,6 +265,7 @@ mod tests {
 
     #[test]
     fn set_log_sensitive_data_toggles_flag() {
+        let _guard = FLAG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         set_log_sensitive_data(false);
         assert!(!log_sensitive_data());
 
@@ -296,6 +304,7 @@ mod tests {
 
     #[test]
     fn sensitive_log_calls_do_not_panic_when_disabled() {
+        let _guard = FLAG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         set_log_sensitive_data(false);
         let logger = SensitiveLogger::new("test");
         logger.sd_trace("secret trace");
@@ -309,6 +318,7 @@ mod tests {
 
     #[test]
     fn sensitive_log_calls_do_not_panic_when_enabled() {
+        let _guard = FLAG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         set_log_sensitive_data(true);
         let logger = SensitiveLogger::new("test");
         logger.sd_trace("secret trace");

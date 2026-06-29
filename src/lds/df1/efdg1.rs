@@ -34,12 +34,19 @@ impl EfDG1 {
     pub fn from_bytes(data: impl Into<Vec<u8>>) -> Result<Self, EfParseError> {
         let encoded = data.into();
         let inner = parse_dg_content(&encoded, EF_DG1_TAG.value())?;
-        let mrz_tlv = Tlv::from_bytes(&inner)
+        let mrz_tlv = Tlv::decode(&inner)
             .map_err(|e| EfParseError::new(format!("Invalid inner TLV in EF.DG1: {e}")))?;
-        if mrz_tlv.tag != MRZ_TLV_TAG {
+        if mrz_tlv.tag.value != MRZ_TLV_TAG {
             return Err(EfParseError::new(format!(
                 "Invalid data object tag={:X}, expected object with tag=5F1F",
-                mrz_tlv.tag
+                mrz_tlv.tag.value
+            )));
+        }
+        // The DG1 wrapper holds exactly one inner TLV; reject trailing bytes.
+        if mrz_tlv.encoded_len != inner.len() {
+            return Err(EfParseError::new(format!(
+                "Trailing bytes after EF.DG1 inner TLV: {} extra byte(s)",
+                inner.len() - mrz_tlv.encoded_len
             )));
         }
         let mrz = Mrz::from_bytes(mrz_tlv.value)
@@ -99,6 +106,17 @@ mod tests {
         let outer = Tlv::encode(EF_DG1_TAG.value(), &inner);
         let err = EfDG1::from_bytes(outer).unwrap_err();
         assert!(err.0.contains("expected object with tag=5F1F"));
+    }
+
+    #[test]
+    fn rejects_trailing_bytes_after_inner_tlv() {
+        let mrz = "P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<L898902C36UTO7408122F1204159ZE184226B<<<<<10";
+        // Build the inner 5F1F TLV plus a stray trailing byte, then wrap.
+        let mut inner = Tlv::encode(MRZ_TLV_TAG, mrz.as_bytes());
+        inner.push(0xFF);
+        let outer = Tlv::encode(EF_DG1_TAG.value(), &inner);
+        let err = EfDG1::from_bytes(outer).unwrap_err();
+        assert!(err.0.contains("Trailing bytes"));
     }
 
     #[test]
