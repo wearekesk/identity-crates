@@ -226,7 +226,31 @@ impl BacSession {
 
     /// Consumes the full APDU response (data || SW) for the most recent
     /// outgoing APDU.
+    ///
+    /// If the session is not currently awaiting a response this is a usage error
+    /// and the state is left untouched. Otherwise *any* failure — a malformed
+    /// APDU, a non-`9000` status, empty data, or unparseable payload — poisons
+    /// the session (transitions it to `Failed`) so a bad response can never
+    /// leave the handshake retryable with the same terminal randomness.
     pub fn feed_response(&mut self, response: &[u8]) -> Result<(), BacError> {
+        if !matches!(
+            self.state,
+            State::WaitingForChallenge | State::WaitingForAuth { .. }
+        ) {
+            return Err(BacError(
+                "BAC session has no outstanding APDU to consume".into(),
+            ));
+        }
+        let result = self.consume_response(response);
+        if result.is_err() {
+            self.state = State::Failed;
+        }
+        result
+    }
+
+    /// Inner handler — only called while waiting for a response (guaranteed by
+    /// [`feed_response`]); any `Err` it returns poisons the session there.
+    fn consume_response(&mut self, response: &[u8]) -> Result<(), BacError> {
         let rapdu = ResponseApdu::from_bytes(response)
             .map_err(|e| BacError(format!("Invalid response APDU: {e}")))?;
         if rapdu.status != StatusWord::SUCCESS {
@@ -240,38 +264,18 @@ impl BacSession {
             .ok_or_else(|| BacError("Empty response data".into()))?;
 
         match std::mem::replace(&mut self.state, State::Start) {
-            State::WaitingForChallenge => match Self::handle_challenge(&data) {
-                Ok(rnd_icc) => {
-                    self.state = State::ReadyForExternalAuth { rnd_icc };
-                    Ok(())
-                }
-                Err(e) => {
-                    // A malformed (even SW=9000) response poisons the session
-                    // rather than silently rewinding it to `Start`.
-                    self.state = State::Failed;
-                    Err(e)
-                }
-            },
-            State::WaitingForAuth { rnd_icc } => match self.handle_auth(&data, &rnd_icc) {
-                Ok(sm) => {
-                    self.state = State::Completed(Some(sm));
-                    Ok(())
-                }
-                Err(e) => {
-                    self.state = State::Failed;
-                    Err(e)
-                }
-            },
-            s @ (State::Start
-            | State::ReadyForExternalAuth { .. }
-            | State::Completed(_)
-            | State::Failed) => {
-                // Not waiting for a response — restore and reject.
-                self.state = s;
-                Err(BacError(
-                    "BAC session has no outstanding APDU to consume".into(),
-                ))
+            State::WaitingForChallenge => {
+                let rnd_icc = Self::handle_challenge(&data)?;
+                self.state = State::ReadyForExternalAuth { rnd_icc };
+                Ok(())
             }
+            State::WaitingForAuth { rnd_icc } => {
+                let sm = self.handle_auth(&data, &rnd_icc)?;
+                self.state = State::Completed(Some(sm));
+                Ok(())
+            }
+            // Unreachable: `feed_response` already guarded the waiting states.
+            _ => unreachable!("consume_response called outside a waiting state"),
         }
     }
 }
@@ -371,6 +375,29 @@ mod tests {
         assert!(s.feed_response(&resp).is_err());
         // next() must NOT re-issue GET CHALLENGE; the session is poisoned.
         assert!(s.next().is_err());
+    }
+
+    #[test]
+    fn empty_or_error_response_poisons_session() {
+        // Empty-body SW=9000 while waiting must poison (not leave retryable).
+        let mut s = BacSession::new(icao_d3_key());
+        let _ = s.next().unwrap(); // GET CHALLENGE
+        let empty = ResponseApdu::new(StatusWord::SUCCESS, None).to_bytes();
+        assert!(s.feed_response(&empty).is_err());
+        assert!(s.next().is_err()); // poisoned
+
+        // A non-9000 status also poisons.
+        let mut s2 = BacSession::new(icao_d3_key());
+        let _ = s2.next().unwrap();
+        let err_status = ResponseApdu::new(StatusWord::SM_DATA_INVALID, None).to_bytes();
+        assert!(s2.feed_response(&err_status).is_err());
+        assert!(s2.next().is_err());
+
+        // But feeding when NOT awaiting a response is a usage error that does
+        // NOT poison — a fresh session can still be driven from the start.
+        let mut s3 = BacSession::new(icao_d3_key());
+        assert!(s3.feed_response(&build_response(&[0u8; NONCE_LEN])).is_err());
+        assert!(s3.next().is_ok()); // still usable (emits GET CHALLENGE)
     }
 
     #[test]
