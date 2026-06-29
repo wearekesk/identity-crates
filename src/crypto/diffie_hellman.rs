@@ -7,8 +7,9 @@
 //!   secrets, and deriving the ephemeral generator for PACE-GM.
 //!
 //! Arithmetic uses [`num_bigint::BigUint`] since DH operates on non-negative
-//! integers modulo a prime `p`. Random private keys are drawn from
-//! `[2^(length-1), 2^length)`.
+//! integers modulo a prime `p`. Random private keys are drawn uniformly from
+//! `[1, q-1]` when the subgroup order `q` is known, otherwise from a
+//! `length`-bit range capped at `p-1`.
 
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
@@ -194,7 +195,17 @@ impl DHpkcs3Engine {
                 "Private key must not be zero".to_string(),
             ));
         }
-        let upper = parameter_spec.q().unwrap_or_else(|| parameter_spec.p());
+        // Valid range is [1, q-1] when the subgroup order q is known, else
+        // [1, p-2]: p is the modulus, not the group order, so the exclusive
+        // upper bound for the no-q case is p-1 (x = p-1 yields a degenerate key).
+        let group_order;
+        let upper: &BigUint = match parameter_spec.q() {
+            Some(q) => q,
+            None => {
+                group_order = parameter_spec.p() - BigUint::one();
+                &group_order
+            }
+        };
         if &priv_key >= upper {
             return Err(DhPkcs3EngineError(format!(
                 "Private key must be less than the {} order",
@@ -289,7 +300,11 @@ impl DHpkcs3Engine {
         }
         let byte_len = (length / 8) as usize;
         let lower = BigUint::one() << (length - 1);
-        let upper = BigUint::one() << length;
+        // Cap the draw at p-1 so a generated key is always a valid private key
+        // (< the group order); `new` would otherwise reject an in-range-but-
+        // >= p-1 draw. For real parameters (length << p.bits()) 2^length < p-1,
+        // so this is a no-op and the distribution is unchanged.
+        let upper = (BigUint::one() << length).min(spec.p() - BigUint::one());
         let mut bytes = vec![0u8; byte_len];
         // The buffer is exactly `length` bits wide, so no high bits to mask;
         // the [2^(length-1), 2^length) check selects the top-bit-set half.

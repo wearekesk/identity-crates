@@ -30,6 +30,7 @@ sha2 = "0.11"
 digest = "0.11"
 cipher = "0.5"
 cbc = { version = "0.2", features = ["alloc"] }
+subtle = "2"
 
 # big integers + elliptic curves (PACE ECDH-GM, P-256)
 num-bigint = "0.4"

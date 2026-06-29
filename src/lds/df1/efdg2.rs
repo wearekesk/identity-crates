@@ -276,12 +276,13 @@ fn extract(data: &[u8], start: usize, end: usize) -> i32 {
         1 => data[start] as i8 as i32,
         2 => i16::from_be_bytes([data[start], data[start + 1]]) as i32,
         3 => {
-            // Read all three bytes big-endian, then sign-extend the 24-bit
-            // value to i32 by shifting up into the high byte and back down.
-            let v = ((data[start] as i32) << 16)
+            // Read all three bytes big-endian as an UNSIGNED 24-bit value.
+            // These fields (notably `feature_mask`) are packed bit masks, so
+            // sign-extending bit 23 would wrongly produce a negative value and
+            // corrupt mask checks. The result always fits in a positive i32.
+            ((data[start] as i32) << 16)
                 | ((data[start + 1] as i32) << 8)
-                | data[start + 2] as i32;
-            (v << 8) >> 8
+                | data[start + 2] as i32
         }
         4 => i32::from_be_bytes([
             data[start],

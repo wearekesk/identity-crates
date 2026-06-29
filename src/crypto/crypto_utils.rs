@@ -13,6 +13,7 @@
 
 use rand::Rng;
 use rand::rand_core::UnwrapErr;
+use subtle::ConstantTimeEq;
 use rand::rngs::SysRng;
 
 /// Generates `length` cryptographically secure random bytes.
@@ -47,20 +48,13 @@ pub fn random_bytes(length: usize) -> Vec<u8> {
 
 /// Compares two byte slices in constant time (with respect to their contents).
 ///
-/// Returns `false` immediately if the lengths differ; otherwise XOR-folds every
-/// byte pair into an accumulator and only checks the accumulator at the end, so
-/// the comparison does not short-circuit on the first differing byte. This is
-/// used for MAC / authentication-token verification to avoid leaking where a
-/// mismatch occurs via timing.
-pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut acc = 0u8;
-    for i in 0..a.len() {
-        acc |= a[i] ^ b[i];
-    }
-    acc == 0
+/// Returns `false` if the lengths differ (the length is not secret); otherwise
+/// defers to [`subtle::ConstantTimeEq`], a vetted primitive that the optimizer
+/// cannot legally collapse back into a content-dependent comparison. Used for
+/// MAC / authentication-token verification so a mismatch's position is not
+/// leaked via timing.
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.ct_eq(b).into()
 }
 
 // ---------------------------------------------------------------------------
