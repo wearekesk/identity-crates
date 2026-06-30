@@ -184,8 +184,10 @@ impl Parser {
     pub fn handle_pii(&mut self, data: &[u8]) -> Result<(), PanQrError> {
         let mut payloads: Vec<Vec<u8>> = Vec::new();
         let mut i = 0usize;
-        // Matches are non-overlapping and the scan resumes right after the
-        // 3-byte marker (i.e. it does not skip over the payload).
+        // Elements are a flat, sequential `08 02 <len> <payload>` series. After
+        // a match we resume *past* the whole element (`i = end`) so that bytes
+        // inside a payload (e.g. a name that happens to contain `08 02`) cannot
+        // be misread as the start of the next element.
         while i + 2 < data.len() {
             if data[i] == 0x08 && data[i + 1] == 0x02 {
                 let length = data[i + 2] as usize;
@@ -197,7 +199,7 @@ impl Parser {
                     return Err(PanQrError::UnexpectedEof("PII element"));
                 }
                 payloads.push(data[start..end].to_vec());
-                i += 3;
+                i = end;
             } else {
                 i += 1;
             }
