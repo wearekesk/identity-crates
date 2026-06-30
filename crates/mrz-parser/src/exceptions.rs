@@ -104,7 +104,7 @@ mod tests {
         let e = MRZError::custom("something went wrong");
         let s = format!("{}", e);
         assert!(s.contains("something went wrong"));
-        assert!(s.contains("dmrtd-rs/issues"));
+        assert!(s.contains(concat!(env!("CARGO_PKG_REPOSITORY"), "/issues")));
     }
 
     #[test]
