@@ -1,6 +1,8 @@
-# dmrtd-rs
+# identity-crates
 
-A Cargo workspace for the **dmrtd** eMRTD / ICAO 9303 reader stack in pure Rust.
+A Cargo workspace of pure-Rust crates for reading and verifying identity
+documents — eMRTD / ePassport (ICAO 9303), MRZ, AAMVA driver licenses, Aadhaar
+offline e-KYC, and Income-Tax PAN.
 
 ## Crates
 
