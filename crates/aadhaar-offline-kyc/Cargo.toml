@@ -1,0 +1,27 @@
+[package]
+name = "aadhaar-offline-kyc"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Aadhaar offline e-KYC (India UIDAI): Secure QR v2 + Paperless Offline e-KYC (ZIP/XML) with UIDAI signature verification."
+
+
+[lib]
+name = "aadhaar"
+
+[dependencies]
+chrono = "0.4.44"
+flate2 = "1"
+num-bigint = "0.4"
+rxing = { version = "0.8", features = ["image"] }
+strum = { version = "0.26", features = ["derive"] }
+thiserror = "2"
+image = { version = "0.25.8", default-features = false, features = ["png", "jpeg"] }
+# Paperless Offline e-KYC: share-phrase ZIP, XML parse, UIDAI RSA signature verify
+zip = "8"
+roxmltree = "0.20"
+base64 = "0.22"
+sha2 = "0.10"           # mobile/email hash
+x509-parser = "0.18"   # extract the UIDAI public key from the cert
+xml-sec = "0.1.7"      # full XML-DSig verification (C14N + signature + digest)
