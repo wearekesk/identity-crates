@@ -68,7 +68,7 @@ pub fn parse(input: &[String]) -> Result<MRZResult, MRZError> {
         MRZFieldRecognitionDefectsFixer::fix_check_digit(expiry_date_check_digit_raw);
     let optional_data_fixed = optional_data_raw.to_string();
     let final_check_digit_fixed =
-        final_check_digit_raw.map(|s| MRZFieldRecognitionDefectsFixer::fix_check_digit(s));
+        final_check_digit_raw.map(MRZFieldRecognitionDefectsFixer::fix_check_digit);
 
     // Validate document number check digit
     let doc_check = document_number_check_digit_fixed
