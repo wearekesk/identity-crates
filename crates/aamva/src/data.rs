@@ -109,11 +109,12 @@ impl Height {
         }
         let value: u16 = digits.parse().ok()?;
         let unit = trimmed[digits.len()..].trim().to_ascii_lowercase();
-        if unit.contains("cm") {
-            Some(Height::Centimetres(value))
-        } else {
-            // Default to inches — USA jurisdictions frequently omit the unit.
-            Some(Height::Inches(value))
+        match unit.as_str() {
+            // USA jurisdictions frequently omit the unit; treat bare values as inches.
+            "" | "in" => Some(Height::Inches(value)),
+            "cm" => Some(Height::Centimetres(value)),
+            // Anything else is an unrecognised unit — reject rather than guess.
+            _ => None,
         }
     }
 }

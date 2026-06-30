@@ -25,17 +25,18 @@ const WEIGHTS: [usize; 3] = [7, 3, 1];
 /// assert_eq!(mrz_parser::get_check_digit("L898902C3"), 6);
 /// ```
 pub fn get_check_digit(input: &str) -> u8 {
-    // Use bytes for ASCII MRZ content; MRZ should only contain ASCII characters.
+    // Weight by character position, not UTF-8 byte position: a multi-byte
+    // character must occupy a single MRZ position. Non-ASCII (and any character
+    // outside `A-Z`/`0-9`) contributes a value of 0, mirroring the filler `<`.
     let sum: usize = input
-        .as_bytes()
-        .iter()
+        .chars()
         .enumerate()
-        .map(|(i, &b)| {
-            let value = if is_capital_letter(b) {
+        .map(|(i, c)| {
+            let value = if c.is_ascii_uppercase() {
                 // 'A' => 10
-                (b - b'A') as usize + 10
-            } else if is_digit(b) {
-                (b - b'0') as usize
+                (c as usize - 'A' as usize) + 10
+            } else if c.is_ascii_digit() {
+                c as usize - '0' as usize
             } else {
                 0
             };
@@ -44,16 +45,6 @@ pub fn get_check_digit(input: &str) -> u8 {
         .sum();
 
     (sum % 10) as u8
-}
-
-#[inline]
-fn is_capital_letter(b: u8) -> bool {
-    b >= b'A' && b <= b'Z'
-}
-
-#[inline]
-fn is_digit(b: u8) -> bool {
-    b >= b'0' && b <= b'9'
 }
 
 #[cfg(test)]

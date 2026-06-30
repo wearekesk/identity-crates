@@ -17,9 +17,15 @@ use std::io::Read as _;
 
 /// Embedded UIDAI document-signer certificates (public), newest first. We trust
 /// the **public keys** here as pinned roots, so an *expired* cert does not break
-/// verification (the key still validates signatures it made). Keep this list
-/// current — add UIDAI's latest signer cert as they rotate, so freshly downloaded
-/// e-KYC documents still verify.
+/// verification (the key still validates signatures it made).
+///
+/// NOTE (intentional — do not "fix" by dropping expired certs): UIDAI issues
+/// physical Aadhaar cards and offline e-KYC artifacts (QR / paperless XML) that
+/// remain valid for years and were signed with *older* document-signer keys.
+/// Those keys' certs are now past `notAfter`, but the artifacts they signed are
+/// still in active use, so the older signer keys must stay trusted. We therefore
+/// pin the public keys and deliberately do not enforce certificate validity
+/// windows. Add UIDAI's newest signer cert here as they rotate (newest first).
 const UIDAI_CERTS: &[&str] = &[
     include_str!("../certs/uidai_prod_2023.pem"),
     include_str!("../certs/uidai_prod.pem"),
@@ -140,7 +146,12 @@ pub fn parse_offline_ekyc(
 ) -> Result<OfflineEkyc, AadhaarError> {
     let xml = decrypt_offline_zip(zip_bytes, share_phrase)?;
     let mut ekyc = parse_offline_xml(&xml)?;
-    ekyc.signature_verified = verify_signature(&xml).unwrap_or(false);
+    // A verified-eKYC API must NOT yield Ok on a failed/absent signature: a
+    // bad signature is a hard error, not a successfully-parsed record.
+    if !verify_signature(&xml)? {
+        return Err(AadhaarError::SignatureInvalid);
+    }
+    ekyc.signature_verified = true;
     Ok(ekyc)
 }
 
@@ -281,5 +292,47 @@ mod tests {
             let pk = cert_public_key_pem(pem).expect("cert -> public key PEM");
             assert!(pk.contains("BEGIN PUBLIC KEY") && pk.contains("END PUBLIC KEY"));
         }
+    }
+
+    #[test]
+    fn unsigned_xml_does_not_verify() {
+        // SAMPLE carries no XML-DSig signature, so verification yields false
+        // (and never panics / errors into a "verified" state).
+        assert!(!verify_signature(SAMPLE).unwrap());
+    }
+
+    /// Packs `xml` into an AES-encrypted single-entry ZIP using `password`.
+    fn encrypt_xml_zip(xml: &str, password: &str) -> Vec<u8> {
+        use std::io::{Cursor, Write};
+        use zip::write::{SimpleFileOptions, ZipWriter};
+
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut zw = ZipWriter::new(&mut buf);
+            let opts = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored)
+                .with_aes_encryption(zip::AesMode::Aes256, password);
+            zw.start_file("offline.xml", opts).unwrap();
+            zw.write_all(xml.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    #[test]
+    fn tampered_or_unsigned_ekyc_is_rejected() {
+        // The XML decrypts and parses fine, but it has no valid UIDAI
+        // signature, so the verified-eKYC entry point must return an error
+        // rather than an `Ok` record with `signature_verified == false`.
+        let password = "Share@1234";
+        let zip_bytes = encrypt_xml_zip(SAMPLE, password);
+
+        // Sanity: decrypt + field-parse (no signature check) succeeds.
+        let xml = decrypt_offline_zip(&zip_bytes, password).unwrap();
+        assert!(parse_offline_xml(&xml).is_ok());
+
+        // But the full verified path rejects it.
+        let err = parse_offline_ekyc(&zip_bytes, password).unwrap_err();
+        assert!(matches!(err, AadhaarError::SignatureInvalid));
     }
 }

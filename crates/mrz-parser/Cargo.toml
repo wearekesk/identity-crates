@@ -3,12 +3,13 @@ name = "mrz-parser"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "ICAO 9303 Machine Readable Zone (TD1 / TD2 / TD3) text parser — fields + check digits."
 
 [dependencies]
-chrono = "0.4.44"
-once_cell = "1.21.4"
-regex = "1.12.3"
-strum = { version = "0.26", features = ["derive"] }
+chrono.workspace = true
+once_cell.workspace = true
+regex.workspace = true
+strum.workspace = true

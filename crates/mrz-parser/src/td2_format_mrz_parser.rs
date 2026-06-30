@@ -149,6 +149,38 @@ pub fn parse(input: &[String]) -> Result<MRZResult, MRZError> {
     ))
 }
 
+/// French national-ID validity period (in years):
+/// - issued before 2004-01-01 → 10 years for everyone.
+/// - issued 2004-01-01 onwards → 15 years for adults, 10 for minors.
+///   This single branch covers both the 2004–2013 cards (which received an
+///   automatic 5-year extension, 10 → 15) and the post-2014 cards (issued for
+///   15 years up front). A holder is an adult when they are at least 18 on the
+///   issue date, i.e. born on or before `issue_date - 18 years`.
+fn french_id_validity_years(issue_date: NaiveDate, birth_date: NaiveDate) -> i32 {
+    if issue_date < NaiveDate::from_ymd_opt(2004, 1, 1).unwrap() {
+        10
+    } else {
+        let adult_threshold = subtract_years(issue_date, 18);
+        if birth_date <= adult_threshold {
+            15
+        } else {
+            10
+        }
+    }
+}
+
+/// Subtract `years` from `date`, clamping a 29 February source date to
+/// 28 February when the target year is not a leap year (so the calculation
+/// never fails on the leap-day boundary).
+fn subtract_years(date: NaiveDate, years: i32) -> NaiveDate {
+    let target_year = date.year() - years;
+    NaiveDate::from_ymd_opt(target_year, date.month(), date.day()).unwrap_or_else(|| {
+        // The only date that fails to round-trip is 29 Feb → use 28 Feb.
+        NaiveDate::from_ymd_opt(target_year, date.month(), date.day() - 1)
+            .expect("clamping the day by one yields a valid date")
+    })
+}
+
 fn is_french_id(input: &[String]) -> bool {
     if input.len() < 2 {
         return false;
@@ -261,27 +293,7 @@ fn parse_french_id(input: &[String]) -> Result<MRZResult, MRZError> {
     // Issue date parsing: append "01" and feed through parse_expiry_date.
     let issue_date = MRZFieldParser::parse_expiry_date(&format!("{}01", issue_date_fixed))?;
 
-    // Validity-period logic: pre-2014 issue → 10 years; otherwise 10 years
-    // if the holder is under 18 at issue date, else 15.
-    let years_valid = if issue_date < NaiveDate::from_ymd_opt(2014, 1, 1).unwrap() {
-        10
-    } else {
-        let threshold =
-            NaiveDate::from_ymd_opt(issue_date.year() - 18, issue_date.month(), issue_date.day())
-                .unwrap_or_else(|| {
-                    NaiveDate::from_ymd_opt(
-                        issue_date.year() - 18,
-                        issue_date.month(),
-                        issue_date.day(),
-                    )
-                    .unwrap()
-                });
-        if birth_date < threshold {
-            15
-        } else {
-            10
-        }
-    };
+    let years_valid = french_id_validity_years(issue_date, birth_date);
 
     let expiry_date = NaiveDate::from_ymd_opt(
         issue_date.year() + years_valid,
@@ -333,5 +345,42 @@ mod tests {
             // Attempt parse; may return Err depending on check digits in the synthetic example.
             let _ = parse(&lines);
         }
+    }
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn subtract_years_clamps_leap_day() {
+        // 29 Feb 2032 minus 18 years → 2014 is not a leap year → clamp to 28 Feb.
+        assert_eq!(subtract_years(d(2032, 2, 29), 18), d(2014, 2, 28));
+        // Ordinary dates are unaffected.
+        assert_eq!(subtract_years(d(2030, 6, 15), 18), d(2012, 6, 15));
+    }
+
+    #[test]
+    fn french_validity_pre_2004_is_always_ten() {
+        // Even an adult gets 10 years before the 2004 extension.
+        assert_eq!(french_id_validity_years(d(2000, 5, 1), d(1950, 1, 1)), 10);
+    }
+
+    #[test]
+    fn french_validity_2004_2013_adult_extension() {
+        // Adult card issued during the 2004–2013 window → 15 years.
+        assert_eq!(french_id_validity_years(d(2010, 5, 1), d(1980, 1, 1)), 15);
+        // Minor card issued during the same window → 10 years.
+        assert_eq!(french_id_validity_years(d(2010, 5, 1), d(2000, 1, 1)), 10);
+    }
+
+    #[test]
+    fn french_validity_exactly_18_is_adult() {
+        // Born exactly 18 years before issue → adult → 15 years (not 10).
+        let issue = d(2016, 6, 15);
+        let birth = d(1998, 6, 15);
+        assert_eq!(french_id_validity_years(issue, birth), 15);
+        // One day younger than 18 → minor → 10 years.
+        let birth_minor = d(1998, 6, 16);
+        assert_eq!(french_id_validity_years(issue, birth_minor), 10);
     }
 }

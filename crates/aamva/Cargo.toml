@@ -3,13 +3,14 @@ name = "aamva"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "AAMVA DL/ID — PDF417 barcode scan + payload parser (US / Canadian driver's licenses)."
 
 [dependencies]
-chrono = "0.4.44"
-rxing = { version = "0.8", features = ["image"] }
-strum = { version = "0.26", features = ["derive"] }
-thiserror = "2"
-image = { version = "0.25.8", default-features = false, features = ["png", "jpeg"] }
+chrono.workspace = true
+rxing.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+image.workspace = true

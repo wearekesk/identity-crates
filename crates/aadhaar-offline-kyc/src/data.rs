@@ -19,9 +19,16 @@ pub enum Gender {
 
 impl Gender {
     /// Parses a single ASCII byte of gender (`M` / `F` / `T`).
+    ///
+    /// The input must be exactly one ASCII byte; empty, multi-byte, or
+    /// trailing-garbage inputs are rejected rather than silently reading only
+    /// the first byte.
     pub(crate) fn parse_byte(raw: &[u8]) -> Option<Self> {
-        let c = *raw.first()? as char;
-        Self::from_str(c.encode_utf8(&mut [0u8; 4])).ok()
+        let [byte] = raw else { return None };
+        if !byte.is_ascii() {
+            return None;
+        }
+        Self::from_str((*byte as char).encode_utf8(&mut [0u8; 4])).ok()
     }
 }
 

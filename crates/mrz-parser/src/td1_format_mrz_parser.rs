@@ -152,16 +152,21 @@ impl TD1FormatMRZParser {
             document_number_fixed.clone()
         };
 
-        // final check string
+        // Composite (final) check string per ICAO 9303 Part 5 TD1: it spans the
+        // upper line positions 6-30 (document number + its check digit +
+        // optional data 1) and middle line positions 1-7, 9-15 and 19-29
+        // (dates + their check digits, then optional data 2). The trailing
+        // `optional_data2` segment must be included.
         let final_check_string_fixed = format!(
-            "{}{}{}{}{}{}{}",
+            "{}{}{}{}{}{}{}{}",
             document_number_fixed_for_check_string,
             document_number_check_digit_fixed,
             optional_data_fixed,
             birth_date_fixed,
             birth_date_check_digit_fixed,
             expiry_date_fixed,
-            expiry_date_check_digit_fixed
+            expiry_date_check_digit_fixed,
+            optional_data2_fixed
         );
 
         let final_check_digit_parsed = final_check_digit_fixed.parse::<u8>().ok();
@@ -251,5 +256,26 @@ mod tests {
         assert_eq!(res.birth_date.year(), 1974);
         assert_eq!(res.birth_date.month(), 8);
         assert_eq!(res.birth_date.day(), 12);
+    }
+
+    #[test]
+    fn composite_check_digit_includes_optional_data2() {
+        // optional_data2 (line 2, positions 19-29) is non-empty here, so the
+        // composite check digit (9) only validates if that segment is folded in.
+        let lines = vec![
+            "I<UTOD231458907<<<<<<<<<<<<<<<".to_string(),
+            "7408122F1204159UTOABC123456789".to_string(),
+            "ERIKSSON<<ANNA<MARIA<<<<<<<<<<".to_string(),
+        ];
+        let res = TD1FormatMRZParser::parse(&lines).expect("composite must validate");
+        assert_eq!(res.personal_number2.as_deref(), Some("ABC12345678"));
+
+        // Corrupting optional_data2 must now break the composite check digit.
+        let bad = vec![
+            "I<UTOD231458907<<<<<<<<<<<<<<<".to_string(),
+            "7408122F1204159UTOXBC123456789".to_string(),
+            "ERIKSSON<<ANNA<MARIA<<<<<<<<<<".to_string(),
+        ];
+        assert!(TD1FormatMRZParser::parse(&bad).is_err());
     }
 }

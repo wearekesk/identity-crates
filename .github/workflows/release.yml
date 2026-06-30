@@ -36,6 +36,9 @@ env:
 jobs:
   publish:
     name: publish (${{ inputs.crate }}${{ inputs.dry_run && ' — dry run' || '' }})
+    # Only ever publish from the default branch, so a manual dispatch from an
+    # arbitrary branch cannot upload to crates.io.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       # Third-party actions pinned to immutable commit SHAs (version in comment).
@@ -46,7 +49,9 @@ jobs:
           toolchain: stable
       - name: Publish to crates.io
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          # Only expose the registry token for a real publish; a dry run packages
+          # and verifies locally and never needs the secret.
+          CARGO_REGISTRY_TOKEN: ${{ !inputs.dry_run && secrets.CARGO_REGISTRY_TOKEN || '' }}
           CRATE: ${{ inputs.crate }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: |

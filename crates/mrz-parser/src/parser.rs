@@ -1,8 +1,9 @@
 //! This module provides the `MRZParser` convenience API which chooses the
 //! correct format-specific parser (TD1 / TD2 / TD3) based on the polished input.
 //!
-//! Note: this module lives as a nested `mrz_parser::mrz_parser` module. It
-//! expects sibling modules to provide the following functions / types:
+//! Note: this module is exposed as `mrz_parser::parser` (with the
+//! [`MRZParser`] type re-exported at the crate root). It expects sibling
+//! modules to provide the following functions / types:
 //! - `super::exceptions::MRZError`
 //! - `super::result::MRZResult`
 //! - `super::string_extensions::is_valid_mrz_input`

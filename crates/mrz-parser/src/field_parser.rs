@@ -1,4 +1,5 @@
 use crate::exceptions::MRZError;
+use crate::string_extensions::replace_angle_brackets_with_spaces;
 use crate::Sex;
 use chrono::{Datelike, Local, NaiveDate};
 
@@ -33,27 +34,17 @@ impl MRZFieldParser {
     /// Parse the names field: returns a Vec with two entries:
     /// [surnames, given_names] (either may be empty strings).
     ///
-    /// MRZ name field uses `<<` to separate surname and given names, and
-    /// `<` as filler between name parts:
-    /// - trim leading/trailing `<` characters
-    /// - split on `<<`
-    /// - `_trim` each resulting part (replace `<` with ` ` and trim whitespace)
+    /// MRZ name field uses `<<` to separate surname and given names, and `<` as
+    /// filler between name parts. We:
+    /// - strip only the *trailing* filler padding (`<`), preserving any leading
+    ///   `<<` so an empty surname (`<<GIVEN...`) is not mistaken for the surname
+    /// - split on the first `<<` into [surname, given names]
+    /// - `trim` each part (replace remaining `<` with ` ` and trim whitespace)
     pub fn parse_names(input: &str) -> Vec<String> {
-        let trimmed = trim_char(input, '<');
-        let parts: Vec<&str> = trimmed.split("<<").collect();
-
-        let surname = if !parts.is_empty() {
-            trim(parts[0])
-        } else {
-            String::new()
-        };
-
-        let given_names = if parts.len() > 1 {
-            trim(parts[1])
-        } else {
-            String::new()
-        };
-
+        let trimmed = input.trim_end_matches('<');
+        let mut parts = trimmed.splitn(2, "<<");
+        let surname = trim(parts.next().unwrap_or(""));
+        let given_names = trim(parts.next().unwrap_or(""));
         vec![surname, given_names]
     }
 
@@ -88,62 +79,11 @@ impl MRZFieldParser {
 }
 
 /// Replace angle-brackets with spaces and trim surrounding whitespace.
+///
+/// Uses the shared [`replace_angle_brackets_with_spaces`] helper from
+/// [`crate::string_extensions`] so there is a single source of truth.
 fn trim(input: &str) -> String {
     replace_angle_brackets_with_spaces(input).trim().to_string()
-}
-
-/// Remove leading and trailing occurrences of `ch` from the input.
-fn trim_char(input: &str, ch: char) -> String {
-    if input.is_empty() {
-        return String::new();
-    }
-
-    let mut start = 0usize;
-    let mut end = input.len();
-
-    // Work with char indices to be safe for multi-byte (though MRZ is ASCII).
-    let mut chars = input.char_indices();
-
-    // find start index
-    while let Some((idx, c)) = chars.next() {
-        if c == ch {
-            start = idx + c.len_utf8();
-            continue;
-        } else {
-            // adjust start back to this index and stop
-            start = idx;
-            break;
-        }
-    }
-
-    // find end index (char_indices from the end)
-    if start >= input.len() {
-        return String::new();
-    }
-
-    let mut rev_chars = input.char_indices().rev();
-    while let Some((idx, c)) = rev_chars.next() {
-        if c == ch {
-            // keep skipping; end remains idx
-            end = idx;
-            continue;
-        } else {
-            // end should be after this character
-            end = idx + c.len_utf8();
-            break;
-        }
-    }
-
-    if start >= end || start >= input.len() {
-        String::new()
-    } else {
-        input[start..end].to_string()
-    }
-}
-
-/// Replace MRZ filler '<' with space character.
-fn replace_angle_brackets_with_spaces(input: &str) -> String {
-    input.replace('<', " ")
 }
 
 /// Internal helper to format the date input (currently just trimming filler).
@@ -162,8 +102,10 @@ fn _parse_date(input: &str, milestone_year: i32) -> Result<NaiveDate, MRZError> 
     }
 
     // Expecting first two characters to be the year in two-digit form.
-    let yy_str = &s[0..2];
-    let rest = &s[2..]; // MMDD
+    // Use char-safe slicing: byte indexing would panic if the (malformed)
+    // input contained a multi-byte character straddling index 2.
+    let yy_str = s.get(0..2).ok_or_else(MRZError::invalid_mrz_input)?;
+    let rest = s.get(2..).ok_or_else(MRZError::invalid_mrz_input)?; // MMDD
 
     let parsed_year = yy_str
         .parse::<i32>()
@@ -187,6 +129,7 @@ mod tests {
 
     #[test]
     fn test_trim_and_replace() {
+        use crate::string_extensions::trim_char;
         assert_eq!(trim("ABC<<DEF"), "ABC  DEF");
         assert_eq!(trim("<<HELLO<<"), "HELLO");
         assert_eq!(trim_char("<<ABC<<", '<'), "ABC");
@@ -199,6 +142,22 @@ mod tests {
         assert_eq!(v.len(), 2);
         assert_eq!(v[0], "DOE"); // surname
         assert_eq!(v[1], "JOHN PAUL"); // given names with internal '<' replaced by spaces
+    }
+
+    #[test]
+    fn test_parse_names_empty_surname_preserved() {
+        // A leading `<<` denotes an empty surname; the given name must not be
+        // mis-assigned to the surname slot.
+        let v = MRZFieldParser::parse_names("<<JOHN<PAUL<<<<<<");
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[0], ""); // surname stays empty
+        assert_eq!(v[1], "JOHN PAUL");
+    }
+
+    #[test]
+    fn test_parse_date_rejects_non_char_boundary() {
+        // A 3-byte character straddling the YY/MM boundary must error, not panic.
+        assert!(_parse_date("€0101", 70).is_err());
     }
 
     #[test]

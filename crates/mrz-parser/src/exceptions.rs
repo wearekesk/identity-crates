@@ -78,7 +78,7 @@ impl fmt::Display for MRZError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "{}. If you think this is a mistake, please file an issue https://github.com/mirabuenos/mrz_parser/issues",
+            "{}. If you think this is a mistake, please file an issue https://github.com/wearekesk/dmrtd-rs/issues",
             self.short_message()
         )
     }
@@ -95,7 +95,7 @@ mod tests {
         let e = MRZError::invalid_mrz_input();
         let s = format!("{}", e);
         assert!(s.contains("Invalid MRZ parser input"));
-        assert!(s.contains("https://github.com/mirabuenos/mrz_parser/issues"));
+        assert!(s.contains("https://github.com/wearekesk/dmrtd-rs/issues"));
     }
 
     #[test]
@@ -103,7 +103,7 @@ mod tests {
         let e = MRZError::custom("something went wrong");
         let s = format!("{}", e);
         assert!(s.contains("something went wrong"));
-        assert!(s.contains("mrz_parser/issues"));
+        assert!(s.contains("dmrtd-rs/issues"));
     }
 
     #[test]

@@ -3,6 +3,7 @@ name = "aadhaar-offline-kyc"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Aadhaar offline e-KYC (India UIDAI): Secure QR v2 + Paperless Offline e-KYC (ZIP/XML) with UIDAI signature verification."
@@ -12,17 +13,19 @@ description = "Aadhaar offline e-KYC (India UIDAI): Secure QR v2 + Paperless Off
 name = "aadhaar"
 
 [dependencies]
-chrono = "0.4.44"
-flate2 = "1"
-num-bigint = "0.4"
-rxing = { version = "0.8", features = ["image"] }
-strum = { version = "0.26", features = ["derive"] }
-thiserror = "2"
-image = { version = "0.25.8", default-features = false, features = ["png", "jpeg"] }
+chrono.workspace = true
+flate2.workspace = true
+num-bigint.workspace = true
+rxing.workspace = true
+strum.workspace = true
+thiserror.workspace = true
+image.workspace = true
 # Paperless Offline e-KYC: share-phrase ZIP, XML parse, UIDAI RSA signature verify
-zip = "8"
-roxmltree = "0.20"
-base64 = "0.22"
-sha2 = "0.10"           # mobile/email hash
-x509-parser = "0.18"   # extract the UIDAI public key from the cert
-xml-sec = "0.1.7"      # full XML-DSig verification (C14N + signature + digest)
+zip.workspace = true
+roxmltree.workspace = true
+base64.workspace = true
+# sha2 stays pinned to 0.10 here (the workspace pin is 0.11 for `dmrtd`); the two
+# majors are not feature-unifiable, so this dep is intentionally left per-crate.
+sha2 = "0.10"          # mobile/email hash
+x509-parser.workspace = true
+xml-sec.workspace = true

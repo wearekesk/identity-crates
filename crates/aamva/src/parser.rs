@@ -57,7 +57,14 @@ pub fn parse(payload: &[u8]) -> Result<AamvaLicense, AamvaError> {
     }
 
     // --- fixed-width fields ---
-    let iin = ascii_str(&payload[9..15], "IIN")?.to_string();
+    // The Issuer Identification Number is exactly 6 ASCII digits.
+    let iin_bytes = &payload[9..15];
+    if !iin_bytes.iter().all(u8::is_ascii_digit) {
+        return Err(AamvaError::MalformedHeader(
+            "IIN must be 6 ASCII digits".into(),
+        ));
+    }
+    let iin = ascii_str(iin_bytes, "IIN")?.to_string();
     let aamva_version = ascii_digits(&payload[15..17], "AAMVA version")?;
     let jurisdiction_version = ascii_digits(&payload[17..19], "jurisdiction version")?;
     let entry_count = ascii_digits(&payload[19..21], "entry count")?;
@@ -80,10 +87,21 @@ pub fn parse(payload: &[u8]) -> Result<AamvaLicense, AamvaError> {
         });
         cursor += 10;
     }
+    // Subfile data begins immediately after the header + designator table; any
+    // offset pointing into that region is malformed.
+    let data_start = cursor;
 
     // --- parse every subfile ---
     let mut elements = BTreeMap::<String, String>::new();
     for designator in &designators {
+        if designator.offset < data_start {
+            return Err(AamvaError::SubfileOutOfBounds {
+                subfile: designator.subfile_type.clone(),
+                offset: designator.offset,
+                length: designator.length,
+                payload_len: payload.len(),
+            });
+        }
         let end = designator
             .offset
             .checked_add(designator.length)
@@ -465,6 +483,30 @@ mod tests {
     #[test]
     fn height_without_unit_defaults_to_inches() {
         assert_eq!(Height::parse("070"), Some(Height::Inches(70)));
+    }
+
+    #[test]
+    fn height_with_unknown_unit_is_rejected() {
+        assert_eq!(Height::parse("070 furlongs"), None);
+        assert_eq!(Height::parse("178 xx"), None);
+    }
+
+    #[test]
+    fn rejects_non_digit_iin() {
+        let mut payload = fixture_payload();
+        payload[9] = b'X'; // first byte of the IIN
+        let err = parse(&payload).unwrap_err();
+        assert!(matches!(err, AamvaError::MalformedHeader(_)));
+    }
+
+    #[test]
+    fn rejects_subfile_offset_inside_header() {
+        let mut payload = fixture_payload();
+        // Rewrite the designator's offset (bytes 23..27) to point at byte 0000,
+        // which lies inside the header + designator table.
+        payload[23..27].copy_from_slice(b"0000");
+        let err = parse(&payload).unwrap_err();
+        assert!(matches!(err, AamvaError::SubfileOutOfBounds { .. }));
     }
 
     #[test]

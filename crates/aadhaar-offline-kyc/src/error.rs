@@ -32,6 +32,9 @@ pub enum AadhaarError {
     #[error("invalid date in Aadhaar DOB field `{raw}`")]
     InvalidDate { raw: String },
 
+    #[error("invalid Aadhaar reference id `{raw}` (expected 4 leading digits)")]
+    InvalidReferenceId { raw: String },
+
     #[error("invalid email/mobile indicator `{raw}`")]
     InvalidIndicator { raw: String },
 

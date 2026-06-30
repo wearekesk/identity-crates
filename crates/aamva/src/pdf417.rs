@@ -12,7 +12,7 @@ use super::error::AamvaError;
 /// text content.
 pub fn decode_pdf417_from_image_bytes(bytes: &[u8]) -> Result<String, AamvaError> {
     let luma = image::load_from_memory(bytes)
-        .map_err(|e| AamvaError::PdfDecode(format!("image decode: {e}")))?
+        .map_err(|e| AamvaError::ImageDecode(e.to_string()))?
         .to_luma8();
     let (width, height) = (luma.width(), luma.height());
     decode_pdf417_from_luma8(width, height, luma.into_raw())
@@ -24,7 +24,9 @@ pub fn decode_pdf417_from_luma8(
     height: u32,
     luma: Vec<u8>,
 ) -> Result<String, AamvaError> {
-    let expected = (width as usize) * (height as usize);
+    let expected = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| AamvaError::ImageDecode(format!("dimensions {width}x{height} overflow")))?;
     if luma.len() != expected {
         return Err(AamvaError::PdfDecode(format!(
             "luma buffer length {} does not match width*height={}",
@@ -46,11 +48,11 @@ pub fn decode_pdf417_from_luma8(
 }
 
 fn map_rxing_err(e: rxing::Exceptions) -> AamvaError {
-    let message = e.to_string();
-    if message.contains("NotFound") || message.to_ascii_lowercase().contains("not found") {
-        AamvaError::BarcodeNotFound
-    } else {
-        AamvaError::PdfDecode(message)
+    // Classify by the concrete `rxing::Exceptions` variant rather than by
+    // matching substrings of the formatted message.
+    match e {
+        rxing::Exceptions::NotFoundException(_) => AamvaError::BarcodeNotFound,
+        other => AamvaError::PdfDecode(other.to_string()),
     }
 }
 

@@ -35,13 +35,21 @@ pub fn parse_secure_qr_text(text: &str) -> Result<AadhaarData, AadhaarError> {
 /// Parses a compressed payload (the BigUint → bytes form, before gzip
 /// decompression). Falls back to raw parsing if the blob is not gzipped.
 pub fn parse_secure_qr_bytes(bytes: &[u8]) -> Result<AadhaarData, AadhaarError> {
-    // Try gzip first (v2 default); fall back to raw bytes if the header is
-    // missing (some older / unpacked traces).
-    let decompressed = match try_gunzip(bytes) {
-        Ok(bytes) => bytes,
-        Err(_) => bytes.to_vec(),
+    // The v2 default is gzip. Only fall back to treating the blob as raw when it
+    // genuinely lacks the gzip magic (older / unpacked traces). A blob that
+    // *claims* to be gzip but fails to inflate is corrupt and must error rather
+    // than be silently mis-parsed as raw bytes.
+    let decompressed = if is_gzip(bytes) {
+        try_gunzip(bytes)?
+    } else {
+        bytes.to_vec()
     };
     parse_decompressed(&decompressed)
+}
+
+/// Returns `true` when `bytes` begins with the gzip magic (`0x1F 0x8B`).
+fn is_gzip(bytes: &[u8]) -> bool {
+    bytes.len() >= 2 && bytes[0] == 0x1F && bytes[1] == 0x8B
 }
 
 fn try_gunzip(bytes: &[u8]) -> Result<Vec<u8>, AadhaarError> {
@@ -93,7 +101,12 @@ pub fn parse_decompressed(raw: &[u8]) -> Result<AadhaarData, AadhaarError> {
     };
 
     let reference_id = utf8(text_fields[1], "reference_id")?;
-    let last_four_aadhaar = reference_id.chars().take(4).collect();
+    // The reference id is the last 4 Aadhaar digits followed by a timestamp, so
+    // the first four characters must be ASCII digits.
+    let last_four_aadhaar: String = reference_id.chars().take(4).collect();
+    if last_four_aadhaar.len() != 4 || !last_four_aadhaar.bytes().all(|b| b.is_ascii_digit()) {
+        return Err(AadhaarError::InvalidReferenceId { raw: reference_id });
+    }
 
     let dob = parse_dob(text_fields[3])?;
     let gender = Gender::parse_byte(text_fields[4]);
@@ -105,17 +118,17 @@ pub fn parse_decompressed(raw: &[u8]) -> Result<AadhaarData, AadhaarError> {
         name: utf8(text_fields[2], "name")?,
         dob,
         gender,
-        care_of: utf8_opt(text_fields[5]),
-        district: utf8_opt(text_fields[6]),
-        landmark: utf8_opt(text_fields[7]),
-        house: utf8_opt(text_fields[8]),
-        location: utf8_opt(text_fields[9]),
-        pincode: utf8_opt(text_fields[10]),
-        post_office: utf8_opt(text_fields[11]),
-        state: utf8_opt(text_fields[12]),
-        street: utf8_opt(text_fields[13]),
-        sub_district: utf8_opt(text_fields[14]),
-        village_town_city: utf8_opt(text_fields[15]),
+        care_of: utf8_opt(text_fields[5], "care_of")?,
+        district: utf8_opt(text_fields[6], "district")?,
+        landmark: utf8_opt(text_fields[7], "landmark")?,
+        house: utf8_opt(text_fields[8], "house")?,
+        location: utf8_opt(text_fields[9], "location")?,
+        pincode: utf8_opt(text_fields[10], "pincode")?,
+        post_office: utf8_opt(text_fields[11], "post_office")?,
+        state: utf8_opt(text_fields[12], "state")?,
+        street: utf8_opt(text_fields[13], "street")?,
+        sub_district: utf8_opt(text_fields[14], "sub_district")?,
+        village_town_city: utf8_opt(text_fields[15], "village_town_city")?,
         photo_jpeg: if photo.is_empty() {
             None
         } else {
@@ -188,11 +201,14 @@ fn utf8(raw: &[u8], field: &'static str) -> Result<String, AadhaarError> {
         .map_err(|_| AadhaarError::InvalidUtf8 { field })
 }
 
-fn utf8_opt(raw: &[u8]) -> Option<String> {
+/// Decode an optional address field. Empty → `None`; non-empty must be valid
+/// UTF-8 (invalid bytes are reported, not silently dropped).
+fn utf8_opt(raw: &[u8], field: &'static str) -> Result<Option<String>, AadhaarError> {
     if raw.is_empty() {
-        return None;
+        return Ok(None);
     }
-    std::str::from_utf8(raw).ok().map(|s| s.to_string())
+    let s = std::str::from_utf8(raw).map_err(|_| AadhaarError::InvalidUtf8 { field })?;
+    Ok(Some(s.to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -444,5 +460,65 @@ mod tests {
         let raw = p.encode();
         let data = parse_decompressed(&raw).unwrap();
         assert_eq!(data.gender, Some(Gender::Transgender));
+    }
+
+    #[test]
+    fn multibyte_gender_is_rejected() {
+        // More than one byte (or non-ASCII) must not be silently truncated.
+        let mut p = sample();
+        p.gender = "MM";
+        let raw = p.encode();
+        let data = parse_decompressed(&raw).unwrap();
+        assert_eq!(data.gender, None);
+    }
+
+    #[test]
+    fn malformed_reference_id_is_rejected() {
+        let mut p = sample();
+        p.reference_id = "AB12rest-of-id";
+        let raw = p.encode();
+        assert!(matches!(
+            parse_decompressed(&raw).unwrap_err(),
+            AadhaarError::InvalidReferenceId { .. }
+        ));
+    }
+
+    #[test]
+    fn corrupt_gzip_is_rejected_not_silently_raw() {
+        // Gzip magic present but the stream is garbage → must error, not fall
+        // back to parsing the raw bytes.
+        let bytes = [0x1f, 0x8b, 0x08, 0x00, 0xde, 0xad, 0xbe, 0xef];
+        assert!(matches!(
+            parse_secure_qr_bytes(&bytes).unwrap_err(),
+            AadhaarError::Gunzip(_)
+        ));
+    }
+
+    #[test]
+    fn invalid_utf8_address_field_is_reported() {
+        // Build a payload with invalid UTF-8 in an optional address field
+        // (district, field index 6) and confirm it is reported, not dropped.
+        let mut out = Vec::new();
+        let mut fields: Vec<Vec<u8>> = vec![
+            b"0".to_vec(), // indicator 0 → no mobile/email hashes
+            b"1234202401011230500123".to_vec(),
+            b"RAVI KUMAR".to_vec(),
+            b"01-01-1990".to_vec(),
+            b"M".to_vec(),
+            b"care".to_vec(),
+            vec![0xFE, 0xFE], // invalid UTF-8 bytes (and not the 0xFF delimiter)
+        ];
+        while fields.len() < 16 {
+            fields.push(b"x".to_vec());
+        }
+        for f in &fields {
+            out.extend_from_slice(f);
+            out.push(0xFF);
+        }
+        out.extend_from_slice(&[0u8; 256]); // signature
+        assert!(matches!(
+            parse_decompressed(&out).unwrap_err(),
+            AadhaarError::InvalidUtf8 { field: "district" }
+        ));
     }
 }
