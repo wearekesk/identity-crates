@@ -4,6 +4,7 @@ version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Aadhaar offline e-KYC (India UIDAI): Secure QR v2 + Paperless Offline e-KYC (ZIP/XML) with UIDAI signature verification."
 
 

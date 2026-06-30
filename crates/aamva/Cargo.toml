@@ -4,6 +4,7 @@ version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "AAMVA DL/ID — PDF417 barcode scan + payload parser (US / Canadian driver's licenses)."
 
 [dependencies]
