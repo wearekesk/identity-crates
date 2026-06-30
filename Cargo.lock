@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aadhaar-offline-kyc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "chrono",
@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "aamva"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "image",
@@ -759,7 +759,7 @@ dependencies = [
 
 [[package]]
 name = "dmrtd"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes",
  "asn1",
@@ -1303,7 +1303,7 @@ checksum = "89194689a993ab15268672e99e7b0e19da2da3268ac682e8f02d29d4d1434cd7"
 
 [[package]]
 name = "incometax-pan-qr"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "flate2",
@@ -1511,7 +1511,7 @@ dependencies = [
 
 [[package]]
 name = "mrz-parser"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "once_cell",

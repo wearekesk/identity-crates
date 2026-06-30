@@ -11,7 +11,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Balamurali Pandranki <balamurali@live.com>"]
 edition = "2021"
 # 1.92 is required by the `xml-sec` dependency (Aadhaar XML-DSig verification);
