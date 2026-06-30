@@ -15,6 +15,7 @@ pub mod error;
 pub mod offline_ekyc;
 pub mod parser;
 pub mod qr;
+pub mod verhoeff;
 
 pub use data::{AadhaarData, Gender};
 pub use error::AadhaarError;
