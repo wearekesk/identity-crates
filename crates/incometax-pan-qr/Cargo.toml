@@ -1,0 +1,11 @@
+[package]
+name = "incometax-pan-qr"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Indian Income-Tax PAN (Permanent Account Number) structural validation + entity-type classification."
+
+[dependencies]
