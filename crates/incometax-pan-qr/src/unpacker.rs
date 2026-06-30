@@ -39,6 +39,13 @@ impl BitUnpacker {
         let mut v: u64 = v as u64;
         let mut v1: i64 = v1 as i64;
 
+        // Mask the value to its declared bit width up-front so any bits set above
+        // `v1` cannot leak into the carry state machine and corrupt later
+        // unpacking. Valid 13-bit inputs already fit, so output is unchanged.
+        if v1 < u64::BITS as i64 {
+            v &= (1u64 << v1) - 1;
+        }
+
         let v2 = self.b;
         if v2 > 0 && (v2 as i64) + v1 >= 8 {
             let v3 = ((self.a as u64) | (v << v2)) & 0xFF;
@@ -89,10 +96,14 @@ mod tests {
     use super::*;
 
     /// Independent reference implementation of the bit-unpack state machine,
-    /// used to cross-check the production routine on small inputs.
-    fn py_bit_unpack(out: &mut Vec<u8>, a: &mut i64, b: &mut i64, v_in: i64, v1_in: i64) {
+    /// used to cross-check the production routine on small inputs. It mirrors the
+    /// production routine, including masking the value to its declared bit width.
+    fn reference_bit_unpack(out: &mut Vec<u8>, a: &mut i64, b: &mut i64, v_in: i64, v1_in: i64) {
         let mut v = v_in;
         let mut v1 = v1_in;
+        if v1 < 64 {
+            v &= (1i64 << v1) - 1;
+        }
         let v2 = *b;
         if v2 > 0 && v2 + v1 >= 8 {
             let v3 = (*a | (v << v2)) & 0xFF;
@@ -131,8 +142,8 @@ mod tests {
         let mut a = 0i64;
         let mut b = 0i64;
         let mut expected = Vec::new();
-        py_bit_unpack(&mut expected, &mut a, &mut b, 5749, 13);
-        py_bit_unpack(&mut expected, &mut a, &mut b, 5749, 13);
+        reference_bit_unpack(&mut expected, &mut a, &mut b, 5749, 13);
+        reference_bit_unpack(&mut expected, &mut a, &mut b, 5749, 13);
         assert_eq!(u.output, expected);
     }
 
@@ -147,9 +158,24 @@ mod tests {
         let mut b = 0i64;
         let mut expected = Vec::new();
         for &x in &inputs {
-            py_bit_unpack(&mut expected, &mut a, &mut b, x as i64, 13);
+            reference_bit_unpack(&mut expected, &mut a, &mut b, x as i64, 13);
         }
         assert_eq!(u.output, expected);
+    }
+
+    #[test]
+    fn masks_bits_above_declared_width() {
+        // A 13-bit value carrying spurious bits above bit 13 must decode exactly
+        // as the value with those high bits cleared — they cannot leak into the
+        // state machine. Valid 13-bit inputs are therefore unaffected.
+        let clean = 5749u32;
+        let dirty = clean | (0b1111 << 13);
+        let mut u_dirty = BitUnpacker::new();
+        u_dirty.bit_unpack(dirty, 13).unwrap();
+        let mut u_clean = BitUnpacker::new();
+        u_clean.bit_unpack(clean, 13).unwrap();
+        assert_eq!(u_dirty.output, u_clean.output);
+        assert_eq!((u_dirty.a, u_dirty.b), (u_clean.a, u_clean.b));
     }
 
     #[test]

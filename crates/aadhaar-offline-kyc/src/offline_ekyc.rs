@@ -31,6 +31,11 @@ const UIDAI_CERTS: &[&str] = &[
     include_str!("../certs/uidai_prod.pem"),
 ];
 
+/// Maximum number of bytes we will extract from the share-phrase ZIP. Offline
+/// e-KYC XML is well under this; the cap guards against a maliciously crafted
+/// archive that would expand to exhaust memory (a "zip bomb").
+const MAX_DECOMPRESSED_SIZE: usize = 32 * 1024 * 1024;
+
 /// Parsed Aadhaar Paperless Offline e-KYC record.
 #[derive(Debug, Clone)]
 pub struct OfflineEkyc {
@@ -76,13 +81,25 @@ pub fn decrypt_offline_zip(zip_bytes: &[u8], share_phrase: &str) -> Result<Strin
     let reader = std::io::Cursor::new(zip_bytes);
     let mut archive = zip::ZipArchive::new(reader).map_err(|e| AadhaarError::Zip(e.to_string()))?;
     // the offline pack holds a single XML entry
-    let mut file = archive
+    let file = archive
         .by_index_decrypt(0, share_phrase.as_bytes())
         .map_err(|e| AadhaarError::Zip(e.to_string()))?;
-    let mut xml = String::new();
-    file.read_to_string(&mut xml)
+    read_entry_capped(file, MAX_DECOMPRESSED_SIZE)
+}
+
+/// Reads a ZIP entry into a UTF-8 string, refusing to materialise more than
+/// `limit` bytes. Reading through `take(limit + 1)` means a bomb cannot OOM us
+/// before the length check fires.
+fn read_entry_capped<R: std::io::Read>(reader: R, limit: usize) -> Result<String, AadhaarError> {
+    let mut buf = Vec::new();
+    reader
+        .take(limit as u64 + 1)
+        .read_to_end(&mut buf)
         .map_err(|e| AadhaarError::Zip(e.to_string()))?;
-    Ok(xml)
+    if buf.len() > limit {
+        return Err(AadhaarError::DecompressionLimitExceeded { limit });
+    }
+    String::from_utf8(buf).map_err(|e| AadhaarError::Zip(e.to_string()))
 }
 
 /// Parse the `OfflinePaperlessKyc` XML into fields (does **not** verify the signature).
@@ -317,6 +334,20 @@ mod tests {
             zw.finish().unwrap();
         }
         buf.into_inner()
+    }
+
+    #[test]
+    fn read_entry_capped_rejects_oversize() {
+        use std::io::Cursor;
+        // An entry larger than the limit is rejected before it can be fully
+        // materialised; one within the limit decodes to a string.
+        let data = vec![b'a'; 1000];
+        assert!(matches!(
+            read_entry_capped(Cursor::new(data.clone()), 10),
+            Err(AadhaarError::DecompressionLimitExceeded { limit: 10 })
+        ));
+        let s = read_entry_capped(Cursor::new(data), 1000).unwrap();
+        assert_eq!(s.len(), 1000);
     }
 
     #[test]

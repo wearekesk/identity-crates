@@ -20,6 +20,9 @@ const TEXT_FIELD_COUNT: usize = 16;
 const SIGNATURE_LEN: usize = 256;
 /// Size of the SHA-256 mobile / email hashes.
 const HASH_LEN: usize = 32;
+/// Maximum number of bytes we will inflate from a gzip payload. A genuine Aadhaar
+/// record is far smaller; the cap guards against a crafted "gzip bomb".
+const MAX_DECOMPRESSED_SIZE: usize = 32 * 1024 * 1024;
 
 /// Parses the raw QR text (a base-10 digit string) into an [`AadhaarData`].
 pub fn parse_secure_qr_text(text: &str) -> Result<AadhaarData, AadhaarError> {
@@ -53,11 +56,22 @@ fn is_gzip(bytes: &[u8]) -> bool {
 }
 
 fn try_gunzip(bytes: &[u8]) -> Result<Vec<u8>, AadhaarError> {
-    let mut decoder = GzDecoder::new(bytes);
+    gunzip_capped(bytes, MAX_DECOMPRESSED_SIZE)
+}
+
+/// Inflates a gzip stream, refusing to produce more than `limit` bytes. Reading
+/// through `take(limit + 1)` lets us detect an over-limit (bomb) payload without
+/// first allocating it in full.
+fn gunzip_capped(bytes: &[u8], limit: usize) -> Result<Vec<u8>, AadhaarError> {
+    let decoder = GzDecoder::new(bytes);
     let mut out = Vec::new();
     decoder
+        .take(limit as u64 + 1)
         .read_to_end(&mut out)
         .map_err(|e| AadhaarError::Gunzip(e.to_string()))?;
+    if out.len() > limit {
+        return Err(AadhaarError::DecompressionLimitExceeded { limit });
+    }
     Ok(out)
 }
 
@@ -481,6 +495,22 @@ mod tests {
             parse_decompressed(&raw).unwrap_err(),
             AadhaarError::InvalidReferenceId { .. }
         ));
+    }
+
+    #[test]
+    fn gunzip_capped_rejects_bomb() {
+        // 1000 highly-compressible bytes deflate small but inflate past a tiny
+        // limit, so the cap must reject them rather than allocate the full output.
+        let data = vec![0u8; 1000];
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(&data).unwrap();
+        let compressed = enc.finish().unwrap();
+        assert!(matches!(
+            gunzip_capped(&compressed, 10),
+            Err(AadhaarError::DecompressionLimitExceeded { limit: 10 })
+        ));
+        // A limit large enough for the real output inflates normally.
+        assert_eq!(gunzip_capped(&compressed, 1000).unwrap(), data);
     }
 
     #[test]

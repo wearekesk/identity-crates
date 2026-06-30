@@ -114,7 +114,7 @@ impl Parser {
         match SCBlobIdentifier::from_u16(parsed.identifier) {
             Some(SCBlobIdentifier::Image) => {
                 log::debug!("Image blob encountered!");
-                self.image = Some(ImageProcessor::new(&parsed.data).fix_header());
+                self.image = Some(ImageProcessor::new(&parsed.data).fix_header()?);
             }
             Some(SCBlobIdentifier::Pii) => {
                 log::debug!("PII blob encountered!");
@@ -143,7 +143,12 @@ impl Parser {
             if data[i] == 0x08 && data[i + 1] == 0x02 {
                 let length = data[i + 2] as usize;
                 let start = i + 3;
-                let end = (start + length).min(data.len());
+                let end = start + length;
+                // A truncated element must be rejected, not silently clamped:
+                // partial PII would otherwise be parsed as if complete.
+                if end > data.len() {
+                    return Err(PanQrError::UnexpectedEof("PII element"));
+                }
                 payloads.push(data[start..end].to_vec());
                 i += 3;
             } else {
@@ -261,5 +266,17 @@ mod tests {
         let data = [0x08u8, 0x02, 0x01, b'X'];
         let mut p = Parser::new(&build_outer(0x1E, 1)).unwrap();
         assert!(p.handle_pii(&data).is_err());
+    }
+
+    #[test]
+    fn handle_pii_truncated_element_is_err() {
+        // Marker claims a 5-byte payload but only 1 byte follows: a truncated
+        // element must be rejected, not silently clamped to the buffer end.
+        let data = [0x08u8, 0x02, 0x05, b'X'];
+        let mut p = Parser::new(&build_outer(0x1E, 1)).unwrap();
+        assert!(matches!(
+            p.handle_pii(&data),
+            Err(PanQrError::UnexpectedEof("PII element"))
+        ));
     }
 }

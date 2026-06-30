@@ -20,6 +20,9 @@ pub enum AadhaarError {
     #[error("gzip decompress failed: {0}")]
     Gunzip(String),
 
+    #[error("decompressed data exceeds the {limit}-byte limit")]
+    DecompressionLimitExceeded { limit: usize },
+
     #[error("payload is too short ({len} bytes)")]
     PayloadTooShort { len: usize },
 

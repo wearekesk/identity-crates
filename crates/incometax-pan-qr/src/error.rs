@@ -36,6 +36,14 @@ pub enum PanQrError {
     #[error("zlib inflate failed: {0}")]
     Inflate(String),
 
+    /// Decompressed output exceeded the configured size limit (decompression bomb).
+    #[error("decompressed data exceeds the {0}-byte limit")]
+    DecompressionLimitExceeded(usize),
+
+    /// The embedded image blob was too small to carry a valid header.
+    #[error("image blob is too small ({0} bytes) to reconstruct a header")]
+    ImageTooSmall(usize),
+
     /// The PII blob did not contain the four expected elements.
     #[error("PII blob did not yield the expected PAN/Name/FName/DOB elements")]
     MissingPii,
