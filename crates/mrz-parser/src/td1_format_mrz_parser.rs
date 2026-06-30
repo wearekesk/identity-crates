@@ -52,13 +52,41 @@ impl TD1FormatMRZParser {
             if let Some(caps) = country_pattern.document_number_pattern.captures(substring) {
                 // group 1 is the document number
                 if let Some(m1) = caps.get(1) {
-                    document_number_raw = m1.as_str().to_string();
-                    // end index in the full first_line (byte index)
-                    let end_index = start_idx + caps.get(0).unwrap().end();
-                    // single character at end_index is the check digit for document number
-                    document_number_check_digit_raw =
-                        first_line[end_index..end_index + 1].to_string();
-                    optional_data_raw = first_line[end_index + 1..Self::LINES_LENGTH].to_string();
+                    let matched = m1.as_str();
+                    // byte index just past the match in the full first_line
+                    let match_end = start_idx + caps.get(0).unwrap().end();
+                    // A greedy variable-length pattern (e.g. `[0-9]{8,9}`) can
+                    // swallow the document-number check digit. Choose the split
+                    // whose check digit actually validates: try the full match
+                    // first, then one character shorter (the last matched char
+                    // becoming the check digit).
+                    let validates = |doc: &str, cd: &str| {
+                        cd.parse::<u8>().ok() == Some(get_check_digit(doc) as u8)
+                    };
+                    let full_cd = (match_end < Self::LINES_LENGTH)
+                        .then(|| &first_line[match_end..match_end + 1]);
+                    if let Some(cd) = full_cd.filter(|cd| validates(matched, cd)) {
+                        document_number_raw = matched.to_string();
+                        document_number_check_digit_raw = cd.to_string();
+                        optional_data_raw =
+                            first_line[match_end + 1..Self::LINES_LENGTH].to_string();
+                    } else if matched.len() >= 2
+                        && validates(&matched[..matched.len() - 1], &matched[matched.len() - 1..])
+                    {
+                        // shorter document number; the last matched char is the check digit
+                        document_number_raw = matched[..matched.len() - 1].to_string();
+                        document_number_check_digit_raw = matched[matched.len() - 1..].to_string();
+                        optional_data_raw = first_line[match_end..Self::LINES_LENGTH].to_string();
+                    } else if let Some(cd) = full_cd {
+                        // Neither split validates; keep the greedy split so the
+                        // downstream check-digit validation reports the error.
+                        document_number_raw = matched.to_string();
+                        document_number_check_digit_raw = cd.to_string();
+                        optional_data_raw =
+                            first_line[match_end + 1..Self::LINES_LENGTH].to_string();
+                    } else {
+                        return Err(MRZError::invalid_document_number());
+                    }
                     is_long_document_number = document_number_raw.len() > 9;
                 } else {
                     return Err(MRZError::invalid_document_number());

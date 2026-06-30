@@ -320,10 +320,12 @@ mod tests {
     }
 
     #[test]
-    fn tampered_or_unsigned_ekyc_is_rejected() {
+    fn unsigned_ekyc_is_rejected_by_verified_path() {
         // The XML decrypts and parses fine, but it has no valid UIDAI
         // signature, so the verified-eKYC entry point must return an error
         // rather than an `Ok` record with `signature_verified == false`.
+        // (A signature that is present-but-tampered exercises the same
+        // verify_signature == false branch.)
         let password = "Share@1234";
         let zip_bytes = encrypt_xml_zip(SAMPLE, password);
 

@@ -1,16 +1,15 @@
-/// Utilities to fix common OCR/recognition defects in MRZ fields.
-///
-/// Each function accepts an MRZ-like input string and returns a corrected String.
-///
-/// Replacements are intentionally conservative and target characters commonly
-/// misrecognized by OCR engines when reading MRZ zones (ASCII uppercase and digits).
-///
-/// The actual character-substitution helpers live in [`crate::string_extensions`];
-/// this type is a thin, field-oriented facade over them.
+//! Utilities to fix common OCR/recognition defects in MRZ fields.
+//!
+//! Replacements are intentionally conservative and target characters commonly
+//! misrecognized by OCR engines when reading MRZ zones (ASCII uppercase and
+//! digits). The actual character-substitution helpers live in
+//! [`crate::string_extensions`]; [`MRZFieldRecognitionDefectsFixer`] is a thin,
+//! field-oriented facade over them.
 use crate::string_extensions::{
     replace_similar_digits_with_letters, replace_similar_letters_with_digits,
 };
 
+/// Field-oriented facade over the MRZ OCR-defect substitution helpers.
 pub struct MRZFieldRecognitionDefectsFixer;
 
 impl MRZFieldRecognitionDefectsFixer {
