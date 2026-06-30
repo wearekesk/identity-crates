@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "AAMVA DL/ID — PDF417 barcode scan + payload parser (US / Canadian driver's licenses)."
+readme = "README.md"
 
 [dependencies]
 chrono.workspace = true

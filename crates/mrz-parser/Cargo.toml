@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "ICAO 9303 Machine Readable Zone (TD1 / TD2 / TD3) text parser — fields + check digits."
+readme = "README.md"
 
 [dependencies]
 chrono.workspace = true
