@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Indian Income-Tax PAN (Permanent Account Number) structural validation + entity-type classification."
+description = "Indian Income-Tax PAN utilities: structural PAN validation and Secure-QR decoding (image scan, PII + photo extraction, ECDSA signature verification)."
 
 [dependencies]
 base64.workspace = true

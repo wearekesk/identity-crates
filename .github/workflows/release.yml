@@ -40,12 +40,54 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Dry run: packages and verifies the selected crate(s) without uploading. This
+  # job deliberately holds NO id-token permission — it never authenticates to
+  # crates.io, so an OIDC token must not be mintable on this path.
+  dry-run:
+    name: dry-run (${{ inputs.crate }})
+    # Only ever run from the repository's default branch, so a manual dispatch
+    # from an arbitrary branch cannot reach crates.io. Uses the default-branch
+    # context so it keeps working if the branch is renamed.
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Third-party actions pinned to immutable commit SHAs (version in comment).
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+      - name: Dry-run publish to crates.io
+        env:
+          CRATE: ${{ inputs.crate }}
+        run: |
+          set -euo pipefail
+          # Expands the crate selection: "all" -> every member crate, otherwise
+          # just the chosen one. The member crates are independent (no inter-crate
+          # path deps), so the order is not significant.
+          selected_crates() {
+            if [ "${CRATE}" = "all" ]; then
+              echo "mrz-parser aamva aadhaar-offline-kyc incometax-pan-qr dmrtd"
+            else
+              echo "${CRATE}"
+            fi
+          }
+          for c in $(selected_crates); do
+            echo "::group::cargo publish -p ${c} --locked --dry-run"
+            cargo publish -p "${c}" --locked --dry-run
+            echo "::endgroup::"
+          done
+
+  # Real publish: uploads the selected crate(s) to crates.io. Only this job holds
+  # id-token: write, so the short-lived OIDC token can only be minted on the real
+  # publish path.
   publish:
-    name: publish (${{ inputs.crate }}${{ inputs.dry_run && ' — dry run' || '' }})
-    # Only ever publish from the repository's default branch, so a manual
-    # dispatch from an arbitrary branch cannot upload to crates.io. Uses the
-    # default-branch context so it keeps working if the branch is renamed.
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    name: publish (${{ inputs.crate }})
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -59,36 +101,28 @@ jobs:
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
         with:
           toolchain: stable
-      # Mint a short-lived crates.io token via OIDC — only for a real publish.
-      # On a dry run this is skipped and no token is requested.
+      # Mint a short-lived crates.io token via OIDC for the real publish.
       - name: Authenticate to crates.io (OIDC)
         id: auth
-        if: ${{ !inputs.dry_run }}
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
       - name: Publish to crates.io
         env:
-          # Empty on a dry run (the auth step is skipped); dry-run packaging and
-          # verification never need a token.
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
           CRATE: ${{ inputs.crate }}
-          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
-          flags="--locked"
-          if [ "${DRY_RUN}" = "true" ]; then
-            flags="${flags} --dry-run"
-          fi
-          publish_one() {
-            echo "::group::cargo publish -p $1 ${flags}"
-            cargo publish -p "$1" ${flags}
-            echo "::endgroup::"
+          # Expands the crate selection: "all" -> every member crate, otherwise
+          # just the chosen one. The member crates are independent (no inter-crate
+          # path deps), so the order is not significant.
+          selected_crates() {
+            if [ "${CRATE}" = "all" ]; then
+              echo "mrz-parser aamva aadhaar-offline-kyc incometax-pan-qr dmrtd"
+            else
+              echo "${CRATE}"
+            fi
           }
-          # The member crates are independent (no inter-crate path deps), so the
-          # order below is not significant.
-          if [ "${CRATE}" = "all" ]; then
-            for c in mrz-parser aamva aadhaar-offline-kyc incometax-pan-qr dmrtd; do
-              publish_one "$c"
-            done
-          else
-            publish_one "${CRATE}"
-          fi
+          for c in $(selected_crates); do
+            echo "::group::cargo publish -p ${c} --locked"
+            cargo publish -p "${c}" --locked
+            echo "::endgroup::"
+          done

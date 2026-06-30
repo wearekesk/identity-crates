@@ -32,7 +32,7 @@ pub enum SecureCodeType {
     /// Background directive.
     ScBackground = 10,
     /// Line directive.
-    ScLIne = 11,
+    ScLine = 11,
     /// Hyperlink element.
     ScHyperLink = 12,
 }
@@ -52,7 +52,7 @@ impl SecureCodeType {
             8 => Self::ScAlign,
             9 => Self::ScNewLine,
             10 => Self::ScBackground,
-            11 => Self::ScLIne,
+            11 => Self::ScLine,
             12 => Self::ScHyperLink,
             _ => return None,
         })

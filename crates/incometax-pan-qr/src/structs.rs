@@ -316,6 +316,12 @@ impl PanOuterBlock {
                 "PAN_OUTER_BLOCK_STRUCT.signature_data",
             )?
             .to_vec();
+        // Nothing meaningful follows the signature. Tolerate trailing zero
+        // padding (which some encoders append), but reject any non-zero leftover
+        // so a tampered or malformed payload is not silently accepted.
+        if c.greedy().iter().any(|&b| b != 0) {
+            return Err(PanQrError::TrailingData("PAN_OUTER_BLOCK_STRUCT"));
+        }
         Ok(Self {
             message,
             signature_scheme,
@@ -431,6 +437,34 @@ mod tests {
         assert_eq!(outer.signature_length, 2);
         assert_eq!(outer.signature_data, vec![0xAB, 0xCD]);
         assert_eq!(outer.message.build(), sample_outer_message());
+    }
+
+    fn sample_outer_block() -> Vec<u8> {
+        let mut data = sample_outer_message();
+        data.push(0x01); // reserved_4 const
+        data.push(0x00); // signature_scheme ECC
+        data.extend_from_slice(&[0x00, 0x00]); // padding
+        data.extend_from_slice(&0x0002u16.to_be_bytes()); // signature_length
+        data.extend_from_slice(&[0xAB, 0xCD]); // signature_data
+        data
+    }
+
+    #[test]
+    fn outer_block_allows_trailing_zero_padding() {
+        let mut data = sample_outer_block();
+        data.extend_from_slice(&[0x00, 0x00, 0x00]); // bounded zero padding
+        let outer = PanOuterBlock::parse(&data).unwrap();
+        assert_eq!(outer.signature_data, vec![0xAB, 0xCD]);
+    }
+
+    #[test]
+    fn outer_block_rejects_trailing_nonzero_data() {
+        let mut data = sample_outer_block();
+        data.extend_from_slice(&[0x00, 0xFF]); // stray non-zero suffix
+        assert!(matches!(
+            PanOuterBlock::parse(&data),
+            Err(PanQrError::TrailingData("PAN_OUTER_BLOCK_STRUCT"))
+        ));
     }
 
     #[test]

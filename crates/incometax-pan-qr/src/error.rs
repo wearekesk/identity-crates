@@ -9,6 +9,16 @@ pub enum PanQrError {
     #[error("invalid scanned-string chunk: {0:?}")]
     InvalidChunk(String),
 
+    /// A scanned-string chunk was not exactly four ASCII digits, or decoded to a
+    /// value that does not fit in the packed 13-bit field (`> 8191`).
+    #[error("invalid scanned-string chunk {chunk:?}: {reason}")]
+    MalformedChunk {
+        /// The offending chunk text.
+        chunk: String,
+        /// Why the chunk was rejected.
+        reason: &'static str,
+    },
+
     /// `bit_unpack` was called with a bit count outside `1..=32`.
     #[error("bit count {0} is not between 1 and 32")]
     InvalidBitCount(i64),
@@ -16,6 +26,11 @@ pub enum PanQrError {
     /// The byte stream ended before a field could be fully read.
     #[error("unexpected end of input while parsing {0}")]
     UnexpectedEof(&'static str),
+
+    /// Bytes remained after the outer block's signature, and they were not the
+    /// expected zero padding.
+    #[error("unexpected trailing data after {0}")]
+    TrailingData(&'static str),
 
     /// A `Const` field did not contain the expected magic bytes.
     #[error("bad magic for {field}: expected {expected:02x?}, found {found:02x?}")]

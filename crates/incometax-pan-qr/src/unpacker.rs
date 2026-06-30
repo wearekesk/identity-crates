@@ -72,19 +72,42 @@ impl BitUnpacker {
     }
 }
 
+/// Largest value that fits in the packed 13-bit field.
+const MAX_CHUNK_VALUE: u32 = (1 << 13) - 1; // 8191
+
 /// Decodes a scanned PAN-QR string into the packed byte stream.
 ///
-/// The string is split into 4-character chunks, each parsed as a decimal
-/// integer and fed to `bit_unpack(int, 13)`.
+/// The string is split into 4-character chunks, each of which must be exactly
+/// four ASCII digits decoding to a value `<= 8191` (the packed 13-bit field).
+/// Each value is fed to `bit_unpack(value, 13)`. A partial final chunk (length
+/// not 4) or an out-of-range value is rejected.
 pub fn unpack_scanned_string(scanned: &str) -> Result<Vec<u8>, PanQrError> {
     let chars: Vec<char> = scanned.chars().collect();
     let mut unpacker = BitUnpacker::new();
 
     for chunk in chars.chunks(4) {
         let chunk_str: String = chunk.iter().collect();
+        if chunk.len() != 4 {
+            return Err(PanQrError::MalformedChunk {
+                chunk: chunk_str,
+                reason: "chunk must be exactly 4 characters",
+            });
+        }
+        if !chunk.iter().all(|c| c.is_ascii_digit()) {
+            return Err(PanQrError::MalformedChunk {
+                chunk: chunk_str,
+                reason: "chunk must be ASCII digits",
+            });
+        }
         let value: u32 = chunk_str
             .parse()
             .map_err(|_| PanQrError::InvalidChunk(chunk_str.clone()))?;
+        if value > MAX_CHUNK_VALUE {
+            return Err(PanQrError::MalformedChunk {
+                chunk: chunk_str,
+                reason: "chunk value exceeds the 13-bit maximum (8191)",
+            });
+        }
         unpacker.bit_unpack(value, 13)?;
     }
 
@@ -198,5 +221,29 @@ mod tests {
         u.bit_unpack(5749, 13).unwrap();
         u.bit_unpack(42, 13).unwrap();
         assert_eq!(out, u.output);
+    }
+
+    #[test]
+    fn unpack_scanned_string_accepts_max_value() {
+        // 8191 is the largest 13-bit value and must be accepted.
+        assert!(unpack_scanned_string("8191").is_ok());
+    }
+
+    #[test]
+    fn unpack_scanned_string_rejects_value_over_max() {
+        // 8192 overflows the 13-bit field.
+        assert!(matches!(
+            unpack_scanned_string("8192"),
+            Err(PanQrError::MalformedChunk { .. })
+        ));
+    }
+
+    #[test]
+    fn unpack_scanned_string_rejects_partial_tail() {
+        // A trailing chunk shorter than 4 characters is rejected.
+        assert!(matches!(
+            unpack_scanned_string("5749042"),
+            Err(PanQrError::MalformedChunk { .. })
+        ));
     }
 }

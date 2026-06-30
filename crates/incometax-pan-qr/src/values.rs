@@ -13,13 +13,13 @@ pub fn character_set(set: CharacterSets) -> Option<&'static str> {
         CharacterSets::Numeric2 => "0123456789-.%<>/",
         CharacterSets::Text => return None,
         CharacterSets::AlphaNumericUpperCase => {
-            r"01234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ ~!@#$%^&*()+-={[}]\\;:/?<.>"
+            r"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ ~!@#$%^&*()+-={[}]\\;:/?<.>"
         }
         CharacterSets::AlphaNumericLowerCase => {
-            r"01234567890abcdefghijklmnopqrstuvwxyz ~!@#$%^&*()+-={[}]\\;:/?<.>"
+            r"0123456789abcdefghijklmnopqrstuvwxyz ~!@#$%^&*()+-={[}]\\;:/?<.>"
         }
         CharacterSets::AlphaNumeric => {
-            r"01234567890ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ~!@#$%^&*()+-={[}]\\;:/?<.>\',|`"
+            r"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz ~!@#$%^&*()+-={[}]\\;:/?<.>\',|`"
         }
         CharacterSets::AlphabetsUpperCase => r"ABCDEFGHIJKLMNOPQRSTUVWXYZ .\\-/\'",
         CharacterSets::AlphabetsLowerCase => r"abcdefghijklmnopqrstuvwxyz .\\-/\'",
@@ -65,4 +65,54 @@ pub fn is_whitelisted_version(reserved_1: u32) -> bool {
         || WHITELISTED_VERSION_2.contains(&reserved_1)
         || WHITELISTED_VERSION_3.contains(&reserved_1)
         || WHITELISTED_VERSION_4.contains(&reserved_1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The alphanumeric sets must start with `0123456789` followed by the first
+    /// letter at index 10, so positional decoding maps codes to characters
+    /// correctly (no stray duplicate `0`).
+    #[test]
+    fn alphanumeric_sets_have_correct_digit_prefix() {
+        for set in [
+            CharacterSets::AlphaNumericUpperCase,
+            CharacterSets::AlphaNumericLowerCase,
+            CharacterSets::AlphaNumeric,
+        ] {
+            let table = character_set(set).expect("alphanumeric set has an alphabet");
+            let chars: Vec<char> = table.chars().collect();
+            // Digits occupy the first ten positions, in order.
+            assert_eq!(
+                &chars[..10],
+                &['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+                "{set:?} must begin with 0..9"
+            );
+            // Index 10 is the first letter, not a duplicated '0'.
+            let first_letter = if matches!(set, CharacterSets::AlphaNumericLowerCase) {
+                'a'
+            } else {
+                'A'
+            };
+            assert_eq!(chars[10], first_letter, "{set:?} index 10 must be a letter");
+        }
+    }
+
+    /// No alphanumeric character may appear twice (the bug duplicated `0`),
+    /// otherwise a code would map to an ambiguous character.
+    #[test]
+    fn alphanumeric_sets_have_no_duplicate_alphanumerics() {
+        for set in [
+            CharacterSets::AlphaNumericUpperCase,
+            CharacterSets::AlphaNumericLowerCase,
+            CharacterSets::AlphaNumeric,
+        ] {
+            let table = character_set(set).expect("alphanumeric set has an alphabet");
+            let mut seen = std::collections::HashSet::new();
+            for ch in table.chars().filter(|c| c.is_ascii_alphanumeric()) {
+                assert!(seen.insert(ch), "{set:?} duplicates alphanumeric {ch:?}");
+            }
+        }
+    }
 }
