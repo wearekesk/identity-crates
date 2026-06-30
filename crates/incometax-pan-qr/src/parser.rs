@@ -14,20 +14,63 @@ use crate::values::{
 
 /// Personally-identifiable information extracted from a PAN QR.
 ///
-/// The PII fields are stored as positional text elements in the QR payload, in
-/// the fixed order PAN, name, father's name, date of birth.
+/// The PII fields are stored as positional text elements in the QR payload. Two
+/// layouts exist, distinguished by how many elements are present:
+///
+/// - 4 elements (individual): PAN, name, father's name, date of birth.
+/// - 3 elements (organization): PAN, entity name, date of incorporation. A
+///   company/organization QR carries no photo and no father's name / DOB.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PanPii {
-    /// Permanent Account Number.
-    pub pan: String,
-    /// Whether [`PanPii::pan`] passes structural PAN validation.
-    pub pan_valid: bool,
-    /// Holder name.
-    pub name: String,
-    /// Father's name.
-    pub fname: String,
-    /// Date of birth.
-    pub dob: String,
+pub enum PanPii {
+    /// An individual PAN: PAN, name, father's name and date of birth.
+    Individual {
+        /// Permanent Account Number.
+        pan: String,
+        /// Whether `pan` passes structural PAN validation.
+        pan_valid: bool,
+        /// Holder name.
+        name: String,
+        /// Father's name.
+        father_name: String,
+        /// Date of birth.
+        dob: String,
+    },
+    /// A company/organization PAN: PAN, entity name and date of incorporation.
+    Organization {
+        /// Permanent Account Number.
+        pan: String,
+        /// Whether `pan` passes structural PAN validation.
+        pan_valid: bool,
+        /// Entity name.
+        name: String,
+        /// Date of incorporation.
+        date_of_incorporation: String,
+    },
+}
+
+impl PanPii {
+    /// The PAN from either variant.
+    pub fn pan(&self) -> &str {
+        match self {
+            PanPii::Individual { pan, .. } | PanPii::Organization { pan, .. } => pan,
+        }
+    }
+
+    /// The entity / person name from either variant.
+    pub fn name(&self) -> &str {
+        match self {
+            PanPii::Individual { name, .. } | PanPii::Organization { name, .. } => name,
+        }
+    }
+
+    /// The `pan_valid` flag from either variant.
+    pub fn pan_valid(&self) -> bool {
+        match self {
+            PanPii::Individual { pan_valid, .. } | PanPii::Organization { pan_valid, .. } => {
+                *pan_valid
+            }
+        }
+    }
 }
 
 /// Parses an unpacked PAN-QR byte stream into its constituent parts.
@@ -132,8 +175,12 @@ impl Parser {
     }
 
     /// Extracts PII as positional text elements: find each `08 02` marker, read
-    /// the following length byte, then that many payload bytes. The first four
-    /// elements are PAN, Name, FName and DOB, in that fixed order.
+    /// the following length byte, then that many payload bytes.
+    ///
+    /// The element count selects the layout: 4 elements is an individual layout
+    /// (PAN, name, father's name, DOB), 3 elements is an organization layout
+    /// (PAN, entity name, date of incorporation). Both store elements in that
+    /// fixed positional order.
     pub fn handle_pii(&mut self, data: &[u8]) -> Result<(), PanQrError> {
         let mut payloads: Vec<Vec<u8>> = Vec::new();
         let mut i = 0usize;
@@ -156,19 +203,28 @@ impl Parser {
             }
         }
 
-        if payloads.len() < 4 {
-            return Err(PanQrError::MissingPii);
-        }
-
         let decode = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-        let pan = decode(&payloads[0]);
-        let pan_valid = crate::check_pan_details(&pan).is_valid;
-        self.pii = Some(PanPii {
-            pan,
-            pan_valid,
-            name: decode(&payloads[1]),
-            fname: decode(&payloads[2]),
-            dob: decode(&payloads[3]),
+        self.pii = Some(if payloads.len() >= 4 {
+            let pan = decode(&payloads[0]);
+            let pan_valid = crate::check_pan_details(&pan).is_valid;
+            PanPii::Individual {
+                pan,
+                pan_valid,
+                name: decode(&payloads[1]),
+                father_name: decode(&payloads[2]),
+                dob: decode(&payloads[3]),
+            }
+        } else if payloads.len() == 3 {
+            let pan = decode(&payloads[0]);
+            let pan_valid = crate::check_pan_details(&pan).is_valid;
+            PanPii::Organization {
+                pan,
+                pan_valid,
+                name: decode(&payloads[1]),
+                date_of_incorporation: decode(&payloads[2]),
+            }
+        } else {
+            return Err(PanQrError::MissingPii);
         });
         Ok(())
     }
@@ -254,11 +310,58 @@ mod tests {
         let mut p = Parser::new(&build_outer(0x1E, 1)).unwrap();
         p.handle_pii(&data).unwrap();
         let pii = p.pii.unwrap();
-        assert_eq!(pii.pan, "ABCPE1234F");
-        assert!(pii.pan_valid);
-        assert_eq!(pii.name, "JOHN DOE");
-        assert_eq!(pii.fname, "RICHARD DOE");
-        assert_eq!(pii.dob, "01/01/1990");
+        assert!(pii.pan_valid());
+        assert_eq!(pii.pan(), "ABCPE1234F");
+        assert_eq!(pii.name(), "JOHN DOE");
+        let PanPii::Individual {
+            pan,
+            name,
+            father_name,
+            dob,
+            ..
+        } = pii
+        else {
+            panic!("expected an individual PII layout");
+        };
+        assert_eq!(pan, "ABCPE1234F");
+        assert_eq!(name, "JOHN DOE");
+        assert_eq!(father_name, "RICHARD DOE");
+        assert_eq!(dob, "01/01/1990");
+    }
+
+    #[test]
+    fn handle_pii_three_elements_is_organization() {
+        // Three `08 02 <len> <payload>` markers: PAN, entity name, date of
+        // incorporation.
+        let mut data = Vec::new();
+        for s in [
+            b"ABCCE1234F".as_slice(),
+            b"ACME WIDGETS PRIVATE LIMITED",
+            b"15/08/1947",
+        ] {
+            data.push(0x08);
+            data.push(0x02);
+            data.push(s.len() as u8);
+            data.extend_from_slice(s);
+        }
+        let mut p = Parser::new(&build_outer(0x1E, 1)).unwrap();
+        p.handle_pii(&data).unwrap();
+        let pii = p.pii.unwrap();
+        assert!(pii.pan_valid());
+        assert_eq!(pii.pan(), "ABCCE1234F");
+        assert_eq!(pii.name(), "ACME WIDGETS PRIVATE LIMITED");
+        let PanPii::Organization {
+            pan,
+            name,
+            date_of_incorporation,
+            ..
+        } = pii
+        else {
+            panic!("expected an organization PII layout");
+        };
+        assert_eq!(pan, "ABCCE1234F");
+        assert_eq!(name, "ACME WIDGETS PRIVATE LIMITED");
+        assert_eq!(date_of_incorporation, "15/08/1947");
     }
 
     #[test]
