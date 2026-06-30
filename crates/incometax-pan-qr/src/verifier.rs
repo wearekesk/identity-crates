@@ -1,8 +1,6 @@
 //! ECDSA signature verification over NIST P-384 with SHA-384.
 //!
-//! A 1:1 port of `utils/verifier.py` (`Verifier`). The Python uses
-//! `ecdsa.VerifyingKey.from_string(key[2:], curve=NIST384p, hashfunc=sha384)`;
-//! here the RustCrypto [`p384`] crate provides the equivalent.
+//! Verification uses the RustCrypto [`p384`] crate.
 //!
 //! The chosen base64 ECC key is parsed via `ECC_KEY_STRUCT`; `key[2..]` is the
 //! SEC1 public point. For the two embedded keys this slice is 97 bytes and
@@ -12,8 +10,8 @@
 //! `Signature::from_slice`.
 //!
 //! NOTE: end-to-end signature verification is not exercised by the unit tests
-//! because no real QR sample is shipped with the upstream project. The tests
-//! only confirm that both embedded keys parse and load into a P-384 key.
+//! because no real QR sample is bundled with the crate. The tests only confirm
+//! that both embedded keys parse and load into a P-384 key.
 
 use crate::error::PanQrError;
 use crate::structs::EccKey;

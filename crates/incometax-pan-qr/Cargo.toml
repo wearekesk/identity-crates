@@ -11,6 +11,8 @@ description = "Indian Income-Tax PAN (Permanent Account Number) structural valid
 [dependencies]
 base64.workspace = true
 flate2.workspace = true
+image.workspace = true
 log.workspace = true
 p384.workspace = true
+rxing.workspace = true
 thiserror.workspace = true

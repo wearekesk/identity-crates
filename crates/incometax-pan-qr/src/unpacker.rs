@@ -1,8 +1,7 @@
 //! The non-standard bit-unpacking routine used by PAN Secure QRs.
 //!
-//! A 1:1 port of `utils/unpacker.py` (`BitUnpacker`), which the upstream notes
-//! was itself ported directly from the app's baksmali. The carry-bit state
-//! machine in [`BitUnpacker::bit_unpack`] is reproduced exactly.
+//! The carry-bit state machine in [`BitUnpacker::bit_unpack`] reverses the
+//! bit-packing applied to the scanned numeric string.
 
 use crate::error::PanQrError;
 
@@ -12,9 +11,9 @@ use crate::error::PanQrError;
 pub struct BitUnpacker {
     /// Decoded output bytes written so far.
     pub output: Vec<u8>,
-    /// Partially-assembled current byte (`a` in the Python).
+    /// Partially-assembled current byte.
     a: u8,
-    /// Number of valid low bits currently held in `a` (`b` in the Python).
+    /// Number of valid low bits currently held in `a`.
     b: u32,
 }
 
@@ -27,16 +26,16 @@ impl BitUnpacker {
     /// Feeds `v1` bits of `v` (low bits first) into the stream, emitting whole
     /// bytes to [`BitUnpacker::output`].
     ///
-    /// Faithfully mirrors the Python `bit_unpack(v, v1)`: the `a`/`b` carry
-    /// state, the `1..=32` bounds check, the `>> 8` draining loop, and the
-    /// final partial-byte accumulation.
+    /// Carries partial bits in the `a`/`b` state, enforces the `1..=32` bounds
+    /// check, drains whole bytes via the `>> 8` loop, then accumulates the final
+    /// partial byte.
     pub fn bit_unpack(&mut self, v: u32, v1: u32) -> Result<(), PanQrError> {
         if v1 > 0x20 || v1 < 1 {
             return Err(PanQrError::InvalidBitCount(v1 as i64));
         }
 
         // Work in wider, signed arithmetic so the running value and bit count
-        // can be shifted/decremented exactly as the unbounded-int Python does.
+        // can be shifted/decremented without overflow.
         let mut v: u64 = v as u64;
         let mut v1: i64 = v1 as i64;
 
@@ -68,9 +67,8 @@ impl BitUnpacker {
 
 /// Decodes a scanned PAN-QR string into the packed byte stream.
 ///
-/// Ports the top-level `unpack()` from `main.py`: the string is split into
-/// 4-character chunks, each parsed as a decimal integer and fed to
-/// `bit_unpack(int, 13)`.
+/// The string is split into 4-character chunks, each parsed as a decimal
+/// integer and fed to `bit_unpack(int, 13)`.
 pub fn unpack_scanned_string(scanned: &str) -> Result<Vec<u8>, PanQrError> {
     let chars: Vec<char> = scanned.chars().collect();
     let mut unpacker = BitUnpacker::new();
@@ -90,8 +88,8 @@ pub fn unpack_scanned_string(scanned: &str) -> Result<Vec<u8>, PanQrError> {
 mod tests {
     use super::*;
 
-    /// Reference implementation, transcribed straight from the Python, used to
-    /// cross-check the production routine on small inputs.
+    /// Independent reference implementation of the bit-unpack state machine,
+    /// used to cross-check the production routine on small inputs.
     fn py_bit_unpack(out: &mut Vec<u8>, a: &mut i64, b: &mut i64, v_in: i64, v1_in: i64) {
         let mut v = v_in;
         let mut v1 = v1_in;

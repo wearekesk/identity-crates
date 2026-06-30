@@ -1,9 +1,7 @@
-//! Manual big-endian parsers for the PAN Secure-QR `construct` definitions.
+//! Manual big-endian parsers for the PAN Secure-QR binary definitions.
 //!
-//! A 1:1 port of `constants/structs.py`. The Python uses the `construct`
-//! library; here each definition is parsed by hand with a [`Cursor`] over a
-//! byte slice, returning [`PanQrError`] on malformed input rather than
-//! panicking.
+//! Each definition is parsed by hand with a [`Cursor`] over a byte slice,
+//! returning [`PanQrError`] on malformed input rather than panicking.
 
 use crate::error::PanQrError;
 
@@ -62,7 +60,7 @@ impl<'a> Cursor<'a> {
         Ok(())
     }
 
-    /// Remaining bytes (`GreedyBytes`).
+    /// All remaining bytes.
     fn greedy(&mut self) -> &'a [u8] {
         let slice = &self.data[self.pos..];
         self.pos = self.data.len();
@@ -113,10 +111,10 @@ pub struct Metadata {
 }
 
 impl Metadata {
-    /// Parses the `BitsSwapped(BitStruct(...))` over a single byte.
+    /// Parses the bit-packed fields from a single metadata byte.
     ///
-    /// `construct`'s `BitsSwapped` reverses the bit order within the byte, i.e.
-    /// the bit stream is read LSB-first. With bits `b0..b7` (`b0` = LSB):
+    /// The bit order within the byte is reversed, i.e. the bit stream is read
+    /// LSB-first. With bits `b0..b7` (`b0` = LSB):
     /// `control_type = b0 b1 b2`, `exceed_length_flag = b3`,
     /// `character_set = b4 b5 b6 b7` (each field big-endian within itself).
     pub fn from_byte(byte: u8) -> Self {
@@ -265,7 +263,7 @@ impl PanOuterBlockMessage {
         })
     }
 
-    /// Re-serialises the message bytes (`construct`'s `.build`).
+    /// Re-serialises the message bytes.
     ///
     /// The signature is computed over exactly these bytes, so this is the
     /// inverse of parsing and reproduces the original message byte-for-byte.

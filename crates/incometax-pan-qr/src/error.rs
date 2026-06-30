@@ -55,4 +55,16 @@ pub enum PanQrError {
     /// The signature bytes were malformed.
     #[error("signature could not be parsed")]
     InvalidSignature,
+
+    /// The supplied image bytes could not be decoded into a raster image.
+    #[error("image could not be decoded: {0}")]
+    ImageDecode(String),
+
+    /// No QR barcode was found in the supplied image.
+    #[error("no QR code found in image")]
+    BarcodeNotFound,
+
+    /// QR decoding failed for a reason other than "not found".
+    #[error("QR decode failed: {0}")]
+    QrDecode(String),
 }

@@ -1,13 +1,12 @@
 //! Enumerations describing the "Enhanced 2.0 Secure QR" wire format.
 //!
-//! These are a 1:1 port of `constants/enums.py` from the reference Python
-//! implementation. Discriminant values are preserved exactly, since they are
-//! the on-the-wire codes parsed out of the QR payload.
+//! Discriminant values are the on-the-wire codes parsed out of the QR payload,
+//! so they are preserved exactly.
 
 /// Control-unit kind found inside a Secure-QR block (`SecureCodeType`).
 ///
 /// `control_type` is a 3-bit field, so only variants `0..=7` are reachable from
-/// the wire; the remaining variants are retained for parity with the Python.
+/// the wire; the remaining variants are retained for completeness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SecureCodeType {
     /// Heading level 1 text.
@@ -18,7 +17,7 @@ pub enum SecureCodeType {
     ScTextCaption = 2,
     /// Normal body text.
     ScTextNormal = 3,
-    /// Tabular data. (`SCTable` parsing is unimplemented upstream.)
+    /// Tabular data. (`SCTable` payloads are not parsed.)
     ScTable = 4,
     /// Binary blob (PII / image / mixed).
     ScBlob = 5,
@@ -32,7 +31,7 @@ pub enum SecureCodeType {
     ScNewLine = 9,
     /// Background directive.
     ScBackground = 10,
-    /// Line directive. (Spelled `SCLIne` upstream — not a typo.)
+    /// Line directive.
     ScLIne = 11,
     /// Hyperlink element.
     ScHyperLink = 12,
@@ -151,7 +150,7 @@ pub enum SCBlobIdentifier {
     Pii = 0x0302,
     /// Embedded WebP image.
     Image = 0x0102,
-    /// Mixed contents (parsing unimplemented upstream).
+    /// Mixed contents (not parsed).
     Mixed = 0x0301,
 }
 

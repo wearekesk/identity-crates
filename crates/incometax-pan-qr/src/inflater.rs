@@ -1,13 +1,12 @@
 //! zlib inflation of PII blobs.
 //!
-//! A 1:1 port of `utils/inflater.py` (`ZlibInflater`); the Python's
-//! `zlib.decompress` is reproduced with [`flate2`]'s `ZlibDecoder`.
+//! Decompresses zlib streams using [`flate2`]'s `ZlibDecoder`.
 
 use crate::error::PanQrError;
 use flate2::read::ZlibDecoder;
 use std::io::Read;
 
-/// Inflates zlib-compressed data (`zlib.decompress`).
+/// Inflates zlib-compressed data.
 pub fn inflate(compressed: &[u8]) -> Result<Vec<u8>, PanQrError> {
     let mut decoder = ZlibDecoder::new(compressed);
     let mut out = Vec::new();

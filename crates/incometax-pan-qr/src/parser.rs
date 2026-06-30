@@ -1,8 +1,7 @@
 //! Top-level parser for the unpacked PAN Secure-QR byte stream.
 //!
-//! A 1:1 port of `utils/parser.py` (`Parser`). It parses the outer block,
-//! validates a few reserved fields, walks the control blocks, and extracts the
-//! embedded image and PII.
+//! It parses the outer block, validates a few reserved fields, walks the control
+//! blocks, and extracts the embedded image and PII.
 
 use crate::enums::{SCBlobIdentifier, SecureCodeType};
 use crate::error::PanQrError;
@@ -14,10 +13,15 @@ use crate::values::{
 };
 
 /// Personally-identifiable information extracted from a PAN QR.
+///
+/// The PII fields are stored as positional text elements in the QR payload, in
+/// the fixed order PAN, name, father's name, date of birth.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PanPii {
     /// Permanent Account Number.
     pub pan: String,
+    /// Whether [`PanPii::pan`] passes structural PAN validation.
+    pub pan_valid: bool,
     /// Holder name.
     pub name: String,
     /// Father's name.
@@ -44,7 +48,7 @@ pub struct Parser {
 
 impl Parser {
     /// Parses the outer block and pre-computes the signature, message bytes and
-    /// public key (mirrors the Python `Parser.__init__`).
+    /// public key.
     pub fn new(input: &[u8]) -> Result<Self, PanQrError> {
         let pan_outer = PanOuterBlock::parse(input)?;
         let signature = pan_outer.signature_data.clone();
@@ -60,8 +64,8 @@ impl Parser {
         })
     }
 
-    /// Validates a few fields in the outermost struct, reimplemented from the
-    /// APK: `reserved_1` must be a whitelisted version and `reserved_3 <= 6`.
+    /// Validates a few fields in the outermost struct: `reserved_1` must be a
+    /// whitelisted version and `reserved_3 <= 6`.
     pub fn validate(&self) -> bool {
         if !is_whitelisted_version(self.pan_outer.message.reserved_1) {
             return false;
@@ -102,7 +106,9 @@ impl Parser {
     }
 
     /// Parses an `SCBlob` and routes it by identifier: `Image` -> fix header,
-    /// `PII` -> zlib inflate then scan, `Mixed`/unknown -> skipped (logged).
+    /// `PII` -> zlib inflate then scan. `Mixed` blobs and unknown identifiers
+    /// (e.g. `0xFF01`) are not parsed; they are skipped and logged rather than
+    /// treated as errors, since no decodable sample is available.
     pub fn handle_blob(&mut self, blob: &[u8]) -> Result<(), PanQrError> {
         let parsed = ScBlob::parse(blob)?;
         match SCBlobIdentifier::from_u16(parsed.identifier) {
@@ -125,15 +131,14 @@ impl Parser {
         Ok(())
     }
 
-    /// Extracts PII via the upstream byte-scan workaround: find each `08 02`
-    /// marker, read the following length byte, then that many payload bytes.
-    /// The first four matches are PAN, Name, FName and DOB.
+    /// Extracts PII as positional text elements: find each `08 02` marker, read
+    /// the following length byte, then that many payload bytes. The first four
+    /// elements are PAN, Name, FName and DOB, in that fixed order.
     pub fn handle_pii(&mut self, data: &[u8]) -> Result<(), PanQrError> {
         let mut payloads: Vec<Vec<u8>> = Vec::new();
         let mut i = 0usize;
-        // Mirrors Python's `re.finditer(b'\x08\x02(.)')`: matches are
-        // non-overlapping and the scan resumes right after the 3-byte marker
-        // (i.e. it does not skip over the payload).
+        // Matches are non-overlapping and the scan resumes right after the
+        // 3-byte marker (i.e. it does not skip over the payload).
         while i + 2 < data.len() {
             if data[i] == 0x08 && data[i + 1] == 0x02 {
                 let length = data[i + 2] as usize;
@@ -151,8 +156,11 @@ impl Parser {
         }
 
         let decode = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        let pan = decode(&payloads[0]);
+        let pan_valid = crate::check_pan_details(&pan).is_valid;
         self.pii = Some(PanPii {
-            pan: decode(&payloads[0]),
+            pan,
+            pan_valid,
             name: decode(&payloads[1]),
             fname: decode(&payloads[2]),
             dob: decode(&payloads[3]),
@@ -226,7 +234,7 @@ mod tests {
         // Four `08 02 <len> <payload>` markers.
         let mut data = Vec::new();
         for s in [
-            b"ABCDE1234F".as_slice(),
+            b"ABCPE1234F".as_slice(),
             b"JOHN DOE",
             b"RICHARD DOE",
             b"01/01/1990",
@@ -241,7 +249,8 @@ mod tests {
         let mut p = Parser::new(&build_outer(0x1E, 1)).unwrap();
         p.handle_pii(&data).unwrap();
         let pii = p.pii.unwrap();
-        assert_eq!(pii.pan, "ABCDE1234F");
+        assert_eq!(pii.pan, "ABCPE1234F");
+        assert!(pii.pan_valid);
         assert_eq!(pii.name, "JOHN DOE");
         assert_eq!(pii.fname, "RICHARD DOE");
         assert_eq!(pii.dob, "01/01/1990");

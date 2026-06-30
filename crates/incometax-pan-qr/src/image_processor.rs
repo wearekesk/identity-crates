@@ -1,8 +1,8 @@
 //! WebP header reconstruction for embedded PAN photos.
 //!
-//! A 1:1 port of `utils/image.py` (`ImageProcessor`). The QR stores the image
-//! with a stripped container header; [`ImageProcessor::fix_header`] rebuilds a
-//! valid WebP (RIFF) header in front of the payload.
+//! The QR stores the image with a stripped container header;
+//! [`ImageProcessor::fix_header`] rebuilds a valid WebP (RIFF) header in front
+//! of the payload.
 
 use crate::values::{IMAGE_HEADER_RIFF, IMAGE_HEADER_VP8, IMAGE_HEADER_WEBP};
 

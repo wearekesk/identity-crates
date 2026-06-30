@@ -1,13 +1,12 @@
 //! Constant values used while decoding a PAN Secure QR.
 //!
-//! A 1:1 port of `constants/values.py`. The character-set alphabets, the
-//! whitelisted version sets, the WebP image-header markers, and the two
-//! embedded ECC public keys are reproduced verbatim.
+//! The character-set alphabets, the whitelisted version sets, the WebP
+//! image-header markers, and the two embedded ECC public keys.
 
 use crate::enums::CharacterSets;
 
 /// Returns the alphabet string for a character set, or `None` for `Text`
-/// (which has no fixed alphabet), mirroring `CHARACTER_SETS` in the Python.
+/// (which has no fixed alphabet).
 pub fn character_set(set: CharacterSets) -> Option<&'static str> {
     Some(match set {
         CharacterSets::Numeric1 => "0123456789+-.%/*",

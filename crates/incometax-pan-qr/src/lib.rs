@@ -14,16 +14,17 @@
 //! # PAN Secure-QR decoder
 //!
 //! Alongside the validator, this crate decodes the "Enhanced 2.0 Secure QR"
-//! codes printed on PAN / e-PAN cards. [`OpanQr::from_scanned_string`] unpacks a
+//! codes printed on PAN / e-PAN cards. [`PanQr::from_scanned_string`] unpacks a
 //! scanned QR string, extracts the embedded PII and photo, and can verify the
-//! ECDSA (P-384 / SHA-384) signature. This is a 1:1 Rust port of the reference
-//! Python implementation (`OPANqr`); module names and semantics are preserved.
+//! ECDSA (P-384 / SHA-384) signature. [`PanQr::from_image_bytes`] additionally
+//! detects and decodes the QR directly from a card image.
 
 pub mod enums;
 pub mod error;
 pub mod image_processor;
 pub mod inflater;
 pub mod parser;
+pub mod qr;
 pub mod structs;
 pub mod unpacker;
 pub mod values;
@@ -31,19 +32,19 @@ pub mod verifier;
 
 pub use error::PanQrError;
 pub use parser::{PanPii, Parser};
+pub use qr::{decode_pan_qr_from_luma8, decode_pan_qr_text_from_image_bytes};
 pub use unpacker::{unpack_scanned_string, BitUnpacker};
 pub use verifier::Verifier;
 
 /// A decoded PAN Secure QR.
 ///
-/// Ports the top-level `OPANQr` object from `main.py`: the scanned string is
-/// unpacked, the outer block is parsed and validated, and the control units are
-/// walked to extract the PII and photo.
-pub struct OpanQr {
+/// The scanned string is unpacked, the outer block is parsed and validated, and
+/// the control units are walked to extract the PII and photo.
+pub struct PanQr {
     parser: Parser,
 }
 
-impl OpanQr {
+impl PanQr {
     /// Decodes a scanned PAN-QR string.
     ///
     /// Unpacks the bit-packed string, parses the outer block, runs structural
@@ -57,6 +58,15 @@ impl OpanQr {
         }
         parser.handle_control()?;
         Ok(Self { parser })
+    }
+
+    /// Decodes a PAN Secure QR directly from a card image (PNG/JPEG bytes).
+    ///
+    /// Detects and reads the QR symbol from the image, then decodes the
+    /// resulting numeric string via [`PanQr::from_scanned_string`].
+    pub fn from_image_bytes(bytes: &[u8]) -> Result<PanQr, PanQrError> {
+        let scanned = qr::decode_pan_qr_text_from_image_bytes(bytes)?;
+        Self::from_scanned_string(&scanned)
     }
 
     /// The extracted personally-identifiable information, if present.
@@ -82,8 +92,7 @@ impl OpanQr {
     /// Verifies the QR's ECDSA signature against the embedded public key.
     ///
     /// Returns [`PanQrError::MissingPublicKey`] if no key corresponds to this
-    /// QR's version (matching the Python's "Corresponding public key was not
-    /// found!" path).
+    /// QR's version.
     pub fn verify(&self) -> Result<bool, PanQrError> {
         let key = self.parser.public_key.ok_or(PanQrError::MissingPublicKey)?;
         let verifier = Verifier::new(key)?;
