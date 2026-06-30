@@ -42,8 +42,8 @@ use chrono::NaiveDate;
 struct MyNfc { /* … */ }
 impl Transceiver for MyNfc {
     fn transceive(&mut self, apdu: &[u8]) -> Result<Vec<u8>, TransceiveError> {
-        /* send apdu over NFC, return response bytes */
-        # unimplemented!()
+        // send `apdu` over NFC, return the response bytes
+        unimplemented!()
     }
 }
 
@@ -104,7 +104,8 @@ let mut session = BacSession::new(key);
 loop {
     match session.next()? {
         BacAction::SendApdu(apdu) => {
-            let resp = /* await nfc.transceive(apdu) on the Dart side */;
+            // await nfc.transceive(apdu) on the Dart side
+            let resp: Vec<u8> = unimplemented!();
             session.feed_response(&resp)?;
         }
         BacAction::Done(sm) => break /* sm = MrtdSM<DesSmCipher> */,
