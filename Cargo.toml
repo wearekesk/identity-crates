@@ -18,8 +18,8 @@ edition = "2021"
 # the other crates would build on 1.85, but the workspace floor is the max.
 rust-version = "1.92"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/wearekesk/dmrtd-rs"
-homepage = "https://github.com/wearekesk/dmrtd-rs"
+repository = "https://github.com/wearekesk/identity-crates"
+homepage = "https://github.com/wearekesk/identity-crates"
 
 [workspace.dependencies]
 # encoding / ASN.1 / time
