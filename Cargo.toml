@@ -66,4 +66,5 @@ num-bigint = "0.4"
 num-traits = "0.2"
 rand = "0.10"
 p256 = { version = "=0.14.0-rc.14", features = ["arithmetic", "ecdh"] }
+p384 = { version = "0.13", features = ["ecdsa"] }
 elliptic-curve = { version = "0.14", features = ["arithmetic"] }

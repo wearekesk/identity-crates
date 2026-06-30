@@ -1304,6 +1304,13 @@ checksum = "89194689a993ab15268672e99e7b0e19da2da3268ac682e8f02d29d4d1434cd7"
 [[package]]
 name = "incometax-pan-qr"
 version = "0.1.0"
+dependencies = [
+ "base64",
+ "flate2",
+ "log",
+ "p384",
+ "thiserror",
+]
 
 [[package]]
 name = "indexmap"

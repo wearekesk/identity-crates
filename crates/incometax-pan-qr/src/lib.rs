@@ -10,6 +10,86 @@
 //! [`check_pan_details`] validates the structure and classifies the holder by
 //! the 4th-character entity code. This is a *structural* check only — it does
 //! not confirm the PAN was issued.
+//!
+//! # PAN Secure-QR decoder
+//!
+//! Alongside the validator, this crate decodes the "Enhanced 2.0 Secure QR"
+//! codes printed on PAN / e-PAN cards. [`OpanQr::from_scanned_string`] unpacks a
+//! scanned QR string, extracts the embedded PII and photo, and can verify the
+//! ECDSA (P-384 / SHA-384) signature. This is a 1:1 Rust port of the reference
+//! Python implementation (`OPANqr`); module names and semantics are preserved.
+
+pub mod enums;
+pub mod error;
+pub mod image_processor;
+pub mod inflater;
+pub mod parser;
+pub mod structs;
+pub mod unpacker;
+pub mod values;
+pub mod verifier;
+
+pub use error::PanQrError;
+pub use parser::{PanPii, Parser};
+pub use unpacker::{unpack_scanned_string, BitUnpacker};
+pub use verifier::Verifier;
+
+/// A decoded PAN Secure QR.
+///
+/// Ports the top-level `OPANQr` object from `main.py`: the scanned string is
+/// unpacked, the outer block is parsed and validated, and the control units are
+/// walked to extract the PII and photo.
+pub struct OpanQr {
+    parser: Parser,
+}
+
+impl OpanQr {
+    /// Decodes a scanned PAN-QR string.
+    ///
+    /// Unpacks the bit-packed string, parses the outer block, runs structural
+    /// validation, and extracts the embedded image / PII. Returns
+    /// [`PanQrError::ValidationFailed`] if the QR does not validate.
+    pub fn from_scanned_string(scanned: &str) -> Result<Self, PanQrError> {
+        let unpacked = unpack_scanned_string(scanned)?;
+        let mut parser = Parser::new(&unpacked)?;
+        if !parser.validate() {
+            return Err(PanQrError::ValidationFailed);
+        }
+        parser.handle_control()?;
+        Ok(Self { parser })
+    }
+
+    /// The extracted personally-identifiable information, if present.
+    pub fn pii(&self) -> Option<&PanPii> {
+        self.parser.pii.as_ref()
+    }
+
+    /// The extracted (header-fixed) WebP photo bytes, if present.
+    pub fn image(&self) -> Option<&[u8]> {
+        self.parser.image.as_deref()
+    }
+
+    /// The re-serialised signed message bytes.
+    pub fn message(&self) -> &[u8] {
+        &self.parser.message
+    }
+
+    /// The raw signature bytes (`r || s`).
+    pub fn signature(&self) -> &[u8] {
+        &self.parser.signature
+    }
+
+    /// Verifies the QR's ECDSA signature against the embedded public key.
+    ///
+    /// Returns [`PanQrError::MissingPublicKey`] if no key corresponds to this
+    /// QR's version (matching the Python's "Corresponding public key was not
+    /// found!" path).
+    pub fn verify(&self) -> Result<bool, PanQrError> {
+        let key = self.parser.public_key.ok_or(PanQrError::MissingPublicKey)?;
+        let verifier = Verifier::new(key)?;
+        verifier.verify(&self.parser.message, &self.parser.signature)
+    }
+}
 
 /// Entity type encoded by the 4th character of a PAN.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

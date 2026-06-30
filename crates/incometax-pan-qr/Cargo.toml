@@ -9,3 +9,8 @@ repository.workspace = true
 description = "Indian Income-Tax PAN (Permanent Account Number) structural validation + entity-type classification."
 
 [dependencies]
+base64.workspace = true
+flate2.workspace = true
+log.workspace = true
+p384.workspace = true
+thiserror.workspace = true
