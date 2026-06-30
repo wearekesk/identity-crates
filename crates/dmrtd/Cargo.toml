@@ -1,0 +1,43 @@
+[package]
+name = "dmrtd"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "eMRTD / ICAO 9303 reader core in pure Rust — BAC, PACE (ECDH-GM P-256), MRZ, LDS parsing, secure messaging. Transport-agnostic (NFC plugs in via a Transceiver trait)."
+documentation = "https://docs.rs/dmrtd"
+readme = "README.md"
+keywords = ["emrtd", "icao9303", "passport", "mrz", "nfc"]
+categories = ["cryptography", "parser-implementations"]
+
+[dependencies]
+# encoding / ASN.1 / time
+asn1.workspace = true
+base64.workspace = true
+hex.workspace = true
+chrono.workspace = true
+once_cell.workspace = true
+log.workspace = true
+thiserror.workspace = true
+
+# RustCrypto: block ciphers + MAC + hashes + traits
+aes.workspace = true
+des.workspace = true
+cmac.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+digest.workspace = true
+cipher.workspace = true
+cbc.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
+
+# big integers + elliptic curves (PACE ECDH-GM, P-256)
+num-bigint.workspace = true
+num-traits.workspace = true
+rand.workspace = true
+p256.workspace = true
+elliptic-curve.workspace = true

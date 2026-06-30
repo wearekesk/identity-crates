@@ -1,18 +1,25 @@
-[package]
-name = "dmrtd"
+# Cargo workspace root.
+#
+# Member crates live under `crates/`. `dmrtd` is the eMRTD / ICAO 9303 reader
+# core; additional crates (e.g. transports, CLI, FFI bindings) can be added as
+# new directories under `crates/` and they are picked up automatically.
+#
+# Shared package metadata and dependency versions are defined here and inherited
+# by member crates via `.workspace = true`, so versions stay consistent.
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
+authors = ["Balamurali Pandranki <balamurali@live.com>"]
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-description = "eMRTD / ICAO 9303 reader core in pure Rust — BAC, PACE (ECDH-GM P-256), MRZ, LDS parsing, secure messaging. Transport-agnostic (NFC plugs in via a Transceiver trait)."
 repository = "https://github.com/wearekesk/dmrtd-rs"
 homepage = "https://github.com/wearekesk/dmrtd-rs"
-documentation = "https://docs.rs/dmrtd"
-readme = "README.md"
-keywords = ["emrtd", "icao9303", "passport", "mrz", "nfc"]
-categories = ["cryptography", "parser-implementations"]
 
-[dependencies]
+[workspace.dependencies]
 # encoding / ASN.1 / time
 asn1 = "0.24.1"
 base64 = "0.22"
