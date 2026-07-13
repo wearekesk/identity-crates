@@ -592,6 +592,7 @@ fn parse_signed_attrs(implicit: &[u8]) -> Result<SignedAttrs, PassiveAuthError> 
 // LDS Security Object
 // ---------------------------------------------------------------------------
 
+#[derive(Debug)]
 struct LdsSecurityObject {
     hash_algo: HashAlgo,
     hashes: BTreeMap<u8, Vec<u8>>,
@@ -623,8 +624,17 @@ impl LdsSecurityObject {
             if !dgh_rest.is_empty() {
                 return Err(PassiveAuthError::MalformedSecurityObject);
             }
-            if let Some(&n) = num.last() {
-                hashes.insert(n, hash.to_vec());
+            // The DG number is a small positive integer (DG1..DG16): a single,
+            // minimally-encoded byte in 1..=127. Anything else — empty, multi-byte,
+            // zero, or high-bit-set — is malformed, not a value to truncate. And a
+            // duplicate number is ambiguous, so reject it rather than silently
+            // overwrite (which would let `sod_groups`/`covers_all_groups` lie).
+            let n = match num {
+                [b] if *b != 0 && *b & 0x80 == 0 => *b,
+                _ => return Err(PassiveAuthError::MalformedSecurityObject),
+            };
+            if hashes.insert(n, hash.to_vec()).is_some() {
+                return Err(PassiveAuthError::MalformedSecurityObject);
             }
             rest = tail;
         }
@@ -942,6 +952,50 @@ mod tests {
         let so = LdsSecurityObject::parse(&lds).unwrap();
         assert_eq!(so.hashes[&1], HashAlgo::Sha256.digest(b"genuine dg1"));
         assert_ne!(so.hashes[&1], HashAlgo::Sha256.digest(b"tampered dg1"));
+    }
+
+    #[test]
+    fn a_duplicate_data_group_number_is_rejected() {
+        // two entries for DG1 — ambiguous; must not silently collapse to one
+        let lds = build_lds(&[(1, b"first"), (1, b"second")]);
+        assert_eq!(
+            LdsSecurityObject::parse(&lds).unwrap_err(),
+            PassiveAuthError::MalformedSecurityObject
+        );
+    }
+
+    #[test]
+    fn a_malformed_data_group_number_is_rejected() {
+        // build a DataGroupHash with an empty INTEGER for the DG number
+        let h = HashAlgo::Sha256.digest(b"x");
+        let mut dgh = vec![der::INTEGER, 0x00]; // empty INTEGER — no value
+        dgh.push(der::OCTET_STRING);
+        push_len(&mut dgh, h.len());
+        dgh.extend_from_slice(&h);
+        let mut dgh_seq = vec![der::SEQUENCE];
+        push_len(&mut dgh_seq, dgh.len());
+        dgh_seq.extend_from_slice(&dgh);
+
+        let sha256_oid = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
+        let mut alg = vec![der::OID, sha256_oid.len() as u8];
+        alg.extend_from_slice(&sha256_oid);
+        let mut alg_seq = vec![der::SEQUENCE];
+        push_len(&mut alg_seq, alg.len());
+        alg_seq.extend_from_slice(&alg);
+        let mut list_seq = vec![der::SEQUENCE];
+        push_len(&mut list_seq, dgh_seq.len());
+        list_seq.extend_from_slice(&dgh_seq);
+        let mut body = vec![der::INTEGER, 0x01, 0x00];
+        body.extend_from_slice(&alg_seq);
+        body.extend_from_slice(&list_seq);
+        let mut lds = vec![der::SEQUENCE];
+        push_len(&mut lds, body.len());
+        lds.extend_from_slice(&body);
+
+        assert_eq!(
+            LdsSecurityObject::parse(&lds).unwrap_err(),
+            PassiveAuthError::MalformedSecurityObject
+        );
     }
 
     #[test]
