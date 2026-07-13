@@ -47,8 +47,9 @@ impl RsaPublicKey {
 
     /// The RSA public operation: `s^e mod n`, left-padded to the modulus length.
     ///
-    /// Rejects `s >= n` (RFC 8017 requires the signature to be a valid representative)
-    /// and the degenerate `s` of 0 or 1.
+    /// Rejects a signature that is not a valid representative — the wrong byte length,
+    /// or `s >= n` (RFC 8017). `s` of 0 or 1 is in range and left to the caller: the
+    /// PKCS#1 v1.5 / ISO 9796-2 block checks reject those degenerate blocks anyway.
     pub fn raw_public(&self, sig: &[u8]) -> Option<Vec<u8>> {
         let k = self.size();
         if sig.len() != k || self.n.is_zero() {
@@ -128,9 +129,9 @@ pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 mod tests {
     use super::*;
 
-    // A 2048-bit RSA public key (modulus + e=65537), DER PKCS#1.
+    // A 1024-bit RSA public key (128-byte modulus + e=65537).
     fn key() -> RsaPublicKey {
-        // n = 0xC0.. (generated once, fixed here so the test is deterministic)
+        // fixed here so the test is deterministic
         let n = BigUint::parse_bytes(
             b"C4F8E9A1B7D3F5E2A9C6B8D4E1F3A5C7B9D2E4F6A8C1B3D5E7F9A2C4B6D8E0F2\
               A4C6B8D1E3F5A7C9B2D4E6F8A1C3B5D7E9F2A4C6B8D0E2F4A6C8B1D3E5F7A9C2\

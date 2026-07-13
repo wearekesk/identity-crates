@@ -135,11 +135,11 @@ fn verify_rsa_iso9796(
 /// brainpool or P-384 chip returns [`ActiveAuthError::UnsupportedCurve`] rather than a
 /// silent pass.
 ///
-/// ICAO permits any SHA-2 variant for ECDSA AA, and — unlike RSA, where the ISO 9796-2
-/// trailer names the hash — the EC public key does not say which was used. So try each
-/// permitted digest and accept if any verifies. (Trying several is safe: a forged
-/// response has to forge under one *specific* hash, and none of the wrong hashes will
-/// verify a genuine signature either.)
+/// The EC public key does not name the hash (unlike RSA's ISO 9796-2 trailer), so try
+/// each hash the P-256 profile allows and accept if one verifies. Only SHA-224/SHA-256:
+/// ICAO pairs the hash to the curve's strength, and a digest wider than the 256-bit key
+/// (SHA-384/512) is not a valid P-256 profile. (Trying two is safe — a genuine
+/// signature verifies under exactly one, and a forgery under none.)
 fn verify_ecdsa(
     spki_key_bytes: &[u8],
     challenge: &[u8],
@@ -148,9 +148,9 @@ fn verify_ecdsa(
     use p256::ecdsa::signature::hazmat::PrehashVerifier;
     use p256::ecdsa::{Signature, VerifyingKey};
 
-    // SEC1 point for P-256: uncompressed (0x04 ‖ X ‖ Y, 65 bytes) or compressed (33).
-    // Any other length is a curve we do not implement — say so rather than guess.
-    if !matches!(spki_key_bytes.len(), 33 | 65) {
+    // ICAO ECDSA AA uses an uncompressed SEC1 point: 0x04 ‖ X(32) ‖ Y(32) = 65 bytes.
+    // A compressed (33-byte) or other encoding is not the profile — reject it.
+    if spki_key_bytes.len() != 65 || spki_key_bytes[0] != 0x04 {
         return Err(ActiveAuthError::UnsupportedCurve);
     }
     let key =
@@ -158,14 +158,9 @@ fn verify_ecdsa(
 
     let sig = Signature::from_slice(signature).map_err(|_| ActiveAuthError::MalformedSignature)?;
 
-    let verified = [
-        HashAlgo::Sha256,
-        HashAlgo::Sha384,
-        HashAlgo::Sha512,
-        HashAlgo::Sha224,
-    ]
-    .iter()
-    .any(|h| key.verify_prehash(&h.digest(challenge), &sig).is_ok());
+    let verified = [HashAlgo::Sha256, HashAlgo::Sha224]
+        .iter()
+        .any(|h| key.verify_prehash(&h.digest(challenge), &sig).is_ok());
 
     if verified {
         Ok(())
@@ -398,12 +393,19 @@ mod tests {
             .unwrap();
 
         let challenge = [3u8; 8];
-        for hash in [HashAlgo::Sha384, HashAlgo::Sha512, HashAlgo::Sha224] {
+        // SHA-224 is a valid P-256 hash and verifies
+        let (sig, _): (p256::ecdsa::Signature, _) = signing
+            .sign_prehash(&HashAlgo::Sha224.digest(&challenge))
+            .unwrap();
+        assert_eq!(verify(&key, &challenge, &sig.to_bytes()), Ok(()));
+
+        // SHA-384/512 are wider than the 256-bit key — not the P-256 profile, rejected
+        for hash in [HashAlgo::Sha384, HashAlgo::Sha512] {
             let (sig, _): (p256::ecdsa::Signature, _) =
                 signing.sign_prehash(&hash.digest(&challenge)).unwrap();
             assert_eq!(
                 verify(&key, &challenge, &sig.to_bytes()),
-                Ok(()),
+                Err(ActiveAuthError::Failed),
                 "{hash:?}"
             );
         }

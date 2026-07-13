@@ -14,11 +14,12 @@ keywords = ["emrtd", "icao9303", "passport", "mrz", "nfc"]
 categories = ["cryptography", "parser-implementations"]
 
 [lib]
-# `lib` (rlib) keeps the crate usable as a normal Rust dependency; `staticlib`
-# (iOS `.a`) and `cdylib` (Android `.so`) let the release workflow cross-compile it
-# for Flutter FFI. These extra artifacts are only emitted when something links them
-# — a plain host `cargo build` still just produces the rlib.
-crate-type = ["lib", "staticlib", "cdylib"]
+# `lib` (rlib) keeps the crate usable as a normal Rust dependency; `cdylib` is the
+# Android `.so` that cargo-ndk builds in the release workflow. iOS builds the static
+# archive on demand with `cargo rustc --crate-type staticlib`, so it is not listed
+# here. NB: cargo builds every listed crate-type on a normal `cargo build -p dmrtd`
+# too — for this pure-Rust crate the extra cdylib link is cheap, but it is not free.
+crate-type = ["lib", "cdylib"]
 
 [dependencies]
 # encoding / ASN.1 / time

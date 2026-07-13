@@ -83,6 +83,9 @@ pub enum PassiveAuthError {
 
     #[error("the signed message digest does not match the security object")]
     BadSignedAttributes,
+
+    #[error("no data groups were supplied to authenticate")]
+    NoDataGroups,
 }
 
 /// How far the trust chain was verified.
@@ -100,17 +103,31 @@ pub enum ChainStatus {
 /// The result of a passive-authentication pass.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PassiveAuth {
-    /// Every data group whose hash matched EF.SOD (e.g. `1`, `2`).
+    /// Every data group whose hash you supplied and which matched EF.SOD (e.g. `1`, `2`).
     pub verified_groups: Vec<u8>,
+    /// Every data group EF.SOD commits to — the *complete* set on the chip. Compare it
+    /// against [`verified_groups`](Self::verified_groups): any DG you rely on but did
+    /// not supply is **not** authenticated, even when [`is_authentic`](Self::is_authentic)
+    /// is true. PA proves the SOD is genuine; it can only vouch for the DGs you hash.
+    pub sod_groups: Vec<u8>,
     /// How far the certificate chain was established.
     pub chain: ChainStatus,
 }
 
 impl PassiveAuth {
-    /// Fully authentic: hashes matched, the signer's signature is valid, and the
-    /// Document Signer chained to a trusted CSCA.
+    /// The supplied data groups are authentic: their hashes matched a genuine EF.SOD
+    /// whose Document Signer chains to a trusted CSCA.
+    ///
+    /// This only vouches for [`verified_groups`](Self::verified_groups). It does **not**
+    /// mean the whole chip is covered — check [`sod_groups`](Self::sod_groups) if you
+    /// need every data group you display to be authenticated.
     pub fn is_authentic(&self) -> bool {
-        matches!(self.chain, ChainStatus::Trusted { .. })
+        matches!(self.chain, ChainStatus::Trusted { .. }) && !self.verified_groups.is_empty()
+    }
+
+    /// Every data group EF.SOD commits to was supplied and verified — full coverage.
+    pub fn covers_all_groups(&self) -> bool {
+        self.is_authentic() && self.verified_groups == self.sod_groups
     }
 }
 
@@ -156,6 +173,12 @@ pub fn verify(
     groups: &[DataGroup<'_>],
     anchors: &[TrustAnchor],
 ) -> Result<PassiveAuth, PassiveAuthError> {
+    // PA vouches only for the data groups it hashes, so authenticating *nothing* must
+    // not yield a trusted result — require at least one group.
+    if groups.is_empty() {
+        return Err(PassiveAuthError::NoDataGroups);
+    }
+
     let signed = SignedData::parse(sod)?;
     // EF.SOD's encapsulated content must actually be an LDS security object — a
     // SignedData wrapping some other content type is not a passport SOD.
@@ -163,6 +186,7 @@ pub fn verify(
         return Err(PassiveAuthError::MalformedSod);
     }
     let lds = LdsSecurityObject::parse(&signed.encap_content)?;
+    let sod_groups: Vec<u8> = lds.hashes.keys().copied().collect();
 
     // 1. every supplied data group must match its hash in EF.SOD
     let mut verified_groups = Vec::new();
@@ -177,6 +201,7 @@ pub fn verify(
         verified_groups.push(dg.number);
     }
     verified_groups.sort_unstable();
+    verified_groups.dedup();
 
     // 2. the Document Signer signed the security object.
     //
@@ -231,6 +256,7 @@ pub fn verify(
 
     Ok(PassiveAuth {
         verified_groups,
+        sod_groups,
         chain,
     })
 }
@@ -492,7 +518,11 @@ fn require_params_absent(params: &[u8]) -> Result<(), PassiveAuthError> {
 fn parse_encap_content(encap: &[u8]) -> Result<(Vec<u64>, Vec<u8>), PassiveAuthError> {
     let (ctype, after) = der::take(encap, der::OID).ok_or(PassiveAuthError::MalformedSod)?;
     let content_type = der::oid_arcs(ctype).ok_or(PassiveAuthError::MalformedSod)?;
-    let (_, explicit, _) = der::next(after).ok_or(PassiveAuthError::MalformedSod)?;
+    // eContent is exactly one [0] EXPLICIT wrapper and nothing after it
+    let explicit = match der::next(after) {
+        Some((0xA0, body, [])) => body,
+        _ => return Err(PassiveAuthError::MalformedSod),
+    };
     let octets = der::expect(explicit, der::OCTET_STRING).ok_or(PassiveAuthError::MalformedSod)?;
     Ok((content_type, octets.to_vec()))
 }
@@ -586,9 +616,13 @@ impl LdsSecurityObject {
         while !rest.is_empty() {
             // the list is SEQUENCE OF DataGroupHash — every element must be one
             let (dgh, tail) = der::take(rest, der::SEQUENCE).ok_or_else(e)?;
-            // DataGroupHash ::= SEQUENCE { number INTEGER, hash OCTET STRING }
+            // DataGroupHash ::= SEQUENCE { number INTEGER, hash OCTET STRING } — exactly
+            // those two fields, nothing trailing.
             let (num, after) = der::take(dgh, der::INTEGER).ok_or_else(e)?;
-            let (hash, _) = der::take(after, der::OCTET_STRING).ok_or_else(e)?;
+            let (hash, dgh_rest) = der::take(after, der::OCTET_STRING).ok_or_else(e)?;
+            if !dgh_rest.is_empty() {
+                return Err(PassiveAuthError::MalformedSecurityObject);
+            }
             if let Some(&n) = num.last() {
                 hashes.insert(n, hash.to_vec());
             }
@@ -955,17 +989,32 @@ mod tests {
 
     #[test]
     fn malformed_sod_is_rejected_cleanly() {
+        // a dummy group so we get past the empty-groups guard to the SOD parse
+        let dg = [DataGroup {
+            number: 1,
+            bytes: b"x",
+        }];
         assert_eq!(
-            verify(&[], &[], &[]).unwrap_err(),
+            verify(&[], &dg, &[]).unwrap_err(),
             PassiveAuthError::MalformedSod
         );
+        assert_eq!(
+            verify(&[0x30, 0x00], &dg, &[]).unwrap_err(),
+            PassiveAuthError::MalformedSod
+        );
+        assert_eq!(
+            verify(&[0x77, 0x01, 0x00], &dg, &[]).unwrap_err(),
+            PassiveAuthError::MalformedSod
+        );
+    }
+
+    #[test]
+    fn authenticating_no_data_groups_is_rejected() {
+        // an empty groups slice must never reach a trusted/ok result — you cannot
+        // authenticate a document by verifying none of its data.
         assert_eq!(
             verify(&[0x30, 0x00], &[], &[]).unwrap_err(),
-            PassiveAuthError::MalformedSod
-        );
-        assert_eq!(
-            verify(&[0x77, 0x01, 0x00], &[], &[]).unwrap_err(),
-            PassiveAuthError::MalformedSod
+            PassiveAuthError::NoDataGroups
         );
     }
 }
