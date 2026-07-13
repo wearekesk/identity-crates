@@ -27,9 +27,20 @@ pub fn next(input: &[u8]) -> Option<(u8, &[u8], &[u8])> {
         if n == 0 || n > 4 || after_first.len() < n {
             return None;
         }
+        let len_bytes = &after_first[..n];
+        // DER requires the *minimal* encoding: no leading zero byte, and long form
+        // is only legal when the value doesn't fit in short form (< 0x80). Rejecting
+        // non-minimal lengths keeps a BER-style encoding from slipping through this
+        // reader, which is documented as strict DER.
+        if len_bytes[0] == 0 {
+            return None;
+        }
         let mut len = 0usize;
-        for &b in &after_first[..n] {
+        for &b in len_bytes {
             len = len.checked_mul(256)?.checked_add(b as usize)?;
+        }
+        if len < 0x80 {
+            return None;
         }
         (len, &after_first[n..])
     };
@@ -46,24 +57,27 @@ pub fn take(input: &[u8], tag: u8) -> Option<(&[u8], &[u8])> {
     (t == tag).then_some((contents, rest))
 }
 
-/// Contents of a single element of type `tag` that spans the whole input.
+/// Contents of a single element of type `tag` that spans the *entire* input —
+/// nothing may follow it. Trailing bytes after the element mean the value wasn't the
+/// whole thing it was taken for (an appended TLV on a cert / SOD / key), so reject it.
 pub fn expect(input: &[u8], tag: u8) -> Option<&[u8]> {
-    let (t, contents, _rest) = next(input)?;
-    (t == tag).then_some(contents)
+    let (t, contents, rest) = next(input)?;
+    (t == tag && rest.is_empty()).then_some(contents)
 }
 
 /// Decode an OID's contents into its arcs.
 pub fn oid_arcs(contents: &[u8]) -> Option<Vec<u64>> {
-    let (&first, rest) = contents.split_first()?;
-    // the first byte packs two arcs: 40 * arc1 + arc2
-    let mut arcs = vec![(first / 40) as u64, (first % 40) as u64];
-
+    // Every subidentifier, including the first, is base-128. Decode them all, then
+    // split the first: it packs arc1·40 + arc2, and for arc1 = 2 the second arc can
+    // be arbitrarily large (so the first subidentifier may span several bytes — the
+    // old `first / 40` on a single byte got those wrong).
+    let mut subids = Vec::new();
     let mut value: u64 = 0;
     let mut pending = false;
-    for &b in rest {
+    for &b in contents {
         value = value.checked_mul(128)?.checked_add((b & 0x7f) as u64)?;
         if b & 0x80 == 0 {
-            arcs.push(value);
+            subids.push(value);
             value = 0;
             pending = false;
         } else {
@@ -71,7 +85,20 @@ pub fn oid_arcs(contents: &[u8]) -> Option<Vec<u64>> {
         }
     }
     // a trailing continuation byte means the encoding was truncated
-    (!pending).then_some(arcs)
+    if pending {
+        return None;
+    }
+
+    let first = *subids.first()?;
+    let (arc1, arc2) = if first < 80 {
+        (first / 40, first % 40)
+    } else {
+        // 40·arc1 + arc2 with arc1 capped at 2, so anything ≥ 80 is arc1 = 2
+        (2, first - 80)
+    };
+    let mut arcs = vec![arc1, arc2];
+    arcs.extend_from_slice(&subids[1..]);
+    Some(arcs)
 }
 
 /// A BIT STRING's payload, minus the "unused bits" prefix byte.
@@ -113,6 +140,28 @@ mod tests {
     }
 
     #[test]
+    fn non_minimal_lengths_are_rejected_as_ber_not_der() {
+        // long form for a value that fits in short form (len 1 as 0x81 0x01)
+        assert!(next(&[0x04, 0x81, 0x01, 0xAA]).is_none());
+        // leading zero length octet (0x82 0x00 0x80 ...)
+        let mut ber = vec![0x04, 0x82, 0x00, 0x80];
+        ber.extend(std::iter::repeat_n(0xAA, 0x80));
+        assert!(next(&ber).is_none());
+        // the minimal short form of the same value is fine
+        let mut der = vec![0x04, 0x7f];
+        der.extend(std::iter::repeat_n(0xAA, 0x7f));
+        assert!(next(&der).is_some());
+    }
+
+    #[test]
+    fn expect_rejects_trailing_bytes() {
+        // one INTEGER that spans the whole input — accepted
+        assert!(expect(&[0x02, 0x01, 0x05], INTEGER).is_some());
+        // the same INTEGER with an appended TLV — rejected, it isn't the whole value
+        assert!(expect(&[0x02, 0x01, 0x05, 0x02, 0x01, 0x06], INTEGER).is_none());
+    }
+
+    #[test]
     fn decodes_oids() {
         // 2.16.840.1.101.3.4.2.1 — SHA-256
         let sha256 = [0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
@@ -125,6 +174,14 @@ mod tests {
         assert_eq!(oid_arcs(&sha1).unwrap(), vec![1, 3, 14, 3, 2, 26]);
         // truncated continuation
         assert!(oid_arcs(&[0x2b, 0x80]).is_none());
+    }
+
+    #[test]
+    fn decodes_a_multi_byte_first_subidentifier() {
+        // 2.100.3 — first subidentifier is 40·2 + 100 = 180, which needs two base-128
+        // bytes (0x81 0x34). The old single-byte `first / 40` couldn't represent it.
+        let oid = [0x81, 0x34, 0x03];
+        assert_eq!(oid_arcs(&oid).unwrap(), vec![2, 100, 3]);
     }
 
     #[test]

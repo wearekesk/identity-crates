@@ -134,6 +134,12 @@ fn verify_rsa_iso9796(
 /// Only NIST P-256 today: it is the curve `dmrtd`'s PACE stack already carries. A
 /// brainpool or P-384 chip returns [`ActiveAuthError::UnsupportedCurve`] rather than a
 /// silent pass.
+///
+/// ICAO permits any SHA-2 variant for ECDSA AA, and — unlike RSA, where the ISO 9796-2
+/// trailer names the hash — the EC public key does not say which was used. So try each
+/// permitted digest and accept if any verifies. (Trying several is safe: a forged
+/// response has to forge under one *specific* hash, and none of the wrong hashes will
+/// verify a genuine signature either.)
 fn verify_ecdsa(
     spki_key_bytes: &[u8],
     challenge: &[u8],
@@ -152,10 +158,20 @@ fn verify_ecdsa(
 
     let sig = Signature::from_slice(signature).map_err(|_| ActiveAuthError::MalformedSignature)?;
 
-    // SHA-256 pairs with P-256 (ICAO ties the hash to the curve's strength).
-    let digest = HashAlgo::Sha256.digest(challenge);
-    key.verify_prehash(&digest, &sig)
-        .map_err(|_| ActiveAuthError::Failed)
+    let verified = [
+        HashAlgo::Sha256,
+        HashAlgo::Sha384,
+        HashAlgo::Sha512,
+        HashAlgo::Sha224,
+    ]
+    .iter()
+    .any(|h| key.verify_prehash(&h.digest(challenge), &sig).is_ok());
+
+    if verified {
+        Ok(())
+    } else {
+        Err(ActiveAuthError::Failed)
+    }
 }
 
 #[cfg(test)]
@@ -367,5 +383,29 @@ mod tests {
             verify(&key, &challenge, &bad.to_bytes()),
             Err(ActiveAuthError::Failed)
         );
+    }
+
+    #[test]
+    fn ecdsa_with_a_non_sha256_digest_still_verifies() {
+        // A chip that signs the SHA-384 digest of the challenge (ICAO permits it, and
+        // the EC key doesn't say which hash). This used to fail on the hard-coded
+        // SHA-256 path.
+        use p256::ecdsa::signature::hazmat::PrehashSigner;
+        use p256::ecdsa::SigningKey;
+
+        let signing = SigningKey::from_slice(&[0x11u8; 32]).unwrap();
+        let key = AAPublicKey::from_bytes(spki(EC_OID, &signing.verifying_key().to_sec1_bytes()))
+            .unwrap();
+
+        let challenge = [3u8; 8];
+        for hash in [HashAlgo::Sha384, HashAlgo::Sha512, HashAlgo::Sha224] {
+            let (sig, _): (p256::ecdsa::Signature, _) =
+                signing.sign_prehash(&hash.digest(&challenge)).unwrap();
+            assert_eq!(
+                verify(&key, &challenge, &sig.to_bytes()),
+                Ok(()),
+                "{hash:?}"
+            );
+        }
     }
 }

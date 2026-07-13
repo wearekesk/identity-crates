@@ -125,6 +125,18 @@ fn corrupting_the_document_signer_signature_is_caught() {
     assert!(passive::verify(&sod, &groups(), &[anchor]).is_err());
 }
 
+#[test]
+fn a_sod_wrapping_the_wrong_content_type_is_rejected() {
+    // Same signed chain, but the eContentType is pkcs7-data instead of the ICAO LDS
+    // security object OID — not a passport SOD, so it must not verify.
+    const WRONG_CT: &[u8] = include_bytes!("fixtures/efsod_wrong_ct.bin");
+    let anchor = TrustAnchor::from_certificate(CSCA).unwrap();
+    assert_eq!(
+        passive::verify(WRONG_CT, &groups(), &[anchor]).unwrap_err(),
+        PassiveAuthError::MalformedSod,
+    );
+}
+
 /// Offset of the first occurrence of `needle` in `haystack`.
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)

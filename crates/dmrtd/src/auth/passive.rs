@@ -44,6 +44,14 @@ const OID_MESSAGE_DIGEST: &[u64] = &[1, 2, 840, 113549, 1, 9, 4];
 const OID_RSA: &[u64] = &[1, 2, 840, 113549, 1, 1, 1];
 /// id-ecPublicKey — 1.2.840.10045.2.1
 const OID_EC_PUBLIC_KEY: &[u64] = &[1, 2, 840, 10045, 2, 1];
+/// prime256v1 / NIST P-256 named curve — 1.2.840.10045.3.1.7
+const OID_EC_P256: &[u64] = &[1, 2, 840, 10045, 3, 1, 7];
+/// id-icao-mrtd-security-ldsSecurityObject — 2.23.136.1.1.1 (EF.SOD eContentType)
+const OID_LDS_SECURITY_OBJECT: &[u64] = &[2, 23, 136, 1, 1, 1];
+/// RSA PKCS#1 signature-algorithm OID prefix — 1.2.840.113549.1.1.*
+const OID_RSA_SIG_PREFIX: &[u64] = &[1, 2, 840, 113549, 1, 1];
+/// ECDSA signature-algorithm OID prefix — 1.2.840.10045.4.*
+const OID_ECDSA_SIG_PREFIX: &[u64] = &[1, 2, 840, 10045, 4];
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PassiveAuthError {
@@ -149,6 +157,11 @@ pub fn verify(
     anchors: &[TrustAnchor],
 ) -> Result<PassiveAuth, PassiveAuthError> {
     let signed = SignedData::parse(sod)?;
+    // EF.SOD's encapsulated content must actually be an LDS security object — a
+    // SignedData wrapping some other content type is not a passport SOD.
+    if signed.content_type != OID_LDS_SECURITY_OBJECT {
+        return Err(PassiveAuthError::MalformedSod);
+    }
     let lds = LdsSecurityObject::parse(&signed.encap_content)?;
 
     // 1. every supplied data group must match its hash in EF.SOD
@@ -173,10 +186,25 @@ pub fn verify(
     // then verify the signature over the attributes. Without signed attributes, the
     // signature is over the eContent itself.
     let dsc = Certificate::parse(&signed.signer_cert)?;
+
+    // The signatureAlgorithm the signer declared must match the DSC key it is
+    // verified with — a SignerInfo declaring ECDSA can't be honoured by an RSA key.
+    let scheme_ok = matches!(
+        (&dsc.public_key, signed.sig_scheme),
+        (PublicKey::Rsa(_), SigScheme::Rsa) | (PublicKey::EcP256(_), SigScheme::Ecdsa)
+    );
+    if !scheme_ok {
+        return Err(PassiveAuthError::BadDocumentSignature);
+    }
+
     let signed_message = match &signed.signed_attrs {
         Some(attrs) => {
             let want = signed.digest_algo.digest(&signed.encap_content);
-            if attrs.message_digest != want || !attrs.has_content_type {
+            // messageDigest must equal the eContent hash, and the content-type
+            // attribute must be present *and* equal the encapsulated eContentType
+            // (RFC 5652 §5.3) — checking mere presence let a mismatch through.
+            let content_type_ok = attrs.content_type.as_deref() == Some(&signed.content_type);
+            if attrs.message_digest != want || !content_type_ok {
                 return Err(PassiveAuthError::BadSignedAttributes);
             }
             attrs.der.clone()
@@ -212,11 +240,21 @@ pub fn verify(
 // CMS SignedData
 // ---------------------------------------------------------------------------
 
+/// Which signature scheme the SignerInfo declares — cross-checked against the DSC key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SigScheme {
+    Rsa,
+    Ecdsa,
+}
+
 struct SignedData {
     /// The signer's digestAlgorithm — the hash bound into messageDigest.
     digest_algo: HashAlgo,
-    /// The hash the DSC signature is computed with.
+    /// The hash the DSC signature is computed with (from the signatureAlgorithm).
     signature_hash: HashAlgo,
+    /// The scheme the signatureAlgorithm declares — must match the DSC key kind.
+    sig_scheme: SigScheme,
+    content_type: Vec<u64>,
     encap_content: Vec<u8>,
     signer_cert: Vec<u8>,
     signed_attrs: Option<SignedAttrs>,
@@ -228,7 +266,14 @@ struct SignedAttrs {
     /// RFC 5652 §5.4 — not the `[0] IMPLICIT` form they appear as in the message.
     der: Vec<u8>,
     message_digest: Vec<u8>,
-    has_content_type: bool,
+    /// The content-type attribute's value (its arcs), if the attribute was present.
+    content_type: Option<Vec<u64>>,
+}
+
+/// How the SignerInfo names its certificate (RFC 5652 §5.3).
+enum SignerId {
+    IssuerAndSerial { issuer: Vec<u8>, serial: Vec<u8> },
+    Ski(Vec<u8>),
 }
 
 impl SignedData {
@@ -256,21 +301,26 @@ impl SignedData {
         let (_version, r1) = der::take(sd, der::INTEGER).ok_or_else(e)?;
         let (_digest_algs, r2) = der::take(r1, der::SET).ok_or_else(e)?;
         let (encap, r3) = der::take(r2, der::SEQUENCE).ok_or_else(e)?;
-        let encap_content = parse_encap_content(encap)?;
+        let (content_type, encap_content) = parse_encap_content(encap)?;
 
         // certificates [0] IMPLICIT, then optional crls [1], then signerInfos SET
         let mut rest = r3;
-        let mut signer_cert = None;
+        let mut certs: Vec<Vec<u8>> = Vec::new();
         while let Some((tag, contents, tail)) = der::next(rest) {
             match tag {
-                0xA0 => signer_cert = Some(first_certificate(contents)?),
+                0xA0 => certs = collect_certificates(contents)?,
                 der::SET => {
                     let si = SignerInfo::parse(contents)?;
+                    // Pick the certificate the signer names, not just the first one —
+                    // a SOD may carry several and the DSC needn't be first.
+                    let signer_cert = select_dsc(&certs, &si.sid)?;
                     return Ok(SignedData {
                         digest_algo: si.digest_algo,
-                        signature_hash: si.digest_algo,
+                        signature_hash: si.signature_hash,
+                        sig_scheme: si.sig_scheme,
+                        content_type,
                         encap_content,
-                        signer_cert: signer_cert.ok_or(PassiveAuthError::MalformedCertificate)?,
+                        signer_cert,
                         signed_attrs: si.signed_attrs,
                         signature: si.signature,
                     });
@@ -284,7 +334,10 @@ impl SignedData {
 }
 
 struct SignerInfo {
+    sid: SignerId,
     digest_algo: HashAlgo,
+    signature_hash: HashAlgo,
+    sig_scheme: SigScheme,
     signed_attrs: Option<SignedAttrs>,
     signature: Vec<u8>,
 }
@@ -298,8 +351,9 @@ impl SignerInfo {
         let e = || PassiveAuthError::NoSigner;
 
         let (_version, r1) = der::take(si, der::INTEGER).ok_or_else(e)?;
-        // sid — SEQUENCE (issuerAndSerialNumber) or [0] (subjectKeyIdentifier)
-        let (_sid_tag, _sid, r2) = der::next(r1).ok_or(PassiveAuthError::NoSigner)?;
+        // sid — SEQUENCE (issuerAndSerialNumber) or [0] IMPLICIT (subjectKeyIdentifier)
+        let (sid_tag, sid_body, r2) = der::next(r1).ok_or(PassiveAuthError::NoSigner)?;
+        let sid = parse_sid(sid_tag, sid_body)?;
         let (digest_alg, r3) = der::take(r2, der::SEQUENCE).ok_or_else(e)?;
         let digest_algo = algo_hash(digest_alg)?;
 
@@ -309,14 +363,86 @@ impl SignerInfo {
             _ => (None, r3),
         };
 
-        let (_sig_alg, r5) = der::take(r4, der::SEQUENCE).ok_or_else(e)?;
+        // signatureAlgorithm: names RSA vs ECDSA and (for RSA) the hash. Don't ignore
+        // it — verifying with a scheme/hash the signer didn't declare would let a
+        // mismatched algorithm through.
+        let (sig_alg, r5) = der::take(r4, der::SEQUENCE).ok_or_else(e)?;
+        let (sig_scheme, sig_alg_hash) = parse_sig_alg(sig_alg)?;
+        // RSA signature OIDs name the hash; ECDSA-with-SHA* do too. Where the sig-alg
+        // OID pins a hash it must agree with the digestAlgorithm.
+        let signature_hash = match sig_alg_hash {
+            Some(h) if h != digest_algo => return Err(PassiveAuthError::UnsupportedHash),
+            Some(h) => h,
+            None => digest_algo,
+        };
         let (signature, _) = der::take(r5, der::OCTET_STRING).ok_or_else(e)?;
 
         Ok(Self {
+            sid,
             digest_algo,
+            signature_hash,
+            sig_scheme,
             signed_attrs,
             signature: signature.to_vec(),
         })
+    }
+}
+
+/// Parse the SignerInfo `sid`: `SEQUENCE { issuer, serial }` or `[0]` SKI.
+fn parse_sid(tag: u8, body: &[u8]) -> Result<SignerId, PassiveAuthError> {
+    match tag {
+        der::SEQUENCE => {
+            let (issuer, after) =
+                der::take(body, der::SEQUENCE).ok_or(PassiveAuthError::NoSigner)?;
+            let (serial, _) = der::take(after, der::INTEGER).ok_or(PassiveAuthError::NoSigner)?;
+            Ok(SignerId::IssuerAndSerial {
+                issuer: issuer.to_vec(),
+                serial: serial.to_vec(),
+            })
+        }
+        0x80 => Ok(SignerId::Ski(body.to_vec())),
+        _ => Err(PassiveAuthError::NoSigner),
+    }
+}
+
+/// The scheme and (optional) pinned hash named by a SignerInfo signatureAlgorithm.
+fn parse_sig_alg(alg: &[u8]) -> Result<(SigScheme, Option<HashAlgo>), PassiveAuthError> {
+    let (oid, _) = der::take(alg, der::OID).ok_or(PassiveAuthError::MalformedSod)?;
+    let arcs = der::oid_arcs(oid).ok_or(PassiveAuthError::MalformedSod)?;
+
+    // plain rsaEncryption (1.2.840.113549.1.1.1) names no hash; sha*WithRSAEncryption
+    // and ecdsa-with-SHA* do.
+    if arcs == OID_RSA {
+        return Ok((SigScheme::Rsa, None));
+    }
+    if arcs.starts_with(OID_RSA_SIG_PREFIX) {
+        return Ok((SigScheme::Rsa, sig_alg_hash(alg).ok()));
+    }
+    if arcs.starts_with(OID_ECDSA_SIG_PREFIX) {
+        return Ok((SigScheme::Ecdsa, sig_alg_hash(alg).ok()));
+    }
+    Err(PassiveAuthError::UnsupportedHash)
+}
+
+/// Select the Document Signer certificate the SignerInfo names.
+fn select_dsc(certs: &[Vec<u8>], sid: &SignerId) -> Result<Vec<u8>, PassiveAuthError> {
+    for der_cert in certs {
+        let cert = Certificate::parse(der_cert)?;
+        let hit = match sid {
+            SignerId::IssuerAndSerial { issuer, serial } => {
+                &cert.issuer == issuer && &cert.serial == serial
+            }
+            SignerId::Ski(ski) => cert.ski.as_deref() == Some(ski.as_slice()),
+        };
+        if hit {
+            return Ok(der_cert.clone());
+        }
+    }
+    // No SID match: if there's exactly one certificate, use it (the common eMRTD
+    // shape); the signature check still has to pass against it.
+    match certs {
+        [only] => Ok(only.clone()),
+        _ => Err(PassiveAuthError::MalformedCertificate),
     }
 }
 
@@ -328,29 +454,36 @@ fn algo_hash(alg: &[u8]) -> Result<HashAlgo, PassiveAuthError> {
 }
 
 /// encapContentInfo ::= SEQUENCE { eContentType OID, eContent [0] EXPLICIT OCTET STRING }
-fn parse_encap_content(encap: &[u8]) -> Result<Vec<u8>, PassiveAuthError> {
-    let (_ctype, after) = der::take(encap, der::OID).ok_or(PassiveAuthError::MalformedSod)?;
+/// Returns `(eContentType arcs, eContent)`.
+fn parse_encap_content(encap: &[u8]) -> Result<(Vec<u64>, Vec<u8>), PassiveAuthError> {
+    let (ctype, after) = der::take(encap, der::OID).ok_or(PassiveAuthError::MalformedSod)?;
+    let content_type = der::oid_arcs(ctype).ok_or(PassiveAuthError::MalformedSod)?;
     let (_, explicit, _) = der::next(after).ok_or(PassiveAuthError::MalformedSod)?;
     let octets = der::expect(explicit, der::OCTET_STRING).ok_or(PassiveAuthError::MalformedSod)?;
-    Ok(octets.to_vec())
+    Ok((content_type, octets.to_vec()))
 }
 
-/// certificates [0] holds one or more certs; take the first (the Document Signer).
-fn first_certificate(contents: &[u8]) -> Result<Vec<u8>, PassiveAuthError> {
-    let (_tag, cert, _rest) = der::next(contents).ok_or(PassiveAuthError::MalformedCertificate)?;
-    // re-wrap as its own SEQUENCE TLV so Certificate::parse sees a whole cert
-    let mut out = Vec::with_capacity(cert.len() + 4);
-    out.push(der::SEQUENCE);
-    push_len(&mut out, cert.len());
-    out.extend_from_slice(cert);
-    Ok(out)
+/// certificates [0] holds one or more certs; return each as its own cert DER.
+fn collect_certificates(contents: &[u8]) -> Result<Vec<Vec<u8>>, PassiveAuthError> {
+    let mut certs = Vec::new();
+    let mut rest = contents;
+    while let Some((_tag, cert, tail)) = der::next(rest) {
+        // re-wrap as its own SEQUENCE TLV so Certificate::parse sees a whole cert
+        let mut out = Vec::with_capacity(cert.len() + 4);
+        out.push(der::SEQUENCE);
+        push_len(&mut out, cert.len());
+        out.extend_from_slice(cert);
+        certs.push(out);
+        rest = tail;
+    }
+    Ok(certs)
 }
 
 /// Parse signedAttrs, and re-encode them as an explicit SET OF for signature
 /// verification (RFC 5652 §5.4: the `[0]` tag is replaced by `0x31`).
 fn parse_signed_attrs(implicit: &[u8]) -> Result<SignedAttrs, PassiveAuthError> {
     let mut message_digest = None;
-    let mut has_content_type = false;
+    let mut content_type = None;
 
     let mut rest = implicit;
     while let Some((tag, attr, tail)) = der::next(rest) {
@@ -363,7 +496,13 @@ fn parse_signed_attrs(implicit: &[u8]) -> Result<SignedAttrs, PassiveAuthError> 
                             .and_then(|v| der::expect(v, der::OCTET_STRING))
                             .map(<[u8]>::to_vec);
                     }
-                    Some(OID_CONTENT_TYPE) => has_content_type = true,
+                    Some(OID_CONTENT_TYPE) => {
+                        // keep the *value*, not just presence — it has to equal the
+                        // encapsulated eContentType (checked in `verify`).
+                        content_type = der::expect(after, der::SET)
+                            .and_then(|v| der::expect(v, der::OID))
+                            .and_then(der::oid_arcs);
+                    }
                     _ => {}
                 }
             }
@@ -378,7 +517,7 @@ fn parse_signed_attrs(implicit: &[u8]) -> Result<SignedAttrs, PassiveAuthError> 
     Ok(SignedAttrs {
         der,
         message_digest: message_digest.ok_or(PassiveAuthError::BadSignedAttributes)?,
-        has_content_type,
+        content_type,
     })
 }
 
@@ -462,8 +601,11 @@ fn verify_ec_p256(point: &[u8], hash: HashAlgo, message: &[u8], sig: &[u8]) -> b
 
 struct Certificate<'a> {
     tbs: &'a [u8],
+    serial: Vec<u8>,
     issuer: Vec<u8>,
     subject: Vec<u8>,
+    /// subjectKeyIdentifier extension (2.5.29.14), if present — for SID matching.
+    ski: Option<Vec<u8>>,
     public_key: PublicKey,
     signature_hash: HashAlgo,
     signature: Vec<u8>,
@@ -491,12 +633,14 @@ impl<'a> Certificate<'a> {
             .ok_or(PassiveAuthError::MalformedCertificate)?
             .to_vec();
 
-        let (issuer, subject, public_key) = Self::parse_tbs(tbs_inner)?;
+        let parsed = Self::parse_tbs(tbs_inner)?;
         Ok(Self {
             tbs,
-            issuer,
-            subject,
-            public_key,
+            serial: parsed.serial,
+            issuer: parsed.issuer,
+            subject: parsed.subject,
+            ski: parsed.ski,
+            public_key: parsed.public_key,
             signature_hash,
             signature,
         })
@@ -504,30 +648,37 @@ impl<'a> Certificate<'a> {
 
     /// TBSCertificate ::= SEQUENCE {
     ///   [0] version OPT, serialNumber, signature, issuer Name, validity,
-    ///   subject Name, subjectPublicKeyInfo, ... }
-    fn parse_tbs(tbs: &[u8]) -> Result<(Vec<u8>, Vec<u8>, PublicKey), PassiveAuthError> {
+    ///   subject Name, subjectPublicKeyInfo, ..., extensions [3] OPT }
+    fn parse_tbs(tbs: &[u8]) -> Result<ParsedTbs, PassiveAuthError> {
         let e = || PassiveAuthError::MalformedCertificate;
 
         let rest = match der::next(tbs) {
             Some((0xA0, _, tail)) => tail, // optional [0] version
             _ => tbs,
         };
-        let (_serial, r1) = der::take(rest, der::INTEGER).ok_or_else(e)?;
+        let (serial, r1) = der::take(rest, der::INTEGER).ok_or_else(e)?;
         let (_sigalg, r2) = der::take(r1, der::SEQUENCE).ok_or_else(e)?;
         let (issuer, r3) = der::take(r2, der::SEQUENCE).ok_or_else(e)?;
         let (_validity, r4) = der::take(r3, der::SEQUENCE).ok_or_else(e)?;
         let (subject, r5) = der::take(r4, der::SEQUENCE).ok_or_else(e)?;
-        let (spki, _) = der::take(r5, der::SEQUENCE).ok_or_else(e)?;
+        let (spki, r6) = der::take(r5, der::SEQUENCE).ok_or_else(e)?;
 
         let public_key = Self::parse_spki(spki)?;
-        Ok((issuer.to_vec(), subject.to_vec(), public_key))
+        let ski = find_ski(r6);
+        Ok(ParsedTbs {
+            serial: serial.to_vec(),
+            issuer: issuer.to_vec(),
+            subject: subject.to_vec(),
+            ski,
+            public_key,
+        })
     }
 
     /// SubjectPublicKeyInfo ::= SEQUENCE { algorithm AlgorithmIdentifier, key BIT STRING }
     fn parse_spki(spki: &[u8]) -> Result<PublicKey, PassiveAuthError> {
         let e = || PassiveAuthError::MalformedCertificate;
         let (alg, after_alg) = der::take(spki, der::SEQUENCE).ok_or_else(e)?;
-        let (oid, _params) = der::take(alg, der::OID).ok_or_else(e)?;
+        let (oid, params) = der::take(alg, der::OID).ok_or_else(e)?;
         let arcs = der::oid_arcs(oid).ok_or(PassiveAuthError::MalformedCertificate)?;
 
         let (key_bits, _) = der::take(after_alg, der::BIT_STRING).ok_or_else(e)?;
@@ -539,7 +690,15 @@ impl<'a> Certificate<'a> {
                 .map(PublicKey::Rsa)
                 .ok_or(PassiveAuthError::UnsupportedKey)
         } else if arcs == OID_EC_PUBLIC_KEY {
-            // only P-256 today (uncompressed 65 / compressed 33 SEC1 point)
+            // The namedCurve parameter must actually say P-256 — otherwise a 33/65-byte
+            // point on a different (e.g. experimental) curve would be accepted as P-256
+            // purely by its length.
+            let (curve_oid, _) =
+                der::take(params, der::OID).ok_or(PassiveAuthError::UnsupportedKey)?;
+            if der::oid_arcs(curve_oid).as_deref() != Some(OID_EC_P256) {
+                return Err(PassiveAuthError::UnsupportedKey);
+            }
+            // uncompressed 65 / compressed 33 SEC1 point
             if matches!(key_bytes.len(), 33 | 65) {
                 Ok(PublicKey::EcP256(key_bytes.to_vec()))
             } else {
@@ -549,6 +708,55 @@ impl<'a> Certificate<'a> {
             Err(PassiveAuthError::UnsupportedKey)
         }
     }
+}
+
+/// The fields `parse_tbs` extracts from a TBSCertificate.
+struct ParsedTbs {
+    serial: Vec<u8>,
+    issuer: Vec<u8>,
+    subject: Vec<u8>,
+    ski: Option<Vec<u8>>,
+    public_key: PublicKey,
+}
+
+/// id-ce-subjectKeyIdentifier — 2.5.29.14
+const OID_SKI: &[u64] = &[2, 5, 29, 14];
+
+/// Find the subjectKeyIdentifier in the TBS bytes that follow subjectPublicKeyInfo.
+/// Returns `None` if there is no `extensions [3]` or no SKI extension in it — the SID
+/// match simply won't hit on SKI then, which the single-cert fallback covers.
+fn find_ski(after_spki: &[u8]) -> Option<Vec<u8>> {
+    // walk optional issuerUniqueID [1], subjectUniqueID [2] to reach extensions [3]
+    let mut rest = after_spki;
+    let ext_seq = loop {
+        let (tag, body, tail) = der::next(rest)?;
+        if tag == 0xA3 {
+            // [3] EXPLICIT SEQUENCE OF Extension
+            break der::expect(body, der::SEQUENCE)?;
+        }
+        rest = tail;
+    };
+
+    let mut rest = ext_seq;
+    while let Some((tag, ext, tail)) = der::next(rest) {
+        if tag == der::SEQUENCE {
+            // Extension ::= SEQUENCE { extnID OID, critical BOOLEAN OPT, extnValue OCTET STRING }
+            if let Some((oid, after)) = der::take(ext, der::OID) {
+                if der::oid_arcs(oid).as_deref() == Some(OID_SKI) {
+                    // skip an optional critical BOOLEAN, then take the OCTET STRING,
+                    // whose content is itself an OCTET STRING of the key id
+                    let value = match der::next(after)? {
+                        (0x01, _, t) => der::expect(t, der::OCTET_STRING)?, // critical present
+                        (der::OCTET_STRING, v, _) => v,
+                        _ => return None,
+                    };
+                    return der::expect(value, der::OCTET_STRING).map(<[u8]>::to_vec);
+                }
+            }
+        }
+        rest = tail;
+    }
+    None
 }
 
 /// The hash from a signatureAlgorithm OID (e.g. sha256WithRSAEncryption, ecdsa-with-SHA256).
