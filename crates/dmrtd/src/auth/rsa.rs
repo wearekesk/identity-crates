@@ -20,14 +20,24 @@ pub struct RsaPublicKey {
 impl RsaPublicKey {
     /// Parse a DER `RSAPublicKey ::= SEQUENCE { modulus INTEGER, publicExponent INTEGER }`
     /// — the payload of a SubjectPublicKeyInfo BIT STRING for `rsaEncryption`.
+    ///
+    /// Strict: exactly two positive, minimally-encoded INTEGERs and nothing after them,
+    /// and the exponent must be odd and ≥ 3. `e = 1` is the important one to reject —
+    /// with it `raw_public` is the identity, so any forged PKCS#1 block would "verify"
+    /// without a private key.
     pub fn from_pkcs1_der(der_bytes: &[u8]) -> Option<Self> {
         let seq = der::expect(der_bytes, der::SEQUENCE)?;
         let (n_bytes, rest) = der::take(seq, der::INTEGER)?;
-        let (e_bytes, _) = der::take(rest, der::INTEGER)?;
-        Some(Self {
-            n: BigUint::from_bytes_be(strip_leading_zero(n_bytes)),
-            e: BigUint::from_bytes_be(strip_leading_zero(e_bytes)),
-        })
+        let (e_bytes, tail) = der::take(rest, der::INTEGER)?;
+        if !tail.is_empty() {
+            return None; // no trailing fields
+        }
+        let n = parse_der_uint(n_bytes)?;
+        let e = parse_der_uint(e_bytes)?;
+        if e < BigUint::from(3u32) || (&e % 2u32).is_zero() {
+            return None; // exponent must be odd and at least 3
+        }
+        Some(Self { n, e })
     }
 
     /// Modulus size in bytes — the length every signature must have.
@@ -88,12 +98,20 @@ impl RsaPublicKey {
     }
 }
 
-/// DER INTEGERs are signed, so a positive value whose top bit is set carries a leading
-/// 0x00 that is not part of the number.
-fn strip_leading_zero(bytes: &[u8]) -> &[u8] {
+/// Parse a DER INTEGER's content as a positive, minimally-encoded unsigned integer.
+///
+/// DER INTEGERs are signed and minimal, so: no empty content; a top bit set means a
+/// negative value (rejected); and a leading `0x00` is legal *only* to keep a following
+/// high-bit byte positive — a `0x00` before a byte with the high bit clear is a
+/// non-minimal encoding and is rejected.
+fn parse_der_uint(bytes: &[u8]) -> Option<BigUint> {
     match bytes {
-        [0, rest @ ..] => rest,
-        b => b,
+        [] => None,                                // empty: not a valid INTEGER
+        [b0, ..] if *b0 & 0x80 != 0 => None,       // negative
+        [0x00] => None,                            // zero — never a valid RSA n or e
+        [0x00, b1, ..] if *b1 & 0x80 == 0 => None, // non-minimal leading zero
+        [0x00, rest @ ..] => Some(BigUint::from_bytes_be(rest)),
+        b => Some(BigUint::from_bytes_be(b)),
     }
 }
 
@@ -156,14 +174,32 @@ mod tests {
 
     #[test]
     fn parses_a_pkcs1_public_key() {
-        // SEQUENCE { INTEGER 0x00CA (leading zero), INTEGER 65537 }
+        // SEQUENCE { INTEGER 0x00CA (leading zero keeps it positive), INTEGER 65537 }
         let der_bytes = [
-            0x30, 0x0a, // SEQUENCE, 10 bytes
+            0x30, 0x09, // SEQUENCE, 9 bytes
             0x02, 0x02, 0x00, 0xca, // INTEGER 0x00CA -> 202
-            0x02, 0x04, 0x00, 0x01, 0x00, 0x01, // INTEGER 65537
+            0x02, 0x03, 0x01, 0x00, 0x01, // INTEGER 65537 (minimal)
         ];
         let k = RsaPublicKey::from_pkcs1_der(&der_bytes).unwrap();
         assert_eq!(k.n, BigUint::from(0xCAu32));
         assert_eq!(k.e, BigUint::from(65537u32));
+    }
+
+    #[test]
+    fn rejects_degenerate_and_malformed_keys() {
+        // e = 1 (the forgery vector)
+        let e_one = [0x30, 0x07, 0x02, 0x02, 0x00, 0xca, 0x02, 0x01, 0x01];
+        assert!(RsaPublicKey::from_pkcs1_der(&e_one).is_none());
+        // even exponent
+        let e_even = [0x30, 0x07, 0x02, 0x02, 0x00, 0xca, 0x02, 0x01, 0x04];
+        assert!(RsaPublicKey::from_pkcs1_der(&e_even).is_none());
+        // non-minimal modulus (leading 0x00 before a high-bit-clear byte)
+        let n_nonmin = [0x30, 0x07, 0x02, 0x02, 0x00, 0x7f, 0x02, 0x01, 0x03];
+        assert!(RsaPublicKey::from_pkcs1_der(&n_nonmin).is_none());
+        // trailing field after the exponent
+        let trailing = [
+            0x30, 0x0c, 0x02, 0x02, 0x00, 0xca, 0x02, 0x03, 0x01, 0x00, 0x01, 0x02, 0x01, 0x05,
+        ];
+        assert!(RsaPublicKey::from_pkcs1_der(&trailing).is_none());
     }
 }

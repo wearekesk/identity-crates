@@ -105,12 +105,10 @@ fn altering_the_committed_hash_in_the_sod_is_caught() {
     sod[at + 5] ^= 0xFF;
 
     let anchor = TrustAnchor::from_certificate(CSCA).unwrap();
-    // Either the DG1 check now mismatches, or the messageDigest binding breaks — but
-    // it can never come back authentic.
-    let authentic = passive::verify(&sod, &groups(), &[anchor])
-        .map(|r| r.is_authentic())
-        .unwrap_or(false);
-    assert!(!authentic);
+    // Altering the committed hash must make verification *fail* — not merely lose the
+    // chain. (unwrap_or(false) would also pass for Ok(Unverified), masking a regression
+    // that accepted the modified hash.)
+    assert!(passive::verify(&sod, &groups(), &[anchor]).is_err());
 }
 
 #[test]
