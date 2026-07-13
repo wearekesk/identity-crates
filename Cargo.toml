@@ -11,7 +11,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.2"
+version = "0.1.3"
 authors = ["Balamurali Pandranki <balamurali@live.com>"]
 edition = "2021"
 # 1.92 is required by the `xml-sec` dependency (Aadhaar XML-DSig verification);
@@ -69,6 +69,6 @@ zeroize = { version = "1.9", features = ["zeroize_derive"] }
 num-bigint = "0.4"
 num-traits = "0.2"
 rand = "0.10"
-p256 = { version = "=0.14.0-rc.14", features = ["arithmetic", "ecdh"] }
+p256 = { version = "0.14", features = ["arithmetic", "ecdh"] }
 p384 = { version = "0.13", features = ["ecdsa"] }
 elliptic-curve = { version = "0.14", features = ["arithmetic"] }
