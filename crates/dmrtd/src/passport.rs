@@ -49,6 +49,13 @@ impl PassportError {
             code: None,
         }
     }
+
+    fn from_message(message: String) -> Self {
+        Self {
+            message,
+            code: None,
+        }
+    }
 }
 
 impl From<MrtdApiError> for PassportError {
@@ -148,6 +155,20 @@ impl<T: Transceiver> Passport<T> {
     /// the chip's signature.
     pub fn active_authenticate(&mut self, challenge: &[u8]) -> Result<Vec<u8>, PassportError> {
         Ok(self.api.active_authenticate(challenge)?)
+    }
+
+    /// Active Authentication end to end: read EF.DG15, challenge the chip, and verify
+    /// its response against DG15's public key.
+    ///
+    /// `Ok(())` proves the chip holds the private key for DG15 — it is not a clone.
+    /// **This is not passive authentication**: it says nothing about whether the data
+    /// is genuine (see [`crate::auth::passive`]). Pass a fresh random `challenge` every
+    /// time; reusing one lets a recorded response be replayed.
+    pub fn verify_active_authentication(&mut self, challenge: &[u8]) -> Result<(), PassportError> {
+        let dg15 = self.read_ef_dg15()?;
+        let response = self.active_authenticate(challenge)?;
+        crate::auth::active::verify(dg15.aa_public_key(), challenge, &response)
+            .map_err(|e| PassportError::from_message(e.to_string()))
     }
 
     // -----------------------------------------------------------------------

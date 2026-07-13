@@ -8,6 +8,7 @@
 
 //! DMRTD — eMRTD (ICAO 9303) reader core.
 
+pub mod auth;
 pub mod com;
 pub mod crypto;
 pub mod extension;
