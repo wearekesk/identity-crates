@@ -42,7 +42,11 @@ image = { version = "0.25.8", default-features = false, features = ["png", "jpeg
 
 # compression / archives (aadhaar-offline-kyc)
 flate2 = "1"
-zip = "8"
+# Only the codecs the UIDAI offline e-KYC ZIP actually needs: AES (the archive is
+# encrypted with the share phrase) and deflate/stored. zip's default features also
+# pull in zstd, whose `zstd-sys` is a C library with no wasm32 target — that made the
+# crate unbuildable for wasm and forced a C toolchain on every other consumer.
+zip = { version = "8", default-features = false, features = ["aes-crypto", "deflate"] }
 
 # X.509 / XML-DSig (aadhaar-offline-kyc). NOTE: the xml-sec dependency and its
 # XML-DSig trust-boundary approach are intentionally left as-is.
