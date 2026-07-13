@@ -17,7 +17,10 @@ const SHARE_PHRASE: &str = "Share@1234";
 #[test]
 fn decrypts_legacy_zipcrypto_pack() {
     let xml = decrypt_offline_zip(ZIPCRYPTO_PACK, SHARE_PHRASE).expect("ZipCrypto pack decrypts");
-    assert!(xml.contains("OfflinePaperlessKyc"), "unexpected payload: {xml}");
+    assert!(
+        xml.contains("OfflinePaperlessKyc"),
+        "unexpected payload: {xml}"
+    );
     assert!(xml.contains("Test User"));
 }
 
