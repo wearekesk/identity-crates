@@ -411,15 +411,18 @@ fn parse_sig_alg(alg: &[u8]) -> Result<(SigScheme, Option<HashAlgo>), PassiveAut
     let arcs = der::oid_arcs(oid).ok_or(PassiveAuthError::MalformedSod)?;
 
     // plain rsaEncryption (1.2.840.113549.1.1.1) names no hash; sha*WithRSAEncryption
-    // and ecdsa-with-SHA* do.
+    // and ecdsa-with-SHA* do. For any *other* prefixed OID the hash must be recognised
+    // — propagate the error rather than dropping to an unpinned hash, so an algorithm
+    // we don't honour (e.g. RSA-PSS, which is not PKCS#1 v1.5) can't be verified with
+    // the wrong scheme.
     if arcs == OID_RSA {
         return Ok((SigScheme::Rsa, None));
     }
     if arcs.starts_with(OID_RSA_SIG_PREFIX) {
-        return Ok((SigScheme::Rsa, sig_alg_hash(alg).ok()));
+        return Ok((SigScheme::Rsa, Some(sig_alg_hash(alg)?)));
     }
     if arcs.starts_with(OID_ECDSA_SIG_PREFIX) {
-        return Ok((SigScheme::Ecdsa, sig_alg_hash(alg).ok()));
+        return Ok((SigScheme::Ecdsa, Some(sig_alg_hash(alg)?)));
     }
     Err(PassiveAuthError::UnsupportedHash)
 }
@@ -859,6 +862,36 @@ mod tests {
         let mut alg = vec![der::OID, ec384.len() as u8];
         alg.extend_from_slice(&ec384);
         assert_eq!(sig_alg_hash(&alg).unwrap(), HashAlgo::Sha384);
+    }
+
+    /// The *contents* of an AlgorithmIdentifier (its OID TLV) — what `parse_sig_alg`
+    /// and `sig_alg_hash` take, not the enclosing SEQUENCE.
+    fn alg_id(oid: &[u8]) -> Vec<u8> {
+        let mut inner = vec![der::OID, oid.len() as u8];
+        inner.extend_from_slice(oid);
+        inner
+    }
+
+    #[test]
+    fn signature_algorithm_parsing_binds_scheme_and_hash() {
+        // bare rsaEncryption: RSA, no pinned hash
+        let rsa = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+        assert_eq!(
+            parse_sig_alg(&alg_id(&rsa)).unwrap(),
+            (SigScheme::Rsa, None)
+        );
+
+        // sha256WithRSAEncryption: RSA, SHA-256 pinned
+        let rsa256 = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0b];
+        assert_eq!(
+            parse_sig_alg(&alg_id(&rsa256)).unwrap(),
+            (SigScheme::Rsa, Some(HashAlgo::Sha256))
+        );
+
+        // RSASSA-PSS (…1.1.10) shares the RSA prefix but is NOT PKCS#1 v1.5 — must be
+        // rejected, not silently verified with the wrong scheme.
+        let pss = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a];
+        assert!(parse_sig_alg(&alg_id(&pss)).is_err());
     }
 
     #[test]

@@ -74,7 +74,15 @@ pub fn oid_arcs(contents: &[u8]) -> Option<Vec<u64>> {
     let mut subids = Vec::new();
     let mut value: u64 = 0;
     let mut pending = false;
+    let mut fresh = true; // are we on the first byte of a subidentifier?
     for &b in contents {
+        // A subidentifier that opens with 0x80 has a zero high group — a leading-zero
+        // base-128 encoding, which DER forbids. Reject it so a BER OID can't slip past
+        // this strict reader.
+        if fresh && b == 0x80 {
+            return None;
+        }
+        fresh = b & 0x80 == 0;
         value = value.checked_mul(128)?.checked_add((b & 0x7f) as u64)?;
         if b & 0x80 == 0 {
             subids.push(value);
@@ -182,6 +190,17 @@ mod tests {
         // bytes (0x81 0x34). The old single-byte `first / 40` couldn't represent it.
         let oid = [0x81, 0x34, 0x03];
         assert_eq!(oid_arcs(&oid).unwrap(), vec![2, 100, 3]);
+    }
+
+    #[test]
+    fn non_minimal_base128_oid_subidentifiers_are_rejected() {
+        // a subidentifier opening with 0x80 has a leading-zero high group — non-minimal
+        // BER; a strict-DER reader must reject it. (0x80 0x01 is a padded encoding of 1.)
+        assert!(oid_arcs(&[0x80, 0x01]).is_none());
+        // padding a later subidentifier is equally invalid: 2.5.<0x80 0x03>
+        assert!(oid_arcs(&[0x55, 0x80, 0x03]).is_none());
+        // the minimal form of the same OID is fine
+        assert_eq!(oid_arcs(&[0x55, 0x03]).unwrap(), vec![2, 5, 3]);
     }
 
     #[test]
