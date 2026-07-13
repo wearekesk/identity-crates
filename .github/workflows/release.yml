@@ -126,3 +126,99 @@ jobs:
             cargo publish -p "${c}" --locked
             echo "::endgroup::"
           done
+
+  # ---------------------------------------------------------------------------
+  # Flutter FFI: cross-compile dmrtd for the mobile targets a Dart `dart:ffi`
+  # binding loads — iOS static libs bundled as an XCFramework, Android shared
+  # libs laid out per-ABI under jniLibs. Runs whenever dmrtd is in scope, on both
+  # dry runs and real publishes (it produces build artifacts, not a crates.io
+  # upload, so it holds no id-token and needs no branch gating).
+  #
+  # NB: dmrtd has no `extern "C"` surface yet, so these libraries currently expose
+  # the crate compiled for each target but no C-callable API. This job proves the
+  # crate cross-compiles to every mobile ABI and produces the artifacts; the C ABI
+  # / uniffi layer Flutter calls through is a separate change.
+  ffi-ios:
+    name: flutter-ffi (iOS)
+    if: ${{ inputs.crate == 'dmrtd' || inputs.crate == 'all' }}
+    runs-on: macos-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable + iOS targets)
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Build static libs (device + simulator)
+        run: |
+          set -euo pipefail
+          # iOS FFI links a static archive, so build only the staticlib — this skips
+          # the pointless cdylib (.dylib) and its dynamic-link step.
+          for t in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
+            echo "::group::cargo rustc --target ${t} --crate-type staticlib"
+            cargo rustc -p dmrtd --release --locked --target "${t}" --crate-type staticlib
+            echo "::endgroup::"
+          done
+      - name: Assemble XCFramework
+        run: |
+          set -euo pipefail
+          # The two simulator slices (Apple-silicon + Intel) share one platform, so
+          # they must be a single fat library; the device slice stays on its own.
+          lipo -create \
+            target/aarch64-apple-ios-sim/release/libdmrtd.a \
+            target/x86_64-apple-ios/release/libdmrtd.a \
+            -output libdmrtd-sim.a
+          rm -rf dmrtd.xcframework
+          xcodebuild -create-xcframework \
+            -library target/aarch64-apple-ios/release/libdmrtd.a \
+            -library libdmrtd-sim.a \
+            -output dmrtd.xcframework
+      - name: Upload XCFramework
+        # TODO: pin to a commit SHA to match this repo's action-pinning convention.
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmrtd-ios-xcframework
+          path: dmrtd.xcframework
+          if-no-files-found: error
+
+  ffi-android:
+    name: flutter-ffi (Android)
+    if: ${{ inputs.crate == 'dmrtd' || inputs.crate == 'all' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable + Android targets)
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+      - name: Build shared libs (all ABIs)
+        # The Android NDK is preinstalled on the runner; cargo-ndk finds it via
+        # ANDROID_NDK_HOME and lays the .so files out in the jniLibs ABI folders.
+        run: |
+          set -euo pipefail
+          cargo ndk \
+            -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 \
+            -o ./jniLibs \
+            build -p dmrtd --release --locked
+      - name: Upload jniLibs
+        # TODO: pin to a commit SHA to match this repo's action-pinning convention.
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmrtd-android-jnilibs
+          path: jniLibs
+          if-no-files-found: error

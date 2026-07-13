@@ -13,6 +13,13 @@ readme = "README.md"
 keywords = ["emrtd", "icao9303", "passport", "mrz", "nfc"]
 categories = ["cryptography", "parser-implementations"]
 
+[lib]
+# `lib` (rlib) keeps the crate usable as a normal Rust dependency; `staticlib`
+# (iOS `.a`) and `cdylib` (Android `.so`) let the release workflow cross-compile it
+# for Flutter FFI. These extra artifacts are only emitted when something links them
+# — a plain host `cargo build` still just produces the rlib.
+crate-type = ["lib", "staticlib", "cdylib"]
+
 [dependencies]
 # encoding / ASN.1 / time
 asn1.workspace = true
