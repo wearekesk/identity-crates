@@ -17,12 +17,12 @@ Android (Dart FFI), a desktop reader, or tests alike.
 | Keys (`DBAKey`, `CanKey`, `AccessKey` trait) | ✅ |
 | SM ciphers (3DES, AES) + `MrtdSM` wrapper | ✅ |
 | BAC — pure helpers, session keys, `BacSession` state machine | ✅ |
-| PACE — helpers, `PaceSession` state machine (ECDH-GM on NIST P-256) | ✅ |
+| PACE — helpers, `PaceSession` state machine (ECDH-GM on NIST & Brainpool) | ✅ |
 | DH-PACE (RFC 5114 groups) | ✅ |
-| ECDH-PACE (NIST P-256 via `p256`) | ✅ |
+| ECDH-PACE (NIST P-224/256/384/521 & Brainpool P-256/384) | ✅ |
 | `MrtdApi` (sync ICC orchestrator) + `Transceiver` trait | ✅ |
 | `Passport` — high-level BAC/PACE + file-read API | ✅ |
-| Additional PACE curves (Brainpool etc.) | ⏳ pending |
+| Additional PACE curves (Brainpool, NIST P-224/384/521) | ✅ |
 
 Reference vectors verified include ICAO 9303 Appendix A check digits + EF.COM +
 EF.DG1 TD1 sample, Appendix D.2 `K_seed`, Appendix D.3 BAC SSC + session keys

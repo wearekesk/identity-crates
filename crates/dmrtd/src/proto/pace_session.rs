@@ -30,9 +30,7 @@
 //!
 //! [`BacSession`]: crate::proto::bac_session::BacSession
 
-use elliptic_curve::sec1::ToSec1Point;
 use num_bigint::BigUint;
-use p256::ProjectivePoint;
 use thiserror::Error;
 
 use crate::crypto::crypto_utils::constant_time_eq;
@@ -42,7 +40,8 @@ use crate::lds::asn1_object_identifiers::{
 use crate::proto::access_key::AccessKey;
 use crate::proto::aes_smcipher::AesSmCipher;
 use crate::proto::dh_pace::{self, DHPace, DHPaceError};
-use crate::proto::ecdh_pace::{ECDHPace, ECDHPaceError, NIST_P256_ID};
+use crate::proto::domain_parameter;
+use crate::proto::ecdh_pace::{ECDHPace, ECDHPaceError};
 use crate::proto::iso7816::command_apdu::CommandApdu;
 use crate::proto::iso7816::iso7816::{cla, ins};
 use crate::proto::iso7816::response_apdu::{ResponseApdu, StatusWord};
@@ -70,7 +69,7 @@ pub enum PaceSessionError {
     UnsupportedMapping(MappingType),
     #[error("PACE session: only AES cipher is supported (got {0:?})")]
     UnsupportedCipher(CipherAlgorithm),
-    #[error("PACE session: only NIST P-256 (id 12) is supported (got id {0})")]
+    #[error("PACE session: unsupported curve/parameter id (got id {0})")]
     UnsupportedCurve(u32),
     #[error("PACE session has no outstanding APDU to consume")]
     NoOutstandingApdu,
@@ -144,9 +143,7 @@ impl PaceEngine {
     ) -> Result<(), PaceSessionError> {
         match self {
             PaceEngine::Ecdh(e) => {
-                let icc_pk = ECDHPace::transform_public(icc_mapping_pub)?;
-                let g_prime = e.get_mapped_generator(&icc_pk, nonce)?;
-                e.generate_ephemeral_with_custom_generator(g_prime, seed)?;
+                e.map_and_generate_ephemeral(icc_mapping_pub, nonce, seed)?;
             }
             PaceEngine::Dh(e) => {
                 let g_prime =
@@ -168,9 +165,8 @@ impl PaceEngine {
     ) -> Result<Vec<u8>, PaceSessionError> {
         match self {
             PaceEngine::Ecdh(e) => {
-                let icc_eph_pk = ECDHPace::transform_public(icc_ephemeral_pub)?;
-                let shared = e.get_ephemeral_shared_secret(&icc_eph_pk)?;
-                ecdh_shared_secret_x_bytes(shared)
+                let seed_bytes = e.get_ephemeral_shared_seed(icc_ephemeral_pub)?;
+                Ok(seed_bytes)
             }
             PaceEngine::Dh(e) => {
                 let shared =
@@ -289,7 +285,12 @@ impl<K: AccessKey> PaceSession<K> {
         if protocol.mapping_type != MappingType::Gm {
             return Err(PaceSessionError::UnsupportedMapping(protocol.mapping_type));
         }
-        if parameter_id != NIST_P256_ID {
+        let supported = domain_parameter::get(parameter_id)
+            .map(|entry| {
+                entry.is_supported && entry.kind == domain_parameter::DomainParameterType::Ecp
+            })
+            .unwrap_or(false);
+        if !supported {
             return Err(PaceSessionError::UnsupportedCurve(parameter_id));
         }
         Ok(Self {
@@ -565,12 +566,6 @@ impl<K: AccessKey> PaceSession<K> {
     }
 }
 
-fn ecdh_shared_secret_x_bytes(shared: ProjectivePoint) -> Result<Vec<u8>, PaceSessionError> {
-    let encoded = shared.to_affine().to_sec1_point(false);
-    let x = encoded.x().ok_or(PaceSessionError::MissingSharedSecretX)?;
-    Ok(x.to_vec())
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -587,6 +582,7 @@ mod tests {
     use crate::crypto::aes::{AesCipher, BlockCipherMode, AES_BLOCK_SIZE};
     use crate::lds::tlv::Tlv;
     use crate::proto::can_key::CanKey;
+    use crate::proto::ecdh_pace::NIST_P256_ID;
 
     fn ecdh_gm_aes128_oid() -> OiePaceProtocol {
         OiePaceProtocol::new(
@@ -679,11 +675,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_p256_curve() {
+    fn rejects_unsupported_curve() {
         let can = CanKey::new("123456").unwrap();
-        match PaceSession::new_ecdh(can, ecdh_gm_aes128_oid(), 13) {
-            Err(PaceSessionError::UnsupportedCurve(13)) => {}
-            _ => panic!("expected UnsupportedCurve(13)"),
+        match PaceSession::new_ecdh(can, ecdh_gm_aes128_oid(), 8) {
+            Err(PaceSessionError::UnsupportedCurve(8)) => {}
+            _ => panic!("expected UnsupportedCurve(8)"),
         }
     }
 
@@ -791,11 +787,7 @@ mod tests {
         // Chip also computes the mapped generator, then its own ephemeral.
         let terminal_mapping_pk =
             icc_mapping_pub_from_session(&session).expect("terminal's main pubkey after step 2");
-        let terminal_mapping_ec = ECDHPace::transform_public(&terminal_mapping_pk).unwrap();
-        let g_prime = icc
-            .get_mapped_generator(&terminal_mapping_ec, &nonce)
-            .unwrap();
-        icc.generate_ephemeral_with_custom_generator(g_prime, Some(&seed_icc_eph))
+        icc.map_and_generate_ephemeral(&terminal_mapping_pk, &nonce, Some(&seed_icc_eph))
             .unwrap();
         let icc_eph_pub = icc.get_pub_key_ephemeral().unwrap();
         let mut step3_body = vec![0x04];
@@ -813,9 +805,7 @@ mod tests {
         // ICC computes its own token over the *terminal's* ephemeral public.
         let terminal_eph_pub = terminal_ephemeral_pub_from_session(&session)
             .expect("terminal ephemeral public after step 3");
-        let terminal_eph_ec = ECDHPace::transform_public(&terminal_eph_pub).unwrap();
-        let icc_shared = icc.get_ephemeral_shared_secret(&terminal_eph_ec).unwrap();
-        let seed_bytes = ecdh_shared_secret_x_bytes(icc_shared).unwrap();
+        let seed_bytes = icc.get_ephemeral_shared_seed(&terminal_eph_pub).unwrap();
         let icc_k_mac = pace::calculate_mac_key(&protocol, &seed_bytes).unwrap();
         let icc_auth_input = pace::generate_encoding_input_data(&protocol, &terminal_eph_pub);
         let icc_token = pace::calculate_auth_token(&protocol, &icc_auth_input, &icc_k_mac).unwrap();

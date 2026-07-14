@@ -100,7 +100,7 @@ pub static ICAO_DOMAIN_PARAMETERS: Lazy<HashMap<u32, DomainParameter>> = Lazy::n
             name: "NIST P-224 (secp224r1)",
             size: 224,
             kind: DomainParameterType::Ecp,
-            is_supported: false,
+            is_supported: true,
         },
         DomainParameter {
             id: 11,
@@ -121,7 +121,7 @@ pub static ICAO_DOMAIN_PARAMETERS: Lazy<HashMap<u32, DomainParameter>> = Lazy::n
             name: "BrainpoolP256r1",
             size: 256,
             kind: DomainParameterType::Ecp,
-            is_supported: false,
+            is_supported: true,
         },
         DomainParameter {
             id: 14,
@@ -135,14 +135,14 @@ pub static ICAO_DOMAIN_PARAMETERS: Lazy<HashMap<u32, DomainParameter>> = Lazy::n
             name: "NIST P-384 (secp384r1)",
             size: 384,
             kind: DomainParameterType::Ecp,
-            is_supported: false,
+            is_supported: true,
         },
         DomainParameter {
             id: 16,
             name: "BrainpoolP384r1",
             size: 384,
             kind: DomainParameterType::Ecp,
-            is_supported: false,
+            is_supported: true,
         },
         DomainParameter {
             id: 17,
@@ -156,7 +156,7 @@ pub static ICAO_DOMAIN_PARAMETERS: Lazy<HashMap<u32, DomainParameter>> = Lazy::n
             name: "NIST P-521 (secp521r1)",
             size: 521,
             kind: DomainParameterType::Ecp,
-            is_supported: false,
+            is_supported: true,
         },
     ];
     entries.into_iter().map(|p| (p.id, p)).collect()
@@ -176,15 +176,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_entries_are_p256_and_rfc5114_dh_groups() {
+    fn supported_entries_include_brainpool_and_nist_curves() {
         let mut supported: Vec<u32> = ICAO_DOMAIN_PARAMETERS
             .values()
             .filter(|p| p.is_supported)
             .map(|p| p.id)
             .collect();
         supported.sort_unstable();
-        // P-256 (12, ECDH) + RFC 5114 MODP/DH groups (0/1/2).
-        assert_eq!(supported, vec![0, 1, 2, 12]);
+        // P-256 (12, ECDH) + RFC 5114 MODP/DH groups (0/1/2) + Brainpool + NIST P-224/384/521.
+        assert_eq!(supported, vec![0, 1, 2, 10, 12, 13, 15, 16, 18]);
     }
 
     #[test]

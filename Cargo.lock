@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aadhaar-offline-kyc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "chrono",
@@ -23,7 +23,7 @@ dependencies = [
 
 [[package]]
 name = "aamva"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "image",
@@ -343,6 +343,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "710f1dd022ef4e93f8a438b4ba958de7f64308434fa6a87104481645cc30068b"
 dependencies = [
  "hybrid-array",
+]
+
+[[package]]
+name = "bp256"
+version = "0.14.0-rc.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5c715b9f158d362cc00afc7a3ea6c33da4b018293ff3227402886325c22f947"
+dependencies = [
+ "ecdsa 0.17.0",
+ "elliptic-curve 0.14.1",
+ "primefield",
+ "primeorder 0.14.0",
+]
+
+[[package]]
+name = "bp384"
+version = "0.14.0-rc.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dad8bed63122ad85f81781099e541e81985e4ff6814a6c6e6bb5ddac481f443f"
+dependencies = [
+ "ecdsa 0.17.0",
+ "elliptic-curve 0.14.1",
+ "primefield",
+ "primeorder 0.14.0",
 ]
 
 [[package]]
@@ -744,11 +768,13 @@ dependencies = [
 
 [[package]]
 name = "dmrtd"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aes",
  "asn1",
  "base64",
+ "bp256",
+ "bp384",
  "cbc",
  "chrono",
  "cipher",
@@ -761,7 +787,10 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "once_cell",
+ "p224",
  "p256 0.14.0",
+ "p384",
+ "p521",
  "rand 0.10.1",
  "sha1 0.11.0",
  "sha2 0.11.0",
@@ -1288,7 +1317,7 @@ checksum = "89194689a993ab15268672e99e7b0e19da2da3268ac682e8f02d29d4d1434cd7"
 
 [[package]]
 name = "incometax-pan-qr"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64",
  "flate2",
@@ -1481,7 +1510,7 @@ dependencies = [
 
 [[package]]
 name = "mrz-parser"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "once_cell",
@@ -1682,6 +1711,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
  "ttf-parser",
+]
+
+[[package]]
+name = "p224"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30c06436d66652bc2f01ade021592c80a2aad401570a18aa18b82e440d2b9aa1"
+dependencies = [
+ "ecdsa 0.16.9",
+ "elliptic-curve 0.13.8",
+ "primeorder 0.13.6",
+ "sha2 0.10.9",
 ]
 
 [[package]]
