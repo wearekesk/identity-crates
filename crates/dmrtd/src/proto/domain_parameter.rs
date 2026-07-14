@@ -176,7 +176,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn supported_entries_are_p256_and_rfc5114_dh_groups() {
+    fn supported_entries_include_brainpool_and_nist_curves() {
         let mut supported: Vec<u32> = ICAO_DOMAIN_PARAMETERS
             .values()
             .filter(|p| p.is_supported)

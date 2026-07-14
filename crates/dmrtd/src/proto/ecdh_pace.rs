@@ -77,15 +77,14 @@ macro_rules! impl_curve_ops {
                 let val = BigUint::from_bytes_be(bytes);
                 let reduced = val % &n;
                 let r_bytes = reduced.to_bytes_be();
-                let mut buf = vec![0u8; $coord_len];
-                if r_bytes.len() <= $coord_len {
-                    buf[$coord_len - r_bytes.len()..].copy_from_slice(&r_bytes);
-                } else {
-                    buf.copy_from_slice(&r_bytes[r_bytes.len() - $coord_len..]);
-                }
                 let mut field_bytes =
                     <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
-                field_bytes.copy_from_slice(buf.as_slice());
+                let len = field_bytes.len();
+                if r_bytes.len() <= len {
+                    field_bytes[len - r_bytes.len()..].copy_from_slice(&r_bytes);
+                } else {
+                    field_bytes.copy_from_slice(&r_bytes[r_bytes.len() - len..]);
+                }
                 <$scalar as $curve_crate::elliptic_curve::ff::PrimeField>::from_repr(field_bytes)
                     .unwrap()
             }
@@ -100,9 +99,10 @@ macro_rules! impl_curve_ops {
                         let mut seed_arr = [0u8; 32];
                         seed_arr.copy_from_slice(s);
                         let mut rng = StdRng::from_seed(seed_arr);
+                        let mut bytes =
+                            <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
                         loop {
-                            let mut bytes = vec![0u8; $coord_len];
-                            rng.fill_bytes(&mut bytes);
+                            rng.fill_bytes(&mut bytes[..]);
                             if let Ok(sk) = <$secret_key>::from_slice(&bytes) {
                                 break sk;
                             }
@@ -152,9 +152,10 @@ macro_rules! impl_curve_ops {
                         let mut seed_arr = [0u8; 32];
                         seed_arr.copy_from_slice(s);
                         let mut rng = StdRng::from_seed(seed_arr);
+                        let mut bytes =
+                            <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
                         loop {
-                            let mut bytes = vec![0u8; $coord_len];
-                            rng.fill_bytes(&mut bytes);
+                            rng.fill_bytes(&mut bytes[..]);
                             if let Ok(sk) = <$secret_key>::from_slice(&bytes) {
                                 break *sk.to_nonzero_scalar();
                             }
@@ -249,8 +250,10 @@ macro_rules! impl_curve_ops {
             ) -> Result<$curve_crate::elliptic_curve::PublicKey<$curve_type>, ECDHPaceError> {
                 match pub_key {
                     PublicKeyPace::Ecdh { x, y, .. } => {
-                        let mut x_bytes = vec![0u8; $coord_len];
-                        let mut y_bytes = vec![0u8; $coord_len];
+                        let mut x_bytes =
+                            <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
+                        let mut y_bytes =
+                            <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
                         let x_be = x.to_bytes_be();
                         let y_be = y.to_bytes_be();
                         if x_be.len() > $coord_len || y_be.len() > $coord_len {
@@ -259,7 +262,8 @@ macro_rules! impl_curve_ops {
                         x_bytes[$coord_len - x_be.len()..].copy_from_slice(&x_be);
                         y_bytes[$coord_len - y_be.len()..].copy_from_slice(&y_be);
 
-                        let mut bytes = vec![0x04];
+                        let mut bytes = Vec::with_capacity(1 + 2 * $coord_len);
+                        bytes.push(0x04);
                         bytes.extend_from_slice(&x_bytes);
                         bytes.extend_from_slice(&y_bytes);
                         <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_sec1_bytes(
@@ -303,15 +307,14 @@ macro_rules! impl_curve_ops {
                 let val = BigUint::from_bytes_be(bytes);
                 let reduced = val % &n;
                 let r_bytes = reduced.to_bytes_be();
-                let mut buf = vec![0u8; $coord_len];
-                if r_bytes.len() <= $coord_len {
-                    buf[$coord_len - r_bytes.len()..].copy_from_slice(&r_bytes);
-                } else {
-                    buf.copy_from_slice(&r_bytes[r_bytes.len() - $coord_len..]);
-                }
                 let mut field_bytes =
                     <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
-                field_bytes.copy_from_slice(buf.as_slice());
+                let len = field_bytes.len();
+                if r_bytes.len() <= len {
+                    field_bytes[len - r_bytes.len()..].copy_from_slice(&r_bytes);
+                } else {
+                    field_bytes.copy_from_slice(&r_bytes[r_bytes.len() - len..]);
+                }
                 <$scalar as $curve_crate::elliptic_curve::ff::PrimeField>::from_repr(field_bytes)
                     .unwrap()
             }
@@ -358,9 +361,10 @@ macro_rules! impl_curve_ops {
                         let mut seed_arr = [0u8; 32];
                         seed_arr.copy_from_slice(s);
                         let mut rng = StdRng::from_seed(seed_arr);
+                        let mut bytes =
+                            <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
                         loop {
-                            let mut bytes = vec![0u8; $coord_len];
-                            rng.fill_bytes(&mut bytes);
+                            rng.fill_bytes(&mut bytes[..]);
                             if let Ok(sk) = <$secret_key>::from_slice(&bytes) {
                                 break sk;
                             }
@@ -440,9 +444,10 @@ macro_rules! impl_curve_ops {
                         let mut seed_arr = [0u8; 32];
                         seed_arr.copy_from_slice(s);
                         let mut rng = StdRng::from_seed(seed_arr);
+                        let mut bytes =
+                            <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
                         loop {
-                            let mut bytes = vec![0u8; $coord_len];
-                            rng.fill_bytes(&mut bytes);
+                            rng.fill_bytes(&mut bytes[..]);
                             if let Ok(sk) = <$secret_key>::from_slice(&bytes) {
                                 break *sk.to_nonzero_scalar();
                             }
@@ -537,8 +542,10 @@ macro_rules! impl_curve_ops {
             ) -> Result<$curve_crate::elliptic_curve::PublicKey<$curve_type>, ECDHPaceError> {
                 match pub_key {
                     PublicKeyPace::Ecdh { x, y, .. } => {
-                        let mut x_bytes = vec![0u8; $coord_len];
-                        let mut y_bytes = vec![0u8; $coord_len];
+                        let mut x_bytes =
+                            <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
+                        let mut y_bytes =
+                            <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
                         let x_be = x.to_bytes_be();
                         let y_be = y.to_bytes_be();
                         if x_be.len() > $coord_len || y_be.len() > $coord_len {
@@ -547,7 +554,8 @@ macro_rules! impl_curve_ops {
                         x_bytes[$coord_len - x_be.len()..].copy_from_slice(&x_be);
                         y_bytes[$coord_len - y_be.len()..].copy_from_slice(&y_be);
 
-                        let mut bytes = vec![0x04];
+                        let mut bytes = Vec::with_capacity(1 + 2 * $coord_len);
+                        bytes.push(0x04);
                         bytes.extend_from_slice(&x_bytes);
                         bytes.extend_from_slice(&y_bytes);
                         <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_sec1_bytes(
