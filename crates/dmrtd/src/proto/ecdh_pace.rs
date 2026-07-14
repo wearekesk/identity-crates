@@ -9,6 +9,7 @@
 //! public key.
 
 use num_bigint::BigUint;
+use p256::elliptic_curve::Generate;
 use rand::rand_core::UnwrapErr;
 use rand::{rngs::StdRng, rngs::SysRng, Rng, SeedableRng};
 use thiserror::Error;
@@ -17,6 +18,7 @@ use crate::proto::domain_parameter;
 use crate::proto::public_key_pace::PublicKeyPace;
 
 /// ICAO domain-parameter id for NIST P-256.
+#[allow(dead_code)]
 pub const NIST_P256_ID: u32 = 12;
 
 /// Error returned by [`ECDHPace`] operations.
@@ -77,8 +79,9 @@ macro_rules! impl_curve_ops {
                 } else {
                     buf.copy_from_slice(&r_bytes[r_bytes.len() - $coord_len..]);
                 }
-                let field_bytes =
-                    *<$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::from_slice(&buf);
+                let mut field_bytes =
+                    <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
+                field_bytes.copy_from_slice(buf.as_slice());
                 <$scalar as $curve_crate::elliptic_curve::ff::PrimeField>::from_repr(field_bytes)
                     .unwrap()
             }
@@ -88,10 +91,7 @@ macro_rules! impl_curve_ops {
                 seed32: Option<&[u8]>,
             ) -> Result<(), ECDHPaceError> {
                 let sk = match seed32 {
-                    None => {
-                        let mut rng = UnwrapErr(SysRng);
-                        <$secret_key>::random(&mut rng)
-                    }
+                    None => <$secret_key>::generate(),
                     Some(s) if s.len() == 32 => {
                         let mut seed_arr = [0u8; 32];
                         seed_arr.copy_from_slice(s);
@@ -141,8 +141,7 @@ macro_rules! impl_curve_ops {
                 // Sample ephemeral scalar
                 let scalar = match seed32 {
                     None => {
-                        let mut rng = UnwrapErr(SysRng);
-                        let sk = <$secret_key>::random(&mut rng);
+                        let sk = <$secret_key>::generate();
                         self.scalar_from_bytes(&sk.to_bytes())
                     }
                     Some(s) if s.len() == 32 => {
@@ -302,8 +301,9 @@ macro_rules! impl_curve_ops {
                 } else {
                     buf.copy_from_slice(&r_bytes[r_bytes.len() - $coord_len..]);
                 }
-                let field_bytes =
-                    *<$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::from_slice(&buf);
+                let mut field_bytes =
+                    <$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::default();
+                field_bytes.copy_from_slice(buf.as_slice());
                 <$scalar as $curve_crate::elliptic_curve::ff::PrimeField>::from_repr(field_bytes)
                     .unwrap()
             }
