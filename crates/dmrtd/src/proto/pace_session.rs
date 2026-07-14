@@ -286,7 +286,9 @@ impl<K: AccessKey> PaceSession<K> {
             return Err(PaceSessionError::UnsupportedMapping(protocol.mapping_type));
         }
         let supported = domain_parameter::get(parameter_id)
-            .map(|entry| entry.is_supported && entry.kind == domain_parameter::DomainParameterType::Ecp)
+            .map(|entry| {
+                entry.is_supported && entry.kind == domain_parameter::DomainParameterType::Ecp
+            })
             .unwrap_or(false);
         if !supported {
             return Err(PaceSessionError::UnsupportedCurve(parameter_id));

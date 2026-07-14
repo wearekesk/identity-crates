@@ -77,11 +77,16 @@ macro_rules! impl_curve_ops {
                 } else {
                     buf.copy_from_slice(&r_bytes[r_bytes.len() - $coord_len..]);
                 }
-                let field_bytes = *<$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::from_slice(&buf);
-                <$scalar as $curve_crate::elliptic_curve::ff::PrimeField>::from_repr(field_bytes).unwrap()
+                let field_bytes =
+                    *<$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::from_slice(&buf);
+                <$scalar as $curve_crate::elliptic_curve::ff::PrimeField>::from_repr(field_bytes)
+                    .unwrap()
             }
 
-            pub fn generate_key_pair(&mut self, seed32: Option<&[u8]>) -> Result<(), ECDHPaceError> {
+            pub fn generate_key_pair(
+                &mut self,
+                seed32: Option<&[u8]>,
+            ) -> Result<(), ECDHPaceError> {
                 let sk = match seed32 {
                     None => {
                         let mut rng = UnwrapErr(SysRng);
@@ -173,7 +178,7 @@ macro_rules! impl_curve_ops {
                     .ephemeral_priv
                     .as_ref()
                     .ok_or(ECDHPaceError::NoEphemeralPublicKey)?;
-                
+
                 let other_point = other.to_projective();
                 if bool::from(other_point.is_identity()) {
                     return Err(ECDHPaceError::InfinityPoint);
@@ -184,8 +189,9 @@ macro_rules! impl_curve_ops {
                 }
 
                 let pk = <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_affine(
-                    shared.to_affine()
-                ).map_err(|_| ECDHPaceError::InfinityAgreement)?;
+                    shared.to_affine(),
+                )
+                .map_err(|_| ECDHPaceError::InfinityAgreement)?;
                 let sec1_bytes = pk.to_sec1_bytes();
                 if sec1_bytes.len() != 1 + 2 * $coord_len || sec1_bytes[0] != 0x04 {
                     return Err(ECDHPaceError::InvalidEncoding);
@@ -213,9 +219,14 @@ macro_rules! impl_curve_ops {
                 Ok(shared)
             }
 
-            fn point_to_pubkey_pace(&self, point: $projective) -> Result<PublicKeyPace, ECDHPaceError> {
+            fn point_to_pubkey_pace(
+                &self,
+                point: $projective,
+            ) -> Result<PublicKeyPace, ECDHPaceError> {
                 let affine = point.to_affine();
-                let pk = <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_affine(affine).map_err(|_| ECDHPaceError::InfinityPoint)?;
+                let pk =
+                    <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_affine(affine)
+                        .map_err(|_| ECDHPaceError::InfinityPoint)?;
                 let sec1_bytes = pk.to_sec1_bytes();
                 if sec1_bytes.len() != 1 + 2 * $coord_len || sec1_bytes[0] != 0x04 {
                     return Err(ECDHPaceError::InvalidEncoding);
@@ -229,7 +240,10 @@ macro_rules! impl_curve_ops {
                 )?)
             }
 
-            fn transform_public(&self, pub_key: &PublicKeyPace) -> Result<$curve_crate::elliptic_curve::PublicKey<$curve_type>, ECDHPaceError> {
+            fn transform_public(
+                &self,
+                pub_key: &PublicKeyPace,
+            ) -> Result<$curve_crate::elliptic_curve::PublicKey<$curve_type>, ECDHPaceError> {
                 match pub_key {
                     PublicKeyPace::Ecdh { x, y, .. } => {
                         let mut x_bytes = vec![0u8; $coord_len];
@@ -245,7 +259,10 @@ macro_rules! impl_curve_ops {
                         let mut bytes = vec![0x04];
                         bytes.extend_from_slice(&x_bytes);
                         bytes.extend_from_slice(&y_bytes);
-                        <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_sec1_bytes(&bytes).map_err(|_| ECDHPaceError::InvalidEncoding)
+                        <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_sec1_bytes(
+                            &bytes,
+                        )
+                        .map_err(|_| ECDHPaceError::InvalidEncoding)
                     }
                     _ => Err(ECDHPaceError::InvalidEncoding),
                 }
@@ -285,14 +302,21 @@ macro_rules! impl_curve_ops {
                 } else {
                     buf.copy_from_slice(&r_bytes[r_bytes.len() - $coord_len..]);
                 }
-                let field_bytes = *<$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::from_slice(&buf);
-                <$scalar as $curve_crate::elliptic_curve::ff::PrimeField>::from_repr(field_bytes).unwrap()
+                let field_bytes =
+                    *<$curve_crate::elliptic_curve::FieldBytes<$curve_type>>::from_slice(&buf);
+                <$scalar as $curve_crate::elliptic_curve::ff::PrimeField>::from_repr(field_bytes)
+                    .unwrap()
             }
 
-            pub fn generate_key_pair(&mut self, seed32: Option<&[u8]>) -> Result<(), ECDHPaceError> {
+            pub fn generate_key_pair(
+                &mut self,
+                seed32: Option<&[u8]>,
+            ) -> Result<(), ECDHPaceError> {
                 struct RngBridge<'a, R>(&'a mut R);
 
-                impl<'a, R: rand::rand_core::RngCore> $curve_crate::elliptic_curve::rand_core::RngCore for RngBridge<'a, R> {
+                impl<'a, R: rand::rand_core::RngCore>
+                    $curve_crate::elliptic_curve::rand_core::RngCore for RngBridge<'a, R>
+                {
                     fn next_u32(&mut self) -> u32 {
                         self.0.next_u32()
                     }
@@ -302,12 +326,22 @@ macro_rules! impl_curve_ops {
                     fn fill_bytes(&mut self, dest: &mut [u8]) {
                         self.0.fill_bytes(dest)
                     }
-                    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), $curve_crate::elliptic_curve::rand_core::Error> {
-                        self.0.try_fill_bytes(dest).map_err(|_| $curve_crate::elliptic_curve::rand_core::Error::from(core::num::NonZeroU32::new(1).unwrap()))
+                    fn try_fill_bytes(
+                        &mut self,
+                        dest: &mut [u8],
+                    ) -> Result<(), $curve_crate::elliptic_curve::rand_core::Error> {
+                        self.0.try_fill_bytes(dest).map_err(|_| {
+                            $curve_crate::elliptic_curve::rand_core::Error::from(
+                                core::num::NonZeroU32::new(1).unwrap(),
+                            )
+                        })
                     }
                 }
 
-                impl<'a, R: rand::rand_core::CryptoRng> $curve_crate::elliptic_curve::rand_core::CryptoRng for RngBridge<'a, R> {}
+                impl<'a, R: rand::rand_core::CryptoRng>
+                    $curve_crate::elliptic_curve::rand_core::CryptoRng for RngBridge<'a, R>
+                {
+                }
 
                 let sk = match seed32 {
                     None => {
@@ -357,7 +391,9 @@ macro_rules! impl_curve_ops {
 
                 struct RngBridge<'a, R>(&'a mut R);
 
-                impl<'a, R: rand::rand_core::RngCore> $curve_crate::elliptic_curve::rand_core::RngCore for RngBridge<'a, R> {
+                impl<'a, R: rand::rand_core::RngCore>
+                    $curve_crate::elliptic_curve::rand_core::RngCore for RngBridge<'a, R>
+                {
                     fn next_u32(&mut self) -> u32 {
                         self.0.next_u32()
                     }
@@ -367,12 +403,22 @@ macro_rules! impl_curve_ops {
                     fn fill_bytes(&mut self, dest: &mut [u8]) {
                         self.0.fill_bytes(dest)
                     }
-                    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), $curve_crate::elliptic_curve::rand_core::Error> {
-                        self.0.try_fill_bytes(dest).map_err(|_| $curve_crate::elliptic_curve::rand_core::Error::from(core::num::NonZeroU32::new(1).unwrap()))
+                    fn try_fill_bytes(
+                        &mut self,
+                        dest: &mut [u8],
+                    ) -> Result<(), $curve_crate::elliptic_curve::rand_core::Error> {
+                        self.0.try_fill_bytes(dest).map_err(|_| {
+                            $curve_crate::elliptic_curve::rand_core::Error::from(
+                                core::num::NonZeroU32::new(1).unwrap(),
+                            )
+                        })
                     }
                 }
 
-                impl<'a, R: rand::rand_core::CryptoRng> $curve_crate::elliptic_curve::rand_core::CryptoRng for RngBridge<'a, R> {}
+                impl<'a, R: rand::rand_core::CryptoRng>
+                    $curve_crate::elliptic_curve::rand_core::CryptoRng for RngBridge<'a, R>
+                {
+                }
 
                 let other = self.transform_public(other_pub_key)?;
                 let h = self.compute_shared_point(&other)?;
@@ -421,7 +467,7 @@ macro_rules! impl_curve_ops {
                     .ephemeral_priv
                     .as_ref()
                     .ok_or(ECDHPaceError::NoEphemeralPublicKey)?;
-                
+
                 let other_point = other.to_projective();
                 if bool::from(other_point.is_identity()) {
                     return Err(ECDHPaceError::InfinityPoint);
@@ -432,8 +478,9 @@ macro_rules! impl_curve_ops {
                 }
 
                 let pk = <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_affine(
-                    shared.to_affine()
-                ).map_err(|_| ECDHPaceError::InfinityAgreement)?;
+                    shared.to_affine(),
+                )
+                .map_err(|_| ECDHPaceError::InfinityAgreement)?;
                 let sec1_bytes = pk.to_sec1_bytes();
                 if sec1_bytes.len() != 1 + 2 * $coord_len || sec1_bytes[0] != 0x04 {
                     return Err(ECDHPaceError::InvalidEncoding);
@@ -461,9 +508,14 @@ macro_rules! impl_curve_ops {
                 Ok(shared)
             }
 
-            fn point_to_pubkey_pace(&self, point: $projective) -> Result<PublicKeyPace, ECDHPaceError> {
+            fn point_to_pubkey_pace(
+                &self,
+                point: $projective,
+            ) -> Result<PublicKeyPace, ECDHPaceError> {
                 let affine = point.to_affine();
-                let pk = <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_affine(affine).map_err(|_| ECDHPaceError::InfinityPoint)?;
+                let pk =
+                    <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_affine(affine)
+                        .map_err(|_| ECDHPaceError::InfinityPoint)?;
                 let sec1_bytes = pk.to_sec1_bytes();
                 if sec1_bytes.len() != 1 + 2 * $coord_len || sec1_bytes[0] != 0x04 {
                     return Err(ECDHPaceError::InvalidEncoding);
@@ -477,7 +529,10 @@ macro_rules! impl_curve_ops {
                 )?)
             }
 
-            fn transform_public(&self, pub_key: &PublicKeyPace) -> Result<$curve_crate::elliptic_curve::PublicKey<$curve_type>, ECDHPaceError> {
+            fn transform_public(
+                &self,
+                pub_key: &PublicKeyPace,
+            ) -> Result<$curve_crate::elliptic_curve::PublicKey<$curve_type>, ECDHPaceError> {
                 match pub_key {
                     PublicKeyPace::Ecdh { x, y, .. } => {
                         let mut x_bytes = vec![0u8; $coord_len];
@@ -493,7 +548,10 @@ macro_rules! impl_curve_ops {
                         let mut bytes = vec![0x04];
                         bytes.extend_from_slice(&x_bytes);
                         bytes.extend_from_slice(&y_bytes);
-                        <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_sec1_bytes(&bytes).map_err(|_| ECDHPaceError::InvalidEncoding)
+                        <$curve_crate::elliptic_curve::PublicKey<$curve_type>>::from_sec1_bytes(
+                            &bytes,
+                        )
+                        .map_err(|_| ECDHPaceError::InvalidEncoding)
                     }
                     _ => Err(ECDHPaceError::InvalidEncoding),
                 }
@@ -502,14 +560,58 @@ macro_rules! impl_curve_ops {
     };
 }
 
-impl_curve_ops!(modern, NistP256Engine, p256, p256::NistP256, p256::SecretKey, p256::Scalar, p256::ProjectivePoint, p256::AffinePoint, 32, b"115792089210356248762485316520336594248464673199859591410292408985888941275213");
-impl_curve_ops!(modern, BrainpoolP256r1Engine, bp256, bp256::r1::BrainpoolP256r1, bp256::r1::SecretKey, bp256::r1::Scalar, bp256::r1::ProjectivePoint, bp256::r1::AffinePoint, 32, b"115792089237316195423570985008687907852837564279074904382605163141518161494337");
-impl_curve_ops!(modern, BrainpoolP256t1Engine, bp256, bp256::t1::BrainpoolP256t1, bp256::t1::SecretKey, bp256::t1::Scalar, bp256::t1::ProjectivePoint, bp256::t1::AffinePoint, 32, b"115792089237316195423570985008687907852837564279074904382605163141518161494337");
+impl_curve_ops!(
+    modern,
+    NistP256Engine,
+    p256,
+    p256::NistP256,
+    p256::SecretKey,
+    p256::Scalar,
+    p256::ProjectivePoint,
+    p256::AffinePoint,
+    32,
+    b"115792089210356248762485316520336594248464673199859591410292408985888941275213"
+);
+impl_curve_ops!(
+    modern,
+    BrainpoolP256r1Engine,
+    bp256,
+    bp256::r1::BrainpoolP256r1,
+    bp256::r1::SecretKey,
+    bp256::r1::Scalar,
+    bp256::r1::ProjectivePoint,
+    bp256::r1::AffinePoint,
+    32,
+    b"115792089237316195423570985008687907852837564279074904382605163141518161494337"
+);
+impl_curve_ops!(
+    modern,
+    BrainpoolP256t1Engine,
+    bp256,
+    bp256::t1::BrainpoolP256t1,
+    bp256::t1::SecretKey,
+    bp256::t1::Scalar,
+    bp256::t1::ProjectivePoint,
+    bp256::t1::AffinePoint,
+    32,
+    b"115792089237316195423570985008687907852837564279074904382605163141518161494337"
+);
 impl_curve_ops!(legacy, NistP384Engine, p384, p384::NistP384, p384::SecretKey, p384::Scalar, p384::ProjectivePoint, p384::AffinePoint, 48, b"39402006196394479212279040100143613805079739270464620022646276856019566907421111663185381673890280521949313936996367");
 impl_curve_ops!(modern, BrainpoolP384r1Engine, bp384, bp384::r1::BrainpoolP384r1, bp384::r1::SecretKey, bp384::r1::Scalar, bp384::r1::ProjectivePoint, bp384::r1::AffinePoint, 48, b"39402006196394479212279040100143613805079739270464620022648719277063462947702816912384784949216075932598370503046777");
 impl_curve_ops!(modern, BrainpoolP384t1Engine, bp384, bp384::t1::BrainpoolP384t1, bp384::t1::SecretKey, bp384::t1::Scalar, bp384::t1::ProjectivePoint, bp384::t1::AffinePoint, 48, b"39402006196394479212279040100143613805079739270464620022648719277063462947702816912384784949216075932598370503046777");
 impl_curve_ops!(legacy, NistP521Engine, p521, p521::NistP521, p521::SecretKey, p521::Scalar, p521::ProjectivePoint, p521::AffinePoint, 66, b"6864797660130609714981900799081393217269435300143305409394463459185543183397655394245057746333217197532963996371363321113864768612440380340372808892707005449");
-impl_curve_ops!(legacy, NistP224Engine, p224, p224::NistP224, p224::SecretKey, p224::Scalar, p224::ProjectivePoint, p224::AffinePoint, 28, b"26959946667150639794667015087019625940457807714424391721682722368061");
+impl_curve_ops!(
+    legacy,
+    NistP224Engine,
+    p224,
+    p224::NistP224,
+    p224::SecretKey,
+    p224::Scalar,
+    p224::ProjectivePoint,
+    p224::AffinePoint,
+    28,
+    b"26959946667150639794667015087019625940457807714424391721682722368061"
+);
 
 #[derive(Debug)]
 pub enum ECDHPace {
@@ -679,8 +781,11 @@ mod tests {
 
             // simulated map and ephemeral gen
             let nonce = [0xAAu8; 16];
-            alice.map_and_generate_ephemeral(&bob_pk, &nonce, Some(&[0x03u8; 32])).unwrap();
-            bob.map_and_generate_ephemeral(&alice_pk, &nonce, Some(&[0x04u8; 32])).unwrap();
+            alice
+                .map_and_generate_ephemeral(&bob_pk, &nonce, Some(&[0x03u8; 32]))
+                .unwrap();
+            bob.map_and_generate_ephemeral(&alice_pk, &nonce, Some(&[0x04u8; 32]))
+                .unwrap();
 
             let alice_eph_pk = alice.get_pub_key_ephemeral().unwrap();
             let bob_eph_pk = bob.get_pub_key_ephemeral().unwrap();
