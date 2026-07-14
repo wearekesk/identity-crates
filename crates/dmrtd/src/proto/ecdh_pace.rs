@@ -314,8 +314,8 @@ macro_rules! impl_curve_ops {
             ) -> Result<(), ECDHPaceError> {
                 struct RngBridge<'a, R>(&'a mut R);
 
-                impl<'a, R: rand::rand_core::RngCore>
-                    $curve_crate::elliptic_curve::rand_core::RngCore for RngBridge<'a, R>
+                impl<'a, R: rand::Rng> $curve_crate::elliptic_curve::rand_core::RngCore
+                    for RngBridge<'a, R>
                 {
                     fn next_u32(&mut self) -> u32 {
                         self.0.next_u32()
@@ -330,16 +330,13 @@ macro_rules! impl_curve_ops {
                         &mut self,
                         dest: &mut [u8],
                     ) -> Result<(), $curve_crate::elliptic_curve::rand_core::Error> {
-                        self.0.try_fill_bytes(dest).map_err(|_| {
-                            $curve_crate::elliptic_curve::rand_core::Error::from(
-                                core::num::NonZeroU32::new(1).unwrap(),
-                            )
-                        })
+                        self.0.fill_bytes(dest);
+                        Ok(())
                     }
                 }
 
-                impl<'a, R: rand::rand_core::CryptoRng>
-                    $curve_crate::elliptic_curve::rand_core::CryptoRng for RngBridge<'a, R>
+                impl<'a, R: rand::CryptoRng> $curve_crate::elliptic_curve::rand_core::CryptoRng
+                    for RngBridge<'a, R>
                 {
                 }
 
@@ -391,8 +388,8 @@ macro_rules! impl_curve_ops {
 
                 struct RngBridge<'a, R>(&'a mut R);
 
-                impl<'a, R: rand::rand_core::RngCore>
-                    $curve_crate::elliptic_curve::rand_core::RngCore for RngBridge<'a, R>
+                impl<'a, R: rand::Rng> $curve_crate::elliptic_curve::rand_core::RngCore
+                    for RngBridge<'a, R>
                 {
                     fn next_u32(&mut self) -> u32 {
                         self.0.next_u32()
@@ -407,16 +404,13 @@ macro_rules! impl_curve_ops {
                         &mut self,
                         dest: &mut [u8],
                     ) -> Result<(), $curve_crate::elliptic_curve::rand_core::Error> {
-                        self.0.try_fill_bytes(dest).map_err(|_| {
-                            $curve_crate::elliptic_curve::rand_core::Error::from(
-                                core::num::NonZeroU32::new(1).unwrap(),
-                            )
-                        })
+                        self.0.fill_bytes(dest);
+                        Ok(())
                     }
                 }
 
-                impl<'a, R: rand::rand_core::CryptoRng>
-                    $curve_crate::elliptic_curve::rand_core::CryptoRng for RngBridge<'a, R>
+                impl<'a, R: rand::CryptoRng> $curve_crate::elliptic_curve::rand_core::CryptoRng
+                    for RngBridge<'a, R>
                 {
                 }
 
