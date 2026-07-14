@@ -158,20 +158,6 @@ pub static ICAO_DOMAIN_PARAMETERS: Lazy<HashMap<u32, DomainParameter>> = Lazy::n
             kind: DomainParameterType::Ecp,
             is_supported: true,
         },
-        DomainParameter {
-            id: 23,
-            name: "BrainpoolP256t1",
-            size: 256,
-            kind: DomainParameterType::Ecp,
-            is_supported: true,
-        },
-        DomainParameter {
-            id: 26,
-            name: "BrainpoolP384t1",
-            size: 384,
-            kind: DomainParameterType::Ecp,
-            is_supported: true,
-        },
     ];
     entries.into_iter().map(|p| (p.id, p)).collect()
 });
@@ -198,12 +184,12 @@ mod tests {
             .collect();
         supported.sort_unstable();
         // P-256 (12, ECDH) + RFC 5114 MODP/DH groups (0/1/2) + Brainpool + NIST P-224/384/521.
-        assert_eq!(supported, vec![0, 1, 2, 10, 12, 13, 15, 16, 18, 23, 26]);
+        assert_eq!(supported, vec![0, 1, 2, 10, 12, 13, 15, 16, 18]);
     }
 
     #[test]
-    fn table_has_16_entries() {
-        assert_eq!(ICAO_DOMAIN_PARAMETERS.len(), 16);
+    fn table_has_14_entries() {
+        assert_eq!(ICAO_DOMAIN_PARAMETERS.len(), 14);
     }
 
     #[test]

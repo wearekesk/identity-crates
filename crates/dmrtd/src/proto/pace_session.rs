@@ -41,7 +41,7 @@ use crate::proto::access_key::AccessKey;
 use crate::proto::aes_smcipher::AesSmCipher;
 use crate::proto::dh_pace::{self, DHPace, DHPaceError};
 use crate::proto::domain_parameter;
-use crate::proto::ecdh_pace::{ECDHPace, ECDHPaceError, NIST_P256_ID};
+use crate::proto::ecdh_pace::{ECDHPace, ECDHPaceError};
 use crate::proto::iso7816::command_apdu::CommandApdu;
 use crate::proto::iso7816::iso7816::{cla, ins};
 use crate::proto::iso7816::response_apdu::{ResponseApdu, StatusWord};
@@ -582,6 +582,7 @@ mod tests {
     use crate::crypto::aes::{AesCipher, BlockCipherMode, AES_BLOCK_SIZE};
     use crate::lds::tlv::Tlv;
     use crate::proto::can_key::CanKey;
+    use crate::proto::ecdh_pace::NIST_P256_ID;
 
     fn ecdh_gm_aes128_oid() -> OiePaceProtocol {
         OiePaceProtocol::new(

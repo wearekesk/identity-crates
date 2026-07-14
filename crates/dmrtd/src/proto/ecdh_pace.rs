@@ -18,7 +18,7 @@ use crate::proto::domain_parameter;
 use crate::proto::public_key_pace::PublicKeyPace;
 
 /// ICAO domain-parameter id for NIST P-256.
-#[allow(dead_code)]
+#[cfg(test)]
 pub const NIST_P256_ID: u32 = 12;
 
 /// Error returned by [`ECDHPace`] operations.
@@ -69,7 +69,11 @@ macro_rules! impl_curve_ops {
             }
 
             fn scalar_from_bytes(&self, bytes: &[u8]) -> $scalar {
-                let n = BigUint::parse_bytes($order_str, 10).unwrap();
+                #[allow(unused_imports)]
+                use $curve_crate::elliptic_curve::bigint::Encoding;
+                let modulus_bytes =
+                    <$curve_type as $curve_crate::elliptic_curve::Curve>::ORDER.to_be_bytes();
+                let n = BigUint::from_bytes_be(modulus_bytes.as_ref());
                 let val = BigUint::from_bytes_be(bytes);
                 let reduced = val % &n;
                 let r_bytes = reduced.to_bytes_be();
@@ -142,7 +146,7 @@ macro_rules! impl_curve_ops {
                 let scalar = match seed32 {
                     None => {
                         let sk = <$secret_key>::generate();
-                        self.scalar_from_bytes(&sk.to_bytes())
+                        *sk.to_nonzero_scalar()
                     }
                     Some(s) if s.len() == 32 => {
                         let mut seed_arr = [0u8; 32];
@@ -152,7 +156,7 @@ macro_rules! impl_curve_ops {
                             let mut bytes = vec![0u8; $coord_len];
                             rng.fill_bytes(&mut bytes);
                             if let Ok(sk) = <$secret_key>::from_slice(&bytes) {
-                                break self.scalar_from_bytes(&sk.to_bytes());
+                                break *sk.to_nonzero_scalar();
                             }
                         }
                     }
@@ -206,7 +210,7 @@ macro_rules! impl_curve_ops {
                 use $curve_crate::elliptic_curve::group::Group;
 
                 let sk = self.priv_key.as_ref().ok_or(ECDHPaceError::NoPublicKey)?;
-                let scalar = self.scalar_from_bytes(&sk.to_bytes());
+                let scalar = *sk.to_nonzero_scalar();
                 let other_point = other.to_projective();
                 if bool::from(other_point.is_identity()) {
                     return Err(ECDHPaceError::InfinityPoint);
@@ -291,7 +295,11 @@ macro_rules! impl_curve_ops {
             }
 
             fn scalar_from_bytes(&self, bytes: &[u8]) -> $scalar {
-                let n = BigUint::parse_bytes($order_str, 10).unwrap();
+                #[allow(unused_imports)]
+                use $curve_crate::elliptic_curve::bigint::Encoding;
+                let modulus_bytes =
+                    <$curve_type as $curve_crate::elliptic_curve::Curve>::ORDER.to_be_bytes();
+                let n = BigUint::from_bytes_be(modulus_bytes.as_ref());
                 let val = BigUint::from_bytes_be(bytes);
                 let reduced = val % &n;
                 let r_bytes = reduced.to_bytes_be();
@@ -426,7 +434,7 @@ macro_rules! impl_curve_ops {
                         let mut sys_rng = UnwrapErr(SysRng);
                         let mut rng = RngBridge(&mut sys_rng);
                         let sk = <$secret_key>::random(&mut rng);
-                        self.scalar_from_bytes(&sk.to_bytes())
+                        *sk.to_nonzero_scalar()
                     }
                     Some(s) if s.len() == 32 => {
                         let mut seed_arr = [0u8; 32];
@@ -436,7 +444,7 @@ macro_rules! impl_curve_ops {
                             let mut bytes = vec![0u8; $coord_len];
                             rng.fill_bytes(&mut bytes);
                             if let Ok(sk) = <$secret_key>::from_slice(&bytes) {
-                                break self.scalar_from_bytes(&sk.to_bytes());
+                                break *sk.to_nonzero_scalar();
                             }
                         }
                     }
@@ -490,7 +498,7 @@ macro_rules! impl_curve_ops {
                 use $curve_crate::elliptic_curve::group::Group;
 
                 let sk = self.priv_key.as_ref().ok_or(ECDHPaceError::NoPublicKey)?;
-                let scalar = self.scalar_from_bytes(&sk.to_bytes());
+                let scalar = *sk.to_nonzero_scalar();
                 let other_point = other.to_projective();
                 if bool::from(other_point.is_identity()) {
                     return Err(ECDHPaceError::InfinityPoint);
@@ -578,21 +586,8 @@ impl_curve_ops!(
     32,
     b"115792089237316195423570985008687907852837564279074904382605163141518161494337"
 );
-impl_curve_ops!(
-    modern,
-    BrainpoolP256t1Engine,
-    bp256,
-    bp256::t1::BrainpoolP256t1,
-    bp256::t1::SecretKey,
-    bp256::t1::Scalar,
-    bp256::t1::ProjectivePoint,
-    bp256::t1::AffinePoint,
-    32,
-    b"115792089237316195423570985008687907852837564279074904382605163141518161494337"
-);
 impl_curve_ops!(legacy, NistP384Engine, p384, p384::NistP384, p384::SecretKey, p384::Scalar, p384::ProjectivePoint, p384::AffinePoint, 48, b"39402006196394479212279040100143613805079739270464620022646276856019566907421111663185381673890280521949313936996367");
 impl_curve_ops!(modern, BrainpoolP384r1Engine, bp384, bp384::r1::BrainpoolP384r1, bp384::r1::SecretKey, bp384::r1::Scalar, bp384::r1::ProjectivePoint, bp384::r1::AffinePoint, 48, b"39402006196394479212279040100143613805079739270464620022648719277063462947702816912384784949216075932598370503046777");
-impl_curve_ops!(modern, BrainpoolP384t1Engine, bp384, bp384::t1::BrainpoolP384t1, bp384::t1::SecretKey, bp384::t1::Scalar, bp384::t1::ProjectivePoint, bp384::t1::AffinePoint, 48, b"39402006196394479212279040100143613805079739270464620022648719277063462947702816912384784949216075932598370503046777");
 impl_curve_ops!(legacy, NistP521Engine, p521, p521::NistP521, p521::SecretKey, p521::Scalar, p521::ProjectivePoint, p521::AffinePoint, 66, b"6864797660130609714981900799081393217269435300143305409394463459185543183397655394245057746333217197532963996371363321113864768612440380340372808892707005449");
 impl_curve_ops!(
     legacy,
@@ -611,10 +606,8 @@ impl_curve_ops!(
 pub enum ECDHPace {
     NistP256(NistP256Engine),
     BrainpoolP256r1(BrainpoolP256r1Engine),
-    BrainpoolP256t1(BrainpoolP256t1Engine),
     NistP384(NistP384Engine),
     BrainpoolP384r1(BrainpoolP384r1Engine),
-    BrainpoolP384t1(BrainpoolP384t1Engine),
     NistP521(NistP521Engine),
     NistP224(NistP224Engine),
 }
@@ -631,8 +624,6 @@ impl ECDHPace {
             15 => Ok(Self::NistP384(NistP384Engine::new())),
             16 => Ok(Self::BrainpoolP384r1(BrainpoolP384r1Engine::new())),
             18 => Ok(Self::NistP521(NistP521Engine::new())),
-            23 => Ok(Self::BrainpoolP256t1(BrainpoolP256t1Engine::new())),
-            26 => Ok(Self::BrainpoolP384t1(BrainpoolP384t1Engine::new())),
             _ => Err(ECDHPaceError::UnsupportedCurve(id)),
         }
     }
@@ -641,10 +632,8 @@ impl ECDHPace {
         match self {
             Self::NistP256(e) => e.generate_key_pair(seed32),
             Self::BrainpoolP256r1(e) => e.generate_key_pair(seed32),
-            Self::BrainpoolP256t1(e) => e.generate_key_pair(seed32),
             Self::NistP384(e) => e.generate_key_pair(seed32),
             Self::BrainpoolP384r1(e) => e.generate_key_pair(seed32),
-            Self::BrainpoolP384t1(e) => e.generate_key_pair(seed32),
             Self::NistP521(e) => e.generate_key_pair(seed32),
             Self::NistP224(e) => e.generate_key_pair(seed32),
         }
@@ -654,10 +643,8 @@ impl ECDHPace {
         match self {
             Self::NistP256(e) => e.get_pub_key(),
             Self::BrainpoolP256r1(e) => e.get_pub_key(),
-            Self::BrainpoolP256t1(e) => e.get_pub_key(),
             Self::NistP384(e) => e.get_pub_key(),
             Self::BrainpoolP384r1(e) => e.get_pub_key(),
-            Self::BrainpoolP384t1(e) => e.get_pub_key(),
             Self::NistP521(e) => e.get_pub_key(),
             Self::NistP224(e) => e.get_pub_key(),
         }
@@ -667,10 +654,8 @@ impl ECDHPace {
         match self {
             Self::NistP256(e) => e.get_pub_key_ephemeral(),
             Self::BrainpoolP256r1(e) => e.get_pub_key_ephemeral(),
-            Self::BrainpoolP256t1(e) => e.get_pub_key_ephemeral(),
             Self::NistP384(e) => e.get_pub_key_ephemeral(),
             Self::BrainpoolP384r1(e) => e.get_pub_key_ephemeral(),
-            Self::BrainpoolP384t1(e) => e.get_pub_key_ephemeral(),
             Self::NistP521(e) => e.get_pub_key_ephemeral(),
             Self::NistP224(e) => e.get_pub_key_ephemeral(),
         }
@@ -685,10 +670,8 @@ impl ECDHPace {
         match self {
             Self::NistP256(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
             Self::BrainpoolP256r1(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
-            Self::BrainpoolP256t1(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
             Self::NistP384(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
             Self::BrainpoolP384r1(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
-            Self::BrainpoolP384t1(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
             Self::NistP521(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
             Self::NistP224(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
         }
@@ -701,10 +684,8 @@ impl ECDHPace {
         match self {
             Self::NistP256(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
             Self::BrainpoolP256r1(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
-            Self::BrainpoolP256t1(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
             Self::NistP384(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
             Self::BrainpoolP384r1(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
-            Self::BrainpoolP384t1(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
             Self::NistP521(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
             Self::NistP224(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
         }
@@ -735,7 +716,7 @@ mod tests {
 
     #[test]
     fn engine_constructs_for_all_supported_curves() {
-        for id in &[10, 12, 13, 15, 16, 18, 23, 26] {
+        for id in &[10, 12, 13, 15, 16, 18] {
             let e = ECDHPace::new(*id).unwrap();
             assert_eq!(e.get_pub_key().unwrap_err(), ECDHPaceError::NoPublicKey);
         }
@@ -744,7 +725,7 @@ mod tests {
     #[test]
     fn seeded_key_pair_is_deterministic() {
         let seed = [0x11u8; 32];
-        for id in &[10, 12, 13, 15, 16, 18, 23, 26] {
+        for id in &[10, 12, 13, 15, 16, 18] {
             let mut a = ECDHPace::new(*id).unwrap();
             let mut b = ECDHPace::new(*id).unwrap();
             a.generate_key_pair(Some(&seed)).unwrap();
@@ -764,7 +745,7 @@ mod tests {
 
     #[test]
     fn shared_secret_is_symmetric_all_curves() {
-        for id in &[10, 12, 13, 15, 16, 18, 23, 26] {
+        for id in &[10, 12, 13, 15, 16, 18] {
             let mut alice = ECDHPace::new(*id).unwrap();
             let mut bob = ECDHPace::new(*id).unwrap();
             alice.generate_key_pair(Some(&[0x01u8; 32])).unwrap();
