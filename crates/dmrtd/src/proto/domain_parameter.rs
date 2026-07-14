@@ -100,7 +100,7 @@ pub static ICAO_DOMAIN_PARAMETERS: Lazy<HashMap<u32, DomainParameter>> = Lazy::n
             name: "NIST P-224 (secp224r1)",
             size: 224,
             kind: DomainParameterType::Ecp,
-            is_supported: false,
+            is_supported: true,
         },
         DomainParameter {
             id: 11,
@@ -197,8 +197,8 @@ mod tests {
             .map(|p| p.id)
             .collect();
         supported.sort_unstable();
-        // P-256 (12, ECDH) + RFC 5114 MODP/DH groups (0/1/2) + Brainpool + NIST P-384/521.
-        assert_eq!(supported, vec![0, 1, 2, 12, 13, 15, 16, 18, 23, 26]);
+        // P-256 (12, ECDH) + RFC 5114 MODP/DH groups (0/1/2) + Brainpool + NIST P-224/384/521.
+        assert_eq!(supported, vec![0, 1, 2, 10, 12, 13, 15, 16, 18, 23, 26]);
     }
 
     #[test]

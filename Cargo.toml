@@ -72,6 +72,7 @@ rand = "0.10"
 p256 = { version = "0.14", features = ["arithmetic", "ecdh", "ecdsa"] }
 p384 = { version = "0.13", features = ["arithmetic", "ecdh", "ecdsa"] }
 p521 = { version = "0.13", features = ["arithmetic", "ecdh", "ecdsa"] }
+p224 = { version = "0.13", features = ["arithmetic", "ecdh", "ecdsa"] }
 bp256 = { version = "0.14.0-rc.15", features = ["arithmetic"] }
 bp384 = { version = "0.14.0-rc.15", features = ["arithmetic"] }
 elliptic-curve = { version = "0.14", features = ["arithmetic"] }

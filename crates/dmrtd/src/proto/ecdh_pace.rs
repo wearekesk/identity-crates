@@ -509,6 +509,7 @@ impl_curve_ops!(legacy, NistP384Engine, p384, p384::NistP384, p384::SecretKey, p
 impl_curve_ops!(modern, BrainpoolP384r1Engine, bp384, bp384::r1::BrainpoolP384r1, bp384::r1::SecretKey, bp384::r1::Scalar, bp384::r1::ProjectivePoint, bp384::r1::AffinePoint, 48, b"39402006196394479212279040100143613805079739270464620022648719277063462947702816912384784949216075932598370503046777");
 impl_curve_ops!(modern, BrainpoolP384t1Engine, bp384, bp384::t1::BrainpoolP384t1, bp384::t1::SecretKey, bp384::t1::Scalar, bp384::t1::ProjectivePoint, bp384::t1::AffinePoint, 48, b"39402006196394479212279040100143613805079739270464620022648719277063462947702816912384784949216075932598370503046777");
 impl_curve_ops!(legacy, NistP521Engine, p521, p521::NistP521, p521::SecretKey, p521::Scalar, p521::ProjectivePoint, p521::AffinePoint, 66, b"6864797660130609714981900799081393217269435300143305409394463459185543183397655394245057746333217197532963996371363321113864768612440380340372808892707005449");
+impl_curve_ops!(legacy, NistP224Engine, p224, p224::NistP224, p224::SecretKey, p224::Scalar, p224::ProjectivePoint, p224::AffinePoint, 28, b"26959946667150639794667015087019625940457807714424391721682722368061");
 
 #[derive(Debug)]
 pub enum ECDHPace {
@@ -519,6 +520,7 @@ pub enum ECDHPace {
     BrainpoolP384r1(BrainpoolP384r1Engine),
     BrainpoolP384t1(BrainpoolP384t1Engine),
     NistP521(NistP521Engine),
+    NistP224(NistP224Engine),
 }
 
 impl ECDHPace {
@@ -527,6 +529,7 @@ impl ECDHPace {
             return Err(ECDHPaceError::UnknownId(id));
         }
         match id {
+            10 => Ok(Self::NistP224(NistP224Engine::new())),
             12 => Ok(Self::NistP256(NistP256Engine::new())),
             13 => Ok(Self::BrainpoolP256r1(BrainpoolP256r1Engine::new())),
             15 => Ok(Self::NistP384(NistP384Engine::new())),
@@ -547,6 +550,7 @@ impl ECDHPace {
             Self::BrainpoolP384r1(e) => e.generate_key_pair(seed32),
             Self::BrainpoolP384t1(e) => e.generate_key_pair(seed32),
             Self::NistP521(e) => e.generate_key_pair(seed32),
+            Self::NistP224(e) => e.generate_key_pair(seed32),
         }
     }
 
@@ -559,6 +563,7 @@ impl ECDHPace {
             Self::BrainpoolP384r1(e) => e.get_pub_key(),
             Self::BrainpoolP384t1(e) => e.get_pub_key(),
             Self::NistP521(e) => e.get_pub_key(),
+            Self::NistP224(e) => e.get_pub_key(),
         }
     }
 
@@ -571,6 +576,7 @@ impl ECDHPace {
             Self::BrainpoolP384r1(e) => e.get_pub_key_ephemeral(),
             Self::BrainpoolP384t1(e) => e.get_pub_key_ephemeral(),
             Self::NistP521(e) => e.get_pub_key_ephemeral(),
+            Self::NistP224(e) => e.get_pub_key_ephemeral(),
         }
     }
 
@@ -588,6 +594,7 @@ impl ECDHPace {
             Self::BrainpoolP384r1(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
             Self::BrainpoolP384t1(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
             Self::NistP521(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
+            Self::NistP224(e) => e.map_and_generate_ephemeral(other_pub_key, nonce, seed32),
         }
     }
 
@@ -603,6 +610,7 @@ impl ECDHPace {
             Self::BrainpoolP384r1(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
             Self::BrainpoolP384t1(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
             Self::NistP521(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
+            Self::NistP224(e) => e.get_ephemeral_shared_seed(other_ephemeral_pub_key),
         }
     }
 }
@@ -631,7 +639,7 @@ mod tests {
 
     #[test]
     fn engine_constructs_for_all_supported_curves() {
-        for id in &[12, 13, 15, 16, 18, 23, 26] {
+        for id in &[10, 12, 13, 15, 16, 18, 23, 26] {
             let e = ECDHPace::new(*id).unwrap();
             assert_eq!(e.get_pub_key().unwrap_err(), ECDHPaceError::NoPublicKey);
         }
@@ -640,7 +648,7 @@ mod tests {
     #[test]
     fn seeded_key_pair_is_deterministic() {
         let seed = [0x11u8; 32];
-        for id in &[12, 13, 15, 16, 18, 23, 26] {
+        for id in &[10, 12, 13, 15, 16, 18, 23, 26] {
             let mut a = ECDHPace::new(*id).unwrap();
             let mut b = ECDHPace::new(*id).unwrap();
             a.generate_key_pair(Some(&seed)).unwrap();
@@ -660,7 +668,7 @@ mod tests {
 
     #[test]
     fn shared_secret_is_symmetric_all_curves() {
-        for id in &[12, 13, 15, 16, 18, 23, 26] {
+        for id in &[10, 12, 13, 15, 16, 18, 23, 26] {
             let mut alice = ECDHPace::new(*id).unwrap();
             let mut bob = ECDHPace::new(*id).unwrap();
             alice.generate_key_pair(Some(&[0x01u8; 32])).unwrap();
