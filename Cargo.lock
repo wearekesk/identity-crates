@@ -346,6 +346,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "bp256"
+version = "0.14.0-rc.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5c715b9f158d362cc00afc7a3ea6c33da4b018293ff3227402886325c22f947"
+dependencies = [
+ "ecdsa 0.17.0",
+ "elliptic-curve 0.14.1",
+ "primefield",
+ "primeorder 0.14.0",
+]
+
+[[package]]
+name = "bp384"
+version = "0.14.0-rc.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dad8bed63122ad85f81781099e541e81985e4ff6814a6c6e6bb5ddac481f443f"
+dependencies = [
+ "ecdsa 0.17.0",
+ "elliptic-curve 0.14.1",
+ "primefield",
+ "primeorder 0.14.0",
+]
+
+[[package]]
 name = "built"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -749,6 +773,8 @@ dependencies = [
  "aes",
  "asn1",
  "base64",
+ "bp256",
+ "bp384",
  "cbc",
  "chrono",
  "cipher",
@@ -762,6 +788,8 @@ dependencies = [
  "num-traits",
  "once_cell",
  "p256 0.14.0",
+ "p384",
+ "p521",
  "rand 0.10.1",
  "sha1 0.11.0",
  "sha2 0.11.0",
