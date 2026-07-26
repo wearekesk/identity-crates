@@ -18,6 +18,25 @@ categories = ["cryptography", "parser-implementations"]
 # dependency is a released crates.io version.
 publish = false
 
+[features]
+default = ["bundled-http-client"]
+# The bundled reqwest CRL client. On by default, because that is what a server wants
+# and nobody should have to opt in to being able to check revocation at all.
+#
+# Turn it off for a mobile build — `default-features = false` — and reqwest, tokio's
+# networking, rustls and `ring` leave the graph with it. That is what removes the
+# Android NDK requirement: `ring` compiles C and assembly, this crate does not.
+# Revocation itself is unaffected: the `revocation` module, the `HttpClient` trait and
+# both checkers are always there; you supply the client (URLSession, OkHttp, Dart).
+#
+# One behavioural difference: the caching CRL fetcher lives behind the same upstream
+# feature, so without this one the fetch is uncached and every check hits the network.
+# Wrap your own client in a cache if that matters on your platform.
+#
+# Named for what it adds rather than "mobile", because Cargo features are additive —
+# a feature that subtracts a dependency breaks the moment anything else enables it.
+bundled-http-client = ["isomdl/reqwest"]
+
 [dependencies]
 # ISO 18013-5 CBOR/COSE machinery, with the HTTP client that fetches CRLs (the
 # `revocation` module). Pinned to a git rev, not the crates.io 0.2.0
@@ -25,9 +44,7 @@ publish = false
 # elements to `valueDigests`, and never checks `validityInfo` — a holder could
 # disclose arbitrary values under a genuine issuer signature. Both were fixed in
 # spruceid/isomdl#132 and #133, which are unreleased.
-isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa028a12183ee7fab1e46a5dc", features = [
-    "reqwest",
-] }
+isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa028a12183ee7fab1e46a5dc" }
 # Must track isomdl's x509-cert major: `TrustAnchor.certificate` is an
 # `x509_cert::Certificate`, so the types have to unify.
 x509-cert = { version = "0.2.4", features = ["pem"] }
@@ -45,8 +62,9 @@ thiserror.workspace = true
 # platform HTTP stack on iOS/Android) without matching versions by hand.
 async-trait = "0.1"
 # Drives `BlockingCrlChecker` for callers with no runtime of their own — reader apps
-# reaching the crate over FFI. Already in the graph via the CRL HTTP client.
-tokio = { version = "1", features = ["rt", "net", "time"] }
+# reaching the crate over FFI. Only `rt` is ours: the IO and timer drivers come from
+# reqwest when `bundled-http-client` is on, and are dead weight on a build without it.
+tokio = { version = "1", features = ["rt"] }
 
 [dev-dependencies]
 # The tests issue real, signed mdocs rather than replaying canned blobs, so they

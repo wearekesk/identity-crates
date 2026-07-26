@@ -47,6 +47,12 @@
 //! not be reached is reported in [`MdlDocument::revocation_errors`] and left for the
 //! caller to have a policy about.
 //!
+//! The fetch is pluggable — [`revocation::CrlChecker::with_http_client`] takes any
+//! [`revocation::HttpClient`], so a reader app can route it through `URLSession` or
+//! OkHttp. The bundled reqwest client is the default `bundled-http-client` feature;
+//! turning it off (`default-features = false`) drops reqwest, rustls and `ring`,
+//! which is what lets an Android build work without an NDK.
+//!
 //! # What this crate does not do
 //!
 //! No transport, no session establishment, no decryption, no holder side. It takes

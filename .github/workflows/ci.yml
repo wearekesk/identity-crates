@@ -55,3 +55,16 @@ jobs:
         run: cargo build --workspace --all-targets --verbose
       - name: Test
         run: cargo test --workspace --verbose
+      # `mdl-verify` is also built for mobile reader apps, which drop the bundled
+      # reqwest CRL client. That configuration compiles different code — a caller
+      # supplies the HTTP client — so it needs its own run; the default job would not
+      # notice it breaking.
+      - name: Test mdl-verify without the bundled HTTP client
+        run: cargo test -p mdl-verify --no-default-features --verbose
+      # Without the bundled client nothing in the graph compiles C, so the Android
+      # target checks with no NDK. That is the property worth protecting: if it ever
+      # needs one again, this step is where it shows up.
+      - name: Check the Android target (no NDK)
+        run: |
+          rustup target add aarch64-linux-android
+          cargo check -p mdl-verify --no-default-features --target aarch64-linux-android --verbose

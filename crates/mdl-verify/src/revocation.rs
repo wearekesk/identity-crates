@@ -6,17 +6,24 @@
 //! last week — for that the verifier has to go and look, which means fetching the CRL
 //! named in the certificate's CRL distribution point.
 //!
-//! ```no_run
-//! use mdl_verify::{revocation::{verify_issuer_auth, CrlChecker}, IacaAnchor, VerifyOptions};
+//! Build a [`CrlChecker`] once — it caches, so a busy verifier is not refetching the
+//! same list for every presentation — and hand it to each verification:
 //!
-//! # async fn example(device_response: &[u8], iaca_der: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
-//! // Build one and keep it: it caches CRLs, so a busy verifier is not refetching
-//! // the same list for every presentation.
-//! let crl = CrlChecker::new()?;
+//! ```no_run
+//! use mdl_verify::{
+//!     revocation::{verify_issuer_auth, CrlChecker, HttpClient},
+//!     IacaAnchor, VerifyOptions,
+//! };
+//!
+//! # async fn example<C: HttpClient>(
+//! #     device_response: &[u8],
+//! #     iaca_der: &[u8],
+//! #     crl: &CrlChecker<C>,
+//! # ) -> Result<(), Box<dyn std::error::Error>> {
 //! let anchors = [IacaAnchor::from_certificate(iaca_der)?];
 //!
 //! let verification =
-//!     verify_issuer_auth(device_response, &anchors, &VerifyOptions::default(), &crl).await?;
+//!     verify_issuer_auth(device_response, &anchors, &VerifyOptions::default(), crl).await?;
 //!
 //! let mdl = verification.mdl().ok_or("no mDL")?;
 //! if !mdl.revocation_errors.is_empty() {
@@ -78,7 +85,6 @@
 
 use isomdl::cbor;
 use isomdl::definitions::device_response::DeviceResponse;
-use isomdl::definitions::x509::revocation::CachingRevocationFetcher;
 
 use crate::issuer::{verify_documents_with, MdlVerification, VerifyOptions};
 use crate::{IacaAnchor, MdlError, SessionTranscript};
@@ -89,20 +95,32 @@ use crate::{IacaAnchor, MdlError, SessionTranscript};
 /// guess which version to match.
 pub use async_trait::async_trait;
 pub use isomdl::definitions::x509::revocation::{
-    HttpClient, HttpMethod, HttpRequest, HttpResponse, ReqwestClient,
+    HttpClient, HttpMethod, HttpRequest, HttpResponse,
 };
 
-/// A CRL fetcher with an in-memory cache.
+/// The bundled HTTP client. Present with the default `bundled-http-client` feature.
+#[cfg(feature = "bundled-http-client")]
+pub use isomdl::definitions::x509::revocation::ReqwestClient;
+
+/// The caching fetcher rides along with the bundled client upstream, so a build
+/// without it fetches uncached. Documented on the feature in `Cargo.toml`.
+#[cfg(feature = "bundled-http-client")]
+type Fetcher<C> = isomdl::definitions::x509::revocation::CachingRevocationFetcher<C>;
+#[cfg(not(feature = "bundled-http-client"))]
+type Fetcher<C> = isomdl::definitions::x509::revocation::SimpleRevocationFetcher<C>;
+
+/// A CRL fetcher.
 ///
-/// Build one per process and share it. CRLs are cached by URL until they go stale,
-/// so a verifier handling many presentations against the same issuer fetches once
-/// rather than once per presentation.
+/// Build one per process and share it. With the default `bundled-http-client`
+/// feature the CRLs are cached by URL until they go stale, so a verifier handling
+/// many presentations against the same issuer fetches once rather than once per
+/// presentation.
 ///
-/// Defaults to a bundled reqwest client, which is the right answer on a server.
-/// On a phone, prefer [`with_http_client`](Self::with_http_client) and the platform's
-/// own networking stack.
-pub struct CrlChecker<C = ReqwestClient> {
-    fetcher: CachingRevocationFetcher<C>,
+/// [`CrlChecker::new`] uses the bundled reqwest client, which is the right answer on
+/// a server. On a phone, prefer [`with_http_client`](Self::with_http_client) and the
+/// platform's own networking stack.
+pub struct CrlChecker<C> {
+    fetcher: Fetcher<C>,
 }
 
 // The upstream fetcher is not `Debug`; the crate lints for missing Debug impls, and
@@ -113,9 +131,19 @@ impl<C> std::fmt::Debug for CrlChecker<C> {
     }
 }
 
+#[cfg(feature = "bundled-http-client")]
 impl CrlChecker<ReqwestClient> {
     /// A checker using the bundled HTTP client, with its default timeout and cache
     /// policy.
+    ///
+    /// ```no_run
+    /// use mdl_verify::revocation::CrlChecker;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let crl = CrlChecker::new()?;
+    /// # let _ = crl;
+    /// # Ok(()) }
+    /// ```
     pub fn new() -> Result<Self, MdlError> {
         Ok(Self::with_http_client(
             ReqwestClient::new().map_err(|e| MdlError::Revocation(e.to_string()))?,
@@ -148,20 +176,31 @@ impl<C: HttpClient> CrlChecker<C> {
     /// stack, or a test double.
     pub fn with_http_client(client: C) -> Self {
         Self {
-            fetcher: CachingRevocationFetcher::new(client),
+            fetcher: Fetcher::new(client),
         }
     }
 
     /// [`with_http_client`](Self::with_http_client) with an explicit cache size and
     /// staleness bound.
+    ///
+    /// Only meaningful with the default `bundled-http-client` feature, which is what
+    /// brings the caching fetcher in; without it there is no cache to configure and
+    /// the arguments are ignored.
+    #[cfg_attr(
+        not(feature = "bundled-http-client"),
+        allow(unused_variables, clippy::needless_pass_by_value)
+    )]
     pub fn with_http_client_and_config(
         client: C,
         cache_capacity: u64,
         max_stale: std::time::Duration,
     ) -> Self {
-        Self {
-            fetcher: CachingRevocationFetcher::with_config(client, cache_capacity, max_stale),
-        }
+        #[cfg(feature = "bundled-http-client")]
+        let fetcher = Fetcher::with_config(client, cache_capacity, max_stale);
+        #[cfg(not(feature = "bundled-http-client"))]
+        let fetcher = Fetcher::new(client);
+
+        Self { fetcher }
     }
 }
 
@@ -215,7 +254,7 @@ pub async fn verify_presentation<C: HttpClient>(
 /// A server inside an async runtime should **not** use this: driving a runtime from
 /// inside another one panics. Use [`verify_issuer_auth`] and
 /// [`verify_presentation`] there, which is also cheaper.
-pub struct BlockingCrlChecker<C = ReqwestClient> {
+pub struct BlockingCrlChecker<C> {
     checker: CrlChecker<C>,
     runtime: tokio::runtime::Runtime,
 }
@@ -226,6 +265,7 @@ impl<C> std::fmt::Debug for BlockingCrlChecker<C> {
     }
 }
 
+#[cfg(feature = "bundled-http-client")]
 impl BlockingCrlChecker<ReqwestClient> {
     /// A blocking checker over the bundled HTTP client.
     pub fn new() -> Result<Self, MdlError> {

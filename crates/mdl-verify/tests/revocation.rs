@@ -16,16 +16,20 @@ mod common;
 
 use std::sync::Mutex;
 
-use common::{
-    iaca_anchor, test_time, CrlServer, ResponseBuilder, CRL_CLEAN, CRL_PORT, CRL_REVOKED,
-};
+use common::{iaca_anchor, test_time, ResponseBuilder, CRL_CLEAN, CRL_PORT, CRL_REVOKED};
 use mdl_verify::revocation::{
     async_trait, verify_issuer_auth, BlockingCrlChecker, CrlChecker, HttpClient, HttpRequest,
     HttpResponse,
 };
 use mdl_verify::VerifyOptions;
 
+// The socket tests exercise the bundled client, so they only exist when it does.
+// Everything else here runs on either build — that is the point of the trait.
+#[cfg(feature = "bundled-http-client")]
+use common::CrlServer;
+
 /// One fixed port, one test at a time.
+#[cfg(feature = "bundled-http-client")]
 static PORT: Mutex<()> = Mutex::new(());
 
 fn options() -> VerifyOptions {
@@ -35,6 +39,7 @@ fn options() -> VerifyOptions {
     }
 }
 
+#[cfg(feature = "bundled-http-client")]
 #[tokio::test]
 async fn a_clean_crl_leaves_the_chain_trusted() {
     let _guard = PORT.lock().unwrap_or_else(|e| e.into_inner());
@@ -63,6 +68,7 @@ async fn a_clean_crl_leaves_the_chain_trusted() {
 
 /// The case the whole feature exists for: the issuer signature is still perfectly
 /// valid, and the credential must still be refused.
+#[cfg(feature = "bundled-http-client")]
 #[tokio::test]
 async fn a_revoked_document_signer_is_not_trusted() {
     let _guard = PORT.lock().unwrap_or_else(|e| e.into_inner());
@@ -96,6 +102,7 @@ async fn a_revoked_document_signer_is_not_trusted() {
 /// reported separately so the caller can decide whether to fail open or closed —
 /// hard-failing every presentation because a DMV's CRL host is down is a policy
 /// choice, not one this crate should make.
+#[cfg(feature = "bundled-http-client")]
 #[tokio::test]
 async fn an_unreachable_crl_is_reported_not_enforced() {
     let _guard = PORT.lock().unwrap_or_else(|e| e.into_inner());

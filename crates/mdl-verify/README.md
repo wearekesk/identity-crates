@@ -88,9 +88,47 @@ These entry points are `async` — fetching is I/O, and the crate would rather s
 than hide a runtime inside a synchronous call. Everything else stays synchronous and
 no-network.
 
-There is no feature flag: a verifier that cannot tell you a signer was revoked last
-week is doing half the job. Nothing here runs unless you call it, so the default
-verification path stays synchronous and makes no requests.
+Revocation itself is never optional — a verifier that cannot tell you a signer was
+revoked last week is doing half the job — and nothing here runs unless you call it, so
+the default verification path stays synchronous and makes no requests.
+
+### Bringing your own HTTP client
+
+`CrlChecker` is generic over `HttpClient`, so the fetch can go through whatever the
+platform prefers:
+
+```rust
+use mdl_verify::revocation::{async_trait, CrlChecker, HttpClient, HttpRequest, HttpResponse};
+
+struct PlatformHttp;   // URLSession, OkHttp, a corporate proxy stack, a test double
+
+#[async_trait]
+impl HttpClient for PlatformHttp {
+    type Error = std::io::Error;
+    async fn request(&self, request: HttpRequest) -> Result<HttpResponse, Self::Error> { … }
+}
+
+let crl = CrlChecker::with_http_client(PlatformHttp);
+```
+
+The bundled reqwest client is the `bundled-http-client` feature, **on by default**.
+Switch it off for a mobile build:
+
+```toml
+mdl-verify = { version = "0.0.0", default-features = false }
+```
+
+That drops reqwest, rustls, tokio's networking and `ring` from the graph — which is
+what removes the Android NDK requirement, since `ring` compiles C and assembly and
+this crate does not. Verified: with the feature off,
+`cargo check --target aarch64-linux-android` succeeds with no NDK present at all.
+
+One behavioural difference: the caching CRL fetcher lives behind the same upstream
+feature, so a build without it fetches uncached. Wrap your own client in a cache if
+that matters.
+
+`BlockingCrlChecker` exposes the same two calls synchronously for callers with no
+runtime — reader apps reaching the crate over FFI. See [docs/flutter.md](docs/flutter.md).
 
 ## Trust anchors
 
