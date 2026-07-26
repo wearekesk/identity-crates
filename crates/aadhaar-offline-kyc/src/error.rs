@@ -48,9 +48,10 @@ pub enum AadhaarError {
     #[error("offline e-KYC xml error: {0}")]
     Xml(String),
 
-    #[error("offline e-KYC signature did not verify against any UIDAI certificate")]
+    // --- Signature verification (Secure QR and offline e-KYC) ---
+    #[error("signature did not verify against any UIDAI certificate")]
     SignatureInvalid,
 
-    #[error("offline e-KYC signature error: {0}")]
+    #[error("signature error: {0}")]
     Signature(String),
 }

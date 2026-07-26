@@ -30,3 +30,6 @@ base64.workspace = true
 sha2 = "0.10"          # mobile/email hash
 x509-parser.workspace = true
 xml-sec.workspace = true
+# Secure QR v2 detached signature (RSASSA-PKCS1-v1_5 / SHA-256). Pinned to 0.9 so
+# it shares `sha2` 0.10 / `digest` 0.10 with the rest of this crate.
+rsa = "0.9"

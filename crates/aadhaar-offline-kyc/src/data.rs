@@ -1,5 +1,6 @@
 //! Parsed Aadhaar data model.
 
+use crate::error::AadhaarError;
 use chrono::NaiveDate;
 use std::str::FromStr;
 use strum::{Display, EnumString};
@@ -74,12 +75,44 @@ pub struct AadhaarData {
     /// 32-byte SHA-256 hash of the email address (when indicator bit 1 is set).
     pub email_hash: Option<Vec<u8>>,
 
-    /// 256-byte RSA-SHA256 signature over the preceding payload; verify with
-    /// the UIDAI public certificate (out of scope here).
+    /// 256-byte RSA-SHA256 signature over [`signed_bytes`](Self::signed_bytes);
+    /// check it against the pinned UIDAI signer keys with [`Self::verify`].
     pub signature: Vec<u8>,
+
+    /// The exact bytes the UIDAI signature covers: the decompressed payload with
+    /// the trailing 256-byte signature removed.
+    ///
+    /// Retained verbatim so [`Self::verify`] can check the signature against the
+    /// bytes UIDAI actually signed — re-serialising the parsed fields would
+    /// normalise them (dates, empty-vs-absent fields) and never reproduce the
+    /// original byte string.
+    pub signed_bytes: Vec<u8>,
+
+    /// `true` iff the UIDAI signature was verified while building this record.
+    ///
+    /// Set by the `parse_and_verify_secure_qr_*` entry points; the plain
+    /// `parse_secure_qr_*` entry points leave it `false` (they do not check the
+    /// signature at all — a `false` here means "unchecked", not "invalid").
+    pub signature_verified: bool,
 }
 
 impl AadhaarData {
+    /// Verifies [`Self::signature`] over [`Self::signed_bytes`] against the
+    /// pinned UIDAI document-signer keys (RSASSA-PKCS1-v1_5 / SHA-256).
+    ///
+    /// Returns `Ok(false)` when the signature is well-formed but no UIDAI key
+    /// validates it — i.e. the record was not issued by UIDAI or was modified.
+    /// Errors only on a malformed signature or a record carrying no signed
+    /// bytes (one built by hand rather than by a parser).
+    pub fn verify(&self) -> Result<bool, AadhaarError> {
+        if self.signed_bytes.is_empty() {
+            return Err(AadhaarError::Signature(
+                "record carries no signed bytes to verify".into(),
+            ));
+        }
+        crate::signature::verify_uidai_rsa_sha256(&self.signed_bytes, &self.signature)
+    }
+
     /// Returns `true` when the indicator declares a mobile-number hash.
     pub fn mobile_declared(&self) -> bool {
         self.email_mobile_indicator & 0b01 != 0

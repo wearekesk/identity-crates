@@ -11,8 +11,11 @@ The crate's library name is `aadhaar`.
 - **Secure QR v2** — decode a QR from PNG/JPEG bytes or a luma8 buffer
   ([`decode_qr_from_image_bytes`]) and parse the base-10 digit string into an
   [`AadhaarData`] record ([`parse_secure_qr_text`]); or do both at once with
-  [`parse_secure_qr_image_bytes`]. The raw QR signature bytes are exposed on
-  `AadhaarData::signature` for separate verification.
+  [`parse_secure_qr_image_bytes`]. Confirm the record was issued by UIDAI and is
+  unmodified with **UIDAI signature verification** — [`AadhaarData::verify`] on a
+  parsed record, or [`parse_and_verify_secure_qr_image_bytes`] /
+  [`parse_and_verify_secure_qr_text`] to parse and verify in one call (these fail
+  closed: a bad signature is an error, not an `Ok` record).
 - **Paperless Offline e-KYC** — decrypt the share-phrase ZIP and parse the XML
   into an [`OfflineEkyc`] with **UIDAI digital-signature verification**
   ([`parse_offline_ekyc`]); optionally confirm a claimed contact against the
@@ -31,11 +34,13 @@ for legacy artifacts to still verify.
 ## Usage
 
 ```rust,no_run
-use aadhaar::{parse_secure_qr_image_bytes, verhoeff::validate_aadhaar_syntax};
+use aadhaar::{parse_and_verify_secure_qr_image_bytes, verhoeff::validate_aadhaar_syntax};
 
-// Scan + parse the Secure QR v2 from a card image.
+// Scan + parse + verify the UIDAI signature on the Secure QR v2 of a card image.
+// Errors if the signature does not verify against a pinned UIDAI signer key.
 let bytes: Vec<u8> = std::fs::read("aadhaar_card.png")?;
-let data = parse_secure_qr_image_bytes(&bytes)?;
+let data = parse_and_verify_secure_qr_image_bytes(&bytes)?;
+assert!(data.signature_verified);
 println!("{} (Aadhaar ****{})", data.name, data.last_four_aadhaar);
 
 // Syntactic Aadhaar-number check (Verhoeff). Use a synthetic number here.
