@@ -167,6 +167,24 @@ verifies bytes, it does not go to the network for you (except CRLs, on request).
 `TrustRules::Iso18013_5` (the default) applies the Annex B profile;
 `TrustRules::Aamva` adds the AAMVA-specific constraints on top.
 
+## Which issuers can this verify?
+
+ECDSA over P-256 and P-384. ISO/IEC 18013-5 also permits P-521, Ed25519/Ed448 and the
+brainpool curves; those are not implemented, and an mDL signed with one comes back as
+`MdlError::UnsupportedAlgorithm` — a refusal to answer, never a pass.
+
+In practice this has never bitten anyone: AAMVA issues with P-256, and the EUDI ARF
+mandates ES256 as its floor. To confirm for a specific issuer, read it off a sample
+presentation instead of their PKI documentation:
+
+```rust
+for key in mdl_verify::preflight::response_signer_keys(sample_response)? {
+    println!("{}: {}", key.algorithm, if key.verifiable { "ok" } else { "NOT SUPPORTED" });
+}
+```
+
+Tracked in [#17](https://github.com/wearekesk/identity-crates/issues/17).
+
 ## Failure model
 
 Anything meaning "these bytes are not what the issuer signed" is an error, never a

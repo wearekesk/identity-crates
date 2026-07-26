@@ -53,6 +53,13 @@
 //! turning it off (`default-features = false`) drops reqwest, rustls and `ring`,
 //! which is what lets an Android build work without an NDK.
 //!
+//! # Before you promise it works
+//!
+//! This crate verifies ECDSA over P-256 and P-384, which is every mDL in the wild.
+//! [`preflight::response_signer_keys`] reads the signer's key algorithm out of a
+//! sample response, so "can we verify this issuer?" is a question you answer in
+//! seconds rather than by reading someone's PKI documentation.
+//!
 //! # Where anchors come from
 //!
 //! Normally you supply them. For US mDLs, [`vical`] verifies an AAMVA-style signed
@@ -111,6 +118,7 @@ mod issuer;
 mod transcript;
 mod value;
 
+pub mod preflight;
 pub mod revocation;
 pub mod vical;
 

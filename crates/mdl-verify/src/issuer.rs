@@ -334,7 +334,7 @@ async fn validate_chain<R: RevocationFetcher>(
 }
 
 /// Pull the Document Signer's `x5chain` out of the `IssuerAuth` unprotected header.
-fn x5chain(document: &Document) -> Result<X5Chain, MdlError> {
+pub(crate) fn x5chain(document: &Document) -> Result<X5Chain, MdlError> {
     document
         .issuer_signed
         .issuer_auth
