@@ -19,12 +19,15 @@ categories = ["cryptography", "parser-implementations"]
 publish = false
 
 [dependencies]
-# ISO 18013-5 CBOR/COSE machinery. Pinned to a git rev, not the crates.io 0.2.0
+# ISO 18013-5 CBOR/COSE machinery, with the HTTP client that fetches CRLs (the
+# `revocation` module). Pinned to a git rev, not the crates.io 0.2.0
 # release: 0.2.0 verifies the COSE_Sign1 over the MSO but never binds the disclosed
 # elements to `valueDigests`, and never checks `validityInfo` — a holder could
 # disclose arbitrary values under a genuine issuer signature. Both were fixed in
 # spruceid/isomdl#132 and #133, which are unreleased.
-isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa028a12183ee7fab1e46a5dc" }
+isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa028a12183ee7fab1e46a5dc", features = [
+    "reqwest",
+] }
 # Must track isomdl's x509-cert major: `TrustAnchor.certificate` is an
 # `x509_cert::Certificate`, so the types have to unify.
 x509-cert = { version = "0.2.4", features = ["pem"] }
@@ -42,8 +45,12 @@ thiserror.workspace = true
 [dev-dependencies]
 # The tests issue real, signed mdocs rather than replaying canned blobs, so they
 # reach for the same machinery the library wraps.
-isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa028a12183ee7fab1e46a5dc" }
+isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa028a12183ee7fab1e46a5dc", features = [
+    "reqwest",
+] }
 # Must match isomdl's p256 major — the signing keys cross the boundary.
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 chrono.workspace = true
 hex.workspace = true
+# The `revocation` entry points are async, so the tests need a runtime to drive them.
+tokio = { version = "1", features = ["rt", "macros"] }

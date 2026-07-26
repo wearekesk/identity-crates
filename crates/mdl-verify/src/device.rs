@@ -69,7 +69,7 @@ pub fn verify_presentation(
     Ok(verification)
 }
 
-fn verify_response_device_auth(
+pub(crate) fn verify_response_device_auth(
     response: &DeviceResponse,
     transcript: &SessionTranscript,
     e_reader_key_private: Option<&[u8; 32]>,

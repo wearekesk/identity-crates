@@ -50,6 +50,15 @@ pub enum MdlError {
     #[error("the IACA trust anchor could not be parsed: {0}")]
     Anchor(String),
 
+    /// The CRL checker could not be built — a bad TLS or HTTP client configuration.
+    ///
+    /// Failures to *fetch* a CRL are not errors: they land in
+    /// [`MdlDocument::revocation_errors`](crate::MdlDocument::revocation_errors), and
+    /// an actually-revoked certificate makes the document untrusted rather than
+    /// unreadable.
+    #[error("the CRL checker could not be created: {0}")]
+    Revocation(String),
+
     /// The session transcript is not deterministically-encoded CBOR: re-encoding the
     /// decoded value did not reproduce the input byte-for-byte.
     ///

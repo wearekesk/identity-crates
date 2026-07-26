@@ -38,12 +38,21 @@
 //! replayed forever. That is fine for some server-side flows and fatal for others —
 //! it is a decision this crate makes you make, not one it makes for you.
 //!
+//! # Revocation
+//!
+//! A Document Signer certificate can be revoked after it was issued, and neither
+//! layer above notices. [`revocation::verify_issuer_auth`] fetches and checks the CRL
+//! named in the certificate; those entry points are `async` because fetching is I/O.
+//! A revoked signer comes back as `issuer_trusted = false`, while a CRL that could
+//! not be reached is reported in [`MdlDocument::revocation_errors`] and left for the
+//! caller to have a policy about.
+//!
 //! # What this crate does not do
 //!
 //! No transport, no session establishment, no decryption, no holder side. It takes
 //! the plaintext `DeviceResponse` your reader or OpenID4VP layer produces. Anything
-//! that touches BLE, NFC, or the network is out of scope, in keeping with the rest of
-//! the workspace.
+//! that touches BLE or NFC is out of scope. The only network access is the CRL fetch
+//! in [`revocation`], and only when you call it.
 //!
 //! # Failure model
 //!
@@ -84,6 +93,8 @@ mod error;
 mod issuer;
 mod transcript;
 mod value;
+
+pub mod revocation;
 
 pub use anchor::{IacaAnchor, TrustRules};
 pub use device::{verify_device_auth, verify_presentation};

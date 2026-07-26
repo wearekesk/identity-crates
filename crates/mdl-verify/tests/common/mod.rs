@@ -31,6 +31,16 @@ use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::pkcs8::DecodePrivateKey;
 use p256::PublicKey;
 
+/// The CRL distribution point baked into the Document Signer certificate. The
+/// revocation tests bind this port themselves; changing it means regenerating the
+/// fixtures (see `fixtures/generate.sh`).
+pub const CRL_PORT: u16 = 45871;
+
+/// A CRL that revokes nothing.
+pub const CRL_CLEAN: &[u8] = include_bytes!("../fixtures/crl-clean.der");
+/// The same CRL, with the Document Signer's serial on it.
+pub const CRL_REVOKED: &[u8] = include_bytes!("../fixtures/crl-revoked.der");
+
 pub const DS_CERT: &str = include_str!("../fixtures/ds-cert.pem");
 pub const DS_KEY: &str = include_str!("../fixtures/ds-key.pem");
 pub const IACA_CERT: &str = include_str!("../fixtures/iaca-cert.pem");
@@ -327,4 +337,72 @@ pub fn transcript(nonce: &str) -> SessionTranscript {
 /// Re-encode a response after mutating it.
 pub fn encode(response: &DeviceResponse) -> Vec<u8> {
     cbor::to_vec(response).expect("encode DeviceResponse")
+}
+
+/// A one-file HTTP server that hands out a CRL on [`CRL_PORT`].
+///
+/// Small enough not to be worth a dependency, and it keeps the revocation tests
+/// honest: the CRL really is fetched over a socket by the real HTTP client, not
+/// injected past it.
+pub struct CrlServer {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl CrlServer {
+    /// Serve `body` as `application/pkix-crl` until dropped.
+    pub fn serve(body: &'static [u8]) -> Self {
+        use std::io::{Read, Write};
+        use std::sync::atomic::Ordering;
+
+        let listener = std::net::TcpListener::bind(("127.0.0.1", CRL_PORT))
+            .unwrap_or_else(|e| panic!("bind 127.0.0.1:{CRL_PORT}: {e}"));
+        listener
+            .set_nonblocking(true)
+            .expect("non-blocking listener");
+
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+
+        let thread = std::thread::spawn(move || {
+            while !flag.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        // Read and discard the request line and headers.
+                        let mut scratch = [0u8; 1024];
+                        let _ = stream.read(&mut scratch);
+
+                        let header = format!(
+                            "HTTP/1.1 200 OK\r\n\
+                             Content-Type: application/pkix-crl\r\n\
+                             Content-Length: {}\r\n\
+                             Connection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = stream.write_all(header.as_bytes());
+                        let _ = stream.write_all(body);
+                        let _ = stream.flush();
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+}
+
+impl Drop for CrlServer {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
 }

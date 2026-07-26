@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use isomdl::cbor;
 use isomdl::definitions::device_response::{DeviceResponse, Document};
+use isomdl::definitions::x509::revocation::RevocationFetcher;
 use isomdl::definitions::x509::trust_anchor::TrustAnchorRegistry;
 use isomdl::definitions::x509::validation::{
     ValidationOptions, ValidationOutcome, ValidationRuleset,
@@ -75,6 +76,17 @@ pub struct MdlDocument {
     pub issuer_trusted: bool,
     /// Why the chain was not trusted, verbatim from the certificate profile checks.
     pub trust_errors: Vec<String>,
+    /// Problems encountered *checking* revocation — a CRL that could not be fetched,
+    /// parsed, or whose signature did not verify — as opposed to a certificate that
+    /// actually is revoked, which is a trust failure and lands in
+    /// [`trust_errors`](Self::trust_errors) with `issuer_trusted = false`.
+    ///
+    /// Always populated with a "revocation checking is disabled" note unless the
+    /// `revocation` feature is on and the document went through
+    /// [`crate::revocation`]. Infrastructure failures are reported rather than
+    /// enforced: whether an unreachable CRL should block a presentation is the
+    /// caller's policy call, not this crate's.
+    pub revocation_errors: Vec<String>,
     /// The MSO's validity window and whether we were inside it.
     pub validity: MsoValidity,
     /// The holder proved possession of the device key bound in the MSO. Only ever
@@ -213,10 +225,26 @@ pub fn verify_issuer_auth_with(
     verify_documents(&response, anchors, options)
 }
 
+/// The no-network path: drive the async core with upstream's no-op fetcher.
+///
+/// Nothing in that future actually suspends, so the one-poll executor in
+/// [`crate::block_on`] is enough — no runtime, no network. Enable the `revocation`
+/// feature and use [`crate::revocation`] if you want CRLs checked.
 pub(crate) fn verify_documents(
     response: &DeviceResponse,
     anchors: &[IacaAnchor],
     options: &VerifyOptions,
+) -> Result<MdlVerification, MdlError> {
+    try_block_on(verify_documents_with(response, anchors, options, &()))
+        .ok_or(MdlError::ValidationDidNotComplete)?
+}
+
+/// The verification core, generic over how (or whether) CRLs are fetched.
+pub(crate) async fn verify_documents_with<R: RevocationFetcher>(
+    response: &DeviceResponse,
+    anchors: &[IacaAnchor],
+    options: &VerifyOptions,
+    revocation_fetcher: &R,
 ) -> Result<MdlVerification, MdlError> {
     let documents = response.documents.as_ref().ok_or(MdlError::NoDocuments)?;
 
@@ -242,15 +270,22 @@ pub(crate) fn verify_documents(
 
         let validity = validity(&mso.validity_info, at)?;
 
-        let (issuer_trusted, trust_errors) = if anchors.is_empty() {
+        let (issuer_trusted, trust_errors, revocation_errors) = if anchors.is_empty() {
             (
                 false,
                 vec!["no IACA trust anchors were supplied".to_string()],
+                Vec::new(),
             )
         } else {
-            let outcome = try_block_on(validate_chain(options.rules, &x5chain, &registry, at_odt))
-                .ok_or(MdlError::ValidationDidNotComplete)?;
-            (outcome.success(), outcome.errors)
+            let outcome = validate_chain(
+                options.rules,
+                &x5chain,
+                &registry,
+                at_odt,
+                revocation_fetcher,
+            )
+            .await;
+            (outcome.success(), outcome.errors, outcome.revocation_errors)
         };
 
         verified.push(MdlDocument {
@@ -259,6 +294,7 @@ pub(crate) fn verify_documents(
             signature_verified: true,
             issuer_trusted,
             trust_errors,
+            revocation_errors,
             validity,
             device_authenticated: false,
         });
@@ -271,19 +307,18 @@ pub(crate) fn verify_documents(
 }
 
 /// Run the certificate profile checks against the anchors, at a pinned time.
-async fn validate_chain(
+async fn validate_chain<R: RevocationFetcher>(
     rules: TrustRules,
     x5chain: &X5Chain,
     registry: &TrustAnchorRegistry,
     at: time::OffsetDateTime,
+    revocation_fetcher: &R,
 ) -> ValidationOutcome {
     let options = ValidationOptions {
         validation_time: Some(at),
     };
-    // `&()` is upstream's no-op revocation fetcher: no CRL is fetched, so this
-    // future never suspends. See `crate::block_on`.
     ValidationRuleset::from(rules)
-        .validate_with_options(x5chain, registry, &(), &options)
+        .validate_with_options(x5chain, registry, revocation_fetcher, &options)
         .await
 }
 
