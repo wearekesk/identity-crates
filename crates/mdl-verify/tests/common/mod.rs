@@ -45,6 +45,8 @@ pub const DS_CERT: &str = include_str!("../fixtures/ds-cert.pem");
 pub const DS_KEY: &str = include_str!("../fixtures/ds-key.pem");
 pub const IACA_CERT: &str = include_str!("../fixtures/iaca-cert.pem");
 pub const OTHER_IACA_CERT: &str = include_str!("../fixtures/other-iaca-cert.pem");
+/// A P-521 signer, for the unsupported-curve path.
+pub const P521_DS_CERT: &str = include_str!("../fixtures/p521-ds-cert.pem");
 
 /// Verification time for every test.
 ///

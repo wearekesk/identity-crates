@@ -27,6 +27,18 @@ pub enum MdlError {
     #[error("the document is not issuer-authentic: {0}")]
     Tampered(String),
 
+    /// The Document Signer's key is on a curve this crate cannot verify.
+    ///
+    /// ISO/IEC 18013-5 permits P-256, P-384, P-521, Ed25519/Ed448 and the brainpool
+    /// curves; the underlying library implements P-256 and P-384. US mDLs use P-256
+    /// in practice, so this is mostly a question for other ecosystems.
+    ///
+    /// Distinct from [`Tampered`](Self::Tampered) on purpose: this means the
+    /// signature could not be *checked*, not that it failed. Treat it as a refusal to
+    /// answer, never as a pass.
+    #[error("the document signer's key algorithm is not supported: {0}")]
+    UnsupportedAlgorithm(String),
+
     /// The document signer certificate is missing from the `IssuerAuth` unprotected
     /// header, or is not a parseable `x5chain`.
     #[error("the document signer certificate chain is missing or unparseable: {0}")]

@@ -17,6 +17,7 @@ use isomdl::definitions::x509::validation::{
 use isomdl::definitions::x509::X5Chain;
 use isomdl::definitions::ValidityInfo;
 use isomdl::presentation::authentication::mdoc::issuer_authentication;
+use isomdl::presentation::reader::Error as ReaderError;
 
 use crate::anchor::{registry, IacaAnchor, TrustRules};
 use crate::block_on::try_block_on;
@@ -255,8 +256,18 @@ pub(crate) async fn verify_documents_with<R: RevocationFetcher>(
     let mut verified = Vec::new();
     for document in documents.iter() {
         let x5chain = x5chain(document)?;
-        let mso = issuer_authentication(x5chain.clone(), &document.issuer_signed)
-            .map_err(|e| MdlError::Tampered(e.to_string()))?;
+        let mso =
+            issuer_authentication(x5chain.clone(), &document.issuer_signed).map_err(
+                |e| match e {
+                    // "I cannot check this" is not "this failed the check" — a caller who
+                    // conflates the two ends up reporting a forgery for an algorithm they
+                    // simply do not support.
+                    ReaderError::IssuerPublicKey(_) => {
+                        MdlError::UnsupportedAlgorithm(e.to_string())
+                    }
+                    other => MdlError::Tampered(other.to_string()),
+                },
+            )?;
 
         // ISO/IEC 18013-5 §8.3.2.1.2.2: the MSO's docType is what the issuer signed;
         // the Document's is what the holder claims. They must agree, or a holder

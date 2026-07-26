@@ -106,6 +106,16 @@ openssl ca -batch -config openssl.cnf -revoke ds-cert.pem
 openssl ca -batch -config openssl.cnf -gencrl -out crl-revoked.pem
 openssl crl -in crl-revoked.pem -outform DER -out crl-revoked.der
 
+# --- A P-521 signer, for the unsupported-curve test ------------------------
+# ISO 18013-5 permits P-521; the library underneath implements P-256 and P-384. The
+# tests use this to prove that shows up as "cannot verify", not as "forged".
+openssl ecparam -name secp521r1 -genkey -noout -out p521-key.pem
+openssl req -new -x509 -key p521-key.pem -sha512 -days 7300 \
+    -subj "/C=${COUNTRY}/ST=${STATE}/CN=identity-crates P-521 signer" \
+    -extensions ds -config openssl.cnf \
+    -out p521-ds-cert.pem
+rm -f p521-key.pem
+
 # --- An unrelated IACA, for the "wrong anchor" test ------------------------
 openssl ecparam -name prime256v1 -genkey -noout -out other-iaca-key.pem
 openssl req -new -x509 -key other-iaca-key.pem -sha256 -days 7300 \
@@ -119,7 +129,7 @@ rm -rf newcerts index.txt index.txt.old index.txt.attr index.txt.attr.old \
        crl-clean.pem crl-revoked.pem other-iaca-key.pem iaca-key.pem
 
 echo "regenerated:"
-echo "  iaca-cert.pem, ds-cert.pem, ds-key.pem, other-iaca-cert.pem"
+echo "  iaca-cert.pem, ds-cert.pem, ds-key.pem, other-iaca-cert.pem, p521-ds-cert.pem"
 echo "  crl-clean.der, crl-revoked.der"
 echo
 echo "Document Signer validity window:"

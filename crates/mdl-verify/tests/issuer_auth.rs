@@ -7,6 +7,7 @@ use common::{
 };
 use isomdl::definitions::helpers::{NonEmptyMap, NonEmptyVec, Tag24};
 use isomdl::definitions::issuer_signed::IssuerSignedItemBytes;
+use isomdl::definitions::x509::X5Chain;
 use mdl_verify::{
     verify_issuer_auth, verify_issuer_auth_with, IacaAnchor, MdlError, MdlValue, TrustRules,
     VerifyOptions,
@@ -326,6 +327,42 @@ fn duplicate_map_keys_are_not_collapsed() {
     assert_eq!(
         extension.get("k").and_then(MdlValue::as_text),
         Some("first")
+    );
+}
+
+/// ISO/IEC 18013-5 allows P-521 issuer keys; the library underneath implements P-256
+/// and P-384. What matters is that the gap reports as "cannot verify" rather than as
+/// "forged" — a caller who conflates the two accuses an issuer of forgery over an
+/// algorithm they merely do not support.
+#[test]
+fn an_unsupported_signer_curve_is_refused_not_called_tampering() {
+    let mut response = ResponseBuilder::default().build_response();
+
+    let p521_chain = X5Chain::builder()
+        .with_pem_certificate(common::P521_DS_CERT.as_bytes())
+        .expect("load the P-521 certificate")
+        .build()
+        .expect("build x5chain");
+
+    let document = response
+        .documents
+        .as_mut()
+        .unwrap()
+        .iter_mut()
+        .next()
+        .unwrap();
+
+    for (label, value) in &mut document.issuer_signed.issuer_auth.unprotected.rest {
+        if label == &coset::Label::Int(33) {
+            *value = p521_chain.into_cbor();
+        }
+    }
+
+    let result = verify_issuer_auth_with(&encode(&response), &[iaca_anchor()], &options());
+
+    assert!(
+        matches!(result, Err(MdlError::UnsupportedAlgorithm(_))),
+        "an unverifiable curve must not be reported as tampering: {result:?}"
     );
 }
 
