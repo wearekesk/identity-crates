@@ -53,6 +53,13 @@
 //! turning it off (`default-features = false`) drops reqwest, rustls and `ring`,
 //! which is what lets an Android build work without an NDK.
 //!
+//! # Where anchors come from
+//!
+//! Normally you supply them. For US mDLs, [`vical`] verifies an AAMVA-style signed
+//! list of IACA certificates and hands back the anchors it vouches for, scoped to the
+//! document type they are good for — so the set stays current without being
+//! hand-managed.
+//!
 //! # What this crate does not do
 //!
 //! No transport, no session establishment, no decryption, no holder side. It takes
@@ -105,6 +112,7 @@ mod transcript;
 mod value;
 
 pub mod revocation;
+pub mod vical;
 
 pub use anchor::{IacaAnchor, TrustRules};
 pub use device::{verify_device_auth, verify_presentation};

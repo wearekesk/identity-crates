@@ -394,7 +394,7 @@ fn validity(info: &ValidityInfo, at: DateTime<Utc>) -> Result<MsoValidity, MdlEr
 /// second ago could still be reported as trusted. Nanoseconds are carried through as
 /// an `i128` rather than via `timestamp_nanos_opt`, which is only valid between 1677
 /// and 2262.
-fn to_offset_date_time(at: DateTime<Utc>) -> Result<time::OffsetDateTime, MdlError> {
+pub(crate) fn to_offset_date_time(at: DateTime<Utc>) -> Result<time::OffsetDateTime, MdlError> {
     let nanos =
         i128::from(at.timestamp()) * 1_000_000_000 + i128::from(at.timestamp_subsec_nanos());
 

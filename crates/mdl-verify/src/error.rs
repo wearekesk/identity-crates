@@ -50,6 +50,15 @@ pub enum MdlError {
     #[error("the IACA trust anchor could not be parsed: {0}")]
     Anchor(String),
 
+    /// A VICAL could not be verified: the provider's signature did not check out,
+    /// their signer did not chain to a supplied authority, or the list itself was
+    /// malformed.
+    ///
+    /// There is no half-verified state worth returning here — an unverified list of
+    /// trust anchors is just a list of certificates.
+    #[error("the VICAL could not be verified: {0}")]
+    Vical(String),
+
     /// The CRL checker could not be built — a bad TLS or HTTP client configuration.
     ///
     /// Failures to *fetch* a CRL are not errors: they land in

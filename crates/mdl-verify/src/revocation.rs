@@ -89,6 +89,7 @@ use isomdl::cbor;
 use isomdl::definitions::device_response::DeviceResponse;
 
 use crate::issuer::{verify_documents_with, MdlVerification, VerifyOptions};
+use crate::vical::{Vical, VicalAuthority};
 use crate::{IacaAnchor, MdlError, SessionTranscript};
 
 /// Implement [`HttpClient`] for your own transport.
@@ -246,6 +247,20 @@ pub async fn verify_presentation<C: HttpClient>(
     Ok(verification)
 }
 
+/// [`crate::vical::verify`], additionally checking the VICAL signer against its CRL.
+///
+/// Worth doing for a trust-anchor list specifically: a compromised VICAL signer can
+/// hand you a list of issuers of its choosing, which is a broader failure than any
+/// single revoked document signer.
+pub async fn verify_vical<C: HttpClient>(
+    vical: &[u8],
+    authorities: &[VicalAuthority],
+    options: &VerifyOptions,
+    crl: &CrlChecker<C>,
+) -> Result<Vical, MdlError> {
+    crate::vical::verify_with(vical, authorities, options, &crl.fetcher).await
+}
+
 /// A [`CrlChecker`] with its own runtime, for callers that have none.
 ///
 /// This exists for reader apps reaching the crate through an FFI boundary — UniFFI,
@@ -307,6 +322,21 @@ impl<C: HttpClient> BlockingCrlChecker<C> {
             options,
             &self.checker,
         ))
+    }
+
+    /// [`verify_vical`], driven to completion on this checker's runtime.
+    ///
+    /// # Panics
+    ///
+    /// If called from inside another async runtime.
+    pub fn verify_vical(
+        &self,
+        vical: &[u8],
+        authorities: &[VicalAuthority],
+        options: &VerifyOptions,
+    ) -> Result<Vical, MdlError> {
+        self.runtime
+            .block_on(verify_vical(vical, authorities, options, &self.checker))
     }
 
     /// [`verify_presentation`], driven to completion on this checker's runtime.

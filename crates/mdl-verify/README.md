@@ -135,11 +135,34 @@ runtime — reader apps reaching the crate over FFI. See [docs/flutter.md](docs/
 
 ## Trust anchors
 
-IACA roots are per-jurisdiction — US state DMVs distribute theirs through the AAMVA
-Digital Trust Service, EU issuers through their own lists. Sourcing and rotation is
-the caller's job, as with the CSCA masterlist in [`dmrtd`](../dmrtd). Verifying with
-an empty anchor list is allowed and useful: signatures and digests are still checked
-and the result reports `issuer_trusted = false`.
+IACA roots are per-jurisdiction. Verifying with an empty anchor list is allowed and
+useful: signatures and digests are still checked, and the result reports
+`issuer_trusted = false`.
+
+For US mDLs you do not have to hand-manage the set. AAMVA's Digital Trust Service
+publishes a **VICAL** (ISO/IEC 18013-5 Annex C) — a `COSE_Sign1` over the list of IACA
+certificates. Verify it once against their root and use what it vouches for:
+
+```rust
+use mdl_verify::{vical, VerifyOptions, MDL_DOC_TYPE};
+
+let authorities = [vical::VicalAuthority::from_pem(aamva_dts_root_pem)?];
+let list = vical::verify(vical_bytes, &authorities, &VerifyOptions::default())?;
+
+// Scoped to document type — an entry good for mDLs is not automatically good for
+// a photo ID.
+let anchors = list.anchors_for(MDL_DOC_TYPE);
+let verification = mdl_verify::verify_issuer_auth(device_response, &anchors)?;
+```
+
+Verifying a VICAL establishes that the provider signed that list and that their signer
+chains to a root you trust. It says nothing about whether an individual IACA in it is
+still fit to trust — the per-document chain checks and CRLs still run afterwards.
+
+A VICAL is a snapshot, and serving a stale one is how a removed issuer stays trusted;
+`Vical::is_stale_at` answers that against the provider's own `nextUpdate`. Fetching it
+is the caller's job, as with the CSCA masterlist in [`dmrtd`](../dmrtd) — this crate
+verifies bytes, it does not go to the network for you (except CRLs, on request).
 
 `TrustRules::Iso18013_5` (the default) applies the Annex B profile;
 `TrustRules::Aamva` adds the AAMVA-specific constraints on top.
