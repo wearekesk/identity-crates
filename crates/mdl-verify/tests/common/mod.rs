@@ -344,6 +344,10 @@ pub fn encode(response: &DeviceResponse) -> Vec<u8> {
 /// Small enough not to be worth a dependency, and it keeps the revocation tests
 /// honest: the CRL really is fetched over a socket by the real HTTP client, not
 /// injected past it.
+/// `#[must_use]` because this is an RAII guard: `CrlServer::serve(..);` as a bare
+/// statement drops at the semicolon, and the test then fails with a connection error
+/// that looks nothing like the mistake that caused it.
+#[must_use]
 pub struct CrlServer {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -355,8 +359,21 @@ impl CrlServer {
         use std::io::{Read, Write};
         use std::sync::atomic::Ordering;
 
-        let listener = std::net::TcpListener::bind(("127.0.0.1", CRL_PORT))
-            .unwrap_or_else(|e| panic!("bind 127.0.0.1:{CRL_PORT}: {e}"));
+        // The port is fixed — it is baked into the certificate's distribution point —
+        // so sockets from a previous test may still be draining. Retry briefly rather
+        // than fail a CI run on a TIME_WAIT race.
+        let listener = (0..50)
+            .find_map(
+                |_| match std::net::TcpListener::bind(("127.0.0.1", CRL_PORT)) {
+                    Ok(listener) => Some(listener),
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                        None
+                    }
+                },
+            )
+            .unwrap_or_else(|| panic!("could not bind 127.0.0.1:{CRL_PORT} within a second"));
+
         listener
             .set_nonblocking(true)
             .expect("non-blocking listener");

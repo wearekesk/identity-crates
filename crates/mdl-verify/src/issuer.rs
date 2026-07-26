@@ -387,7 +387,17 @@ fn validity(info: &ValidityInfo, at: DateTime<Utc>) -> Result<MsoValidity, MdlEr
     })
 }
 
+/// Convert to the type the certificate checks want, keeping subsecond precision.
+///
+/// Truncating to whole seconds here would let the chain be judged at a marginally
+/// earlier instant than the MSO — enough that a certificate which expired less than a
+/// second ago could still be reported as trusted. Nanoseconds are carried through as
+/// an `i128` rather than via `timestamp_nanos_opt`, which is only valid between 1677
+/// and 2262.
 fn to_offset_date_time(at: DateTime<Utc>) -> Result<time::OffsetDateTime, MdlError> {
-    time::OffsetDateTime::from_unix_timestamp(at.timestamp())
+    let nanos =
+        i128::from(at.timestamp()) * 1_000_000_000 + i128::from(at.timestamp_subsec_nanos());
+
+    time::OffsetDateTime::from_unix_timestamp_nanos(nanos)
         .map_err(|e| MdlError::Unreadable(format!("verification time is out of range: {e}")))
 }

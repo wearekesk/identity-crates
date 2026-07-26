@@ -71,13 +71,17 @@ actually shows.
 use std::sync::OnceLock;
 
 use mdl_verify::{
-    revocation::BlockingCrlChecker, IacaAnchor, MdlError, SessionTranscript, VerifyOptions,
+    revocation::{BlockingCrlChecker, ReqwestClient},
+    IacaAnchor, MdlError, SessionTranscript, VerifyOptions,
 };
 
 /// One checker for the life of the process: it caches CRLs, so building a new one
 /// per scan would refetch every time.
-fn crl() -> &'static BlockingCrlChecker {
-    static CRL: OnceLock<BlockingCrlChecker> = OnceLock::new();
+///
+/// `BlockingCrlChecker` is generic over the HTTP client. This uses the bundled one;
+/// with `default-features = false` you name your own type here instead.
+fn crl() -> &'static BlockingCrlChecker<ReqwestClient> {
+    static CRL: OnceLock<BlockingCrlChecker<ReqwestClient>> = OnceLock::new();
     CRL.get_or_init(|| BlockingCrlChecker::new().expect("build CRL checker"))
 }
 

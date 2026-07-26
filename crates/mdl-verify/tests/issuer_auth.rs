@@ -8,7 +8,8 @@ use common::{
 use isomdl::definitions::helpers::{NonEmptyMap, NonEmptyVec, Tag24};
 use isomdl::definitions::issuer_signed::IssuerSignedItemBytes;
 use mdl_verify::{
-    verify_issuer_auth, verify_issuer_auth_with, IacaAnchor, MdlError, TrustRules, VerifyOptions,
+    verify_issuer_auth, verify_issuer_auth_with, IacaAnchor, MdlError, MdlValue, TrustRules,
+    VerifyOptions,
 };
 
 fn options() -> VerifyOptions {
@@ -63,8 +64,7 @@ fn discloses_the_elements_the_issuer_signed() {
     let privileges = mdl.driving_privileges().expect("driving_privileges");
     assert_eq!(
         privileges[0]
-            .as_map()
-            .and_then(|m| m.get("vehicle_category_code"))
+            .get("vehicle_category_code")
             .and_then(|v| v.as_text()),
         Some("B")
     );
@@ -246,6 +246,87 @@ fn a_non_mdl_doc_type_is_returned_but_not_as_an_mdl() {
     assert!(verification.mdl().is_none());
     assert_eq!(verification.documents.len(), 1);
     assert!(verification.documents[0].is_authentic());
+}
+
+/// CBOR keys are arbitrary values, and issuer extensions do use integer ones.
+/// Projecting into a string-keyed map would fail a presentation the issuer signed and
+/// whose digests already checked out — the data must survive to the caller.
+#[test]
+fn element_values_with_non_text_map_keys_survive() {
+    let mut elements = common::full_elements();
+    elements.insert(
+        "issuer_extension".to_string(),
+        ciborium::Value::Map(vec![
+            (
+                ciborium::Value::Integer(7.into()),
+                ciborium::Value::Text("integer-keyed".to_string()),
+            ),
+            (
+                ciborium::Value::Text("nested".to_string()),
+                ciborium::Value::Tag(
+                    99,
+                    Box::new(ciborium::Value::Text("unknown tag".to_string())),
+                ),
+            ),
+        ]),
+    );
+
+    let response = ResponseBuilder::default().elements(elements).build();
+    let verification =
+        verify_issuer_auth_with(&response, &[iaca_anchor()], &options()).expect("verifies");
+    let mdl = verification.mdl().expect("mDL");
+
+    let extension = mdl.iso("issuer_extension").expect("extension disclosed");
+    let entries = extension.as_map().expect("a map");
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].0.as_int(), Some(7));
+    assert_eq!(entries[0].1.as_text(), Some("integer-keyed"));
+
+    // An unrecognised tag is preserved rather than quietly discarded.
+    assert!(matches!(
+        extension.get("nested"),
+        Some(MdlValue::Tagged { tag: 99, .. })
+    ));
+    assert_eq!(
+        extension.get("nested").map(MdlValue::untagged),
+        Some(&MdlValue::Text("unknown tag".to_string()))
+    );
+}
+
+/// A map with a repeated key is malformed, but it is what the issuer signed — hand
+/// back both entries rather than silently keeping the last one.
+#[test]
+fn duplicate_map_keys_are_not_collapsed() {
+    let mut elements = common::full_elements();
+    elements.insert(
+        "issuer_extension".to_string(),
+        ciborium::Value::Map(vec![
+            (
+                ciborium::Value::Text("k".to_string()),
+                ciborium::Value::Text("first".to_string()),
+            ),
+            (
+                ciborium::Value::Text("k".to_string()),
+                ciborium::Value::Text("second".to_string()),
+            ),
+        ]),
+    );
+
+    let response = ResponseBuilder::default().elements(elements).build();
+    let verification =
+        verify_issuer_auth_with(&response, &[iaca_anchor()], &options()).expect("verifies");
+
+    let extension = verification
+        .mdl()
+        .expect("mDL")
+        .iso("issuer_extension")
+        .expect("extension disclosed");
+
+    assert_eq!(extension.as_map().expect("a map").len(), 2);
+    assert_eq!(
+        extension.get("k").and_then(MdlValue::as_text),
+        Some("first")
+    );
 }
 
 #[test]

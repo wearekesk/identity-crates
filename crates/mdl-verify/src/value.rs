@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use crate::MdlError;
 
 /// A disclosed data element value.
@@ -20,8 +18,22 @@ pub enum MdlValue {
     /// (tag 0, an RFC 3339 timestamp). ISO/IEC 18013-5 uses both — `birth_date` and
     /// `expiry_date` are `full-date`, `portrait_capture_date` is a `tdate`.
     Date(String),
+    /// Any other CBOR tag, kept rather than dropped: an issuer-defined extension may
+    /// carry semantics in the tag, and this crate is not in a position to decide the
+    /// tag was unimportant.
+    Tagged {
+        tag: u64,
+        value: Box<MdlValue>,
+    },
     Array(Vec<MdlValue>),
-    Map(BTreeMap<String, MdlValue>),
+    /// A CBOR map, as an ordered list of pairs.
+    ///
+    /// Not a `BTreeMap<String, _>`: CBOR keys are arbitrary values, and issuers do use
+    /// integer keys. Projecting into a string map would mean either rejecting a
+    /// perfectly valid, issuer-signed element or silently dropping duplicate keys —
+    /// both worse than handing back what was actually signed. Use
+    /// [`get`](Self::get) for the common text-keyed lookup.
+    Map(Vec<(MdlValue, MdlValue)>),
 }
 
 impl MdlValue {
@@ -69,10 +81,31 @@ impl MdlValue {
         }
     }
 
-    pub fn as_map(&self) -> Option<&BTreeMap<String, MdlValue>> {
+    pub fn as_map(&self) -> Option<&[(MdlValue, MdlValue)]> {
         match self {
             Self::Map(m) => Some(m),
             _ => None,
+        }
+    }
+
+    /// Look up a text key in a [`MdlValue::Map`] — the common case, e.g. reading
+    /// `vehicle_category_code` out of an entry in `driving_privileges`.
+    ///
+    /// Returns the first match; a map with duplicate keys is malformed, but it is
+    /// preserved rather than silently collapsed, so
+    /// [`as_map`](Self::as_map) can still see both.
+    pub fn get(&self, key: &str) -> Option<&MdlValue> {
+        self.as_map()?
+            .iter()
+            .find(|(k, _)| k.as_text() == Some(key))
+            .map(|(_, value)| value)
+    }
+
+    /// Strip a [`MdlValue::Tagged`] wrapper, if there is one.
+    pub fn untagged(&self) -> &MdlValue {
+        match self {
+            Self::Tagged { value, .. } => value.untagged(),
+            other => other,
         }
     }
 }
@@ -95,10 +128,12 @@ impl TryFrom<&ciborium::Value> for MdlValue {
             ciborium::Value::Null => Self::Null,
             ciborium::Value::Tag(tag, inner) => match (*tag, inner.as_ref()) {
                 (TAG_TDATE | TAG_FULL_DATE, ciborium::Value::Text(s)) => Self::Date(s.clone()),
-                // Any other tag: keep the value, drop the tag. Tags in mdoc element
-                // values are date hints; an unknown one should not fail the whole
-                // verification, and the untagged value is still faithful.
-                _ => Self::try_from(inner.as_ref())?,
+                // Any other tag is kept. Dropping it would quietly change the meaning
+                // of an issuer-signed extension value.
+                _ => Self::Tagged {
+                    tag: *tag,
+                    value: Box::new(Self::try_from(inner.as_ref())?),
+                },
             },
             ciborium::Value::Array(items) => Self::Array(
                 items
@@ -106,18 +141,12 @@ impl TryFrom<&ciborium::Value> for MdlValue {
                     .map(Self::try_from)
                     .collect::<Result<Vec<_>, _>>()?,
             ),
-            ciborium::Value::Map(entries) => {
-                let mut map = BTreeMap::new();
-                for (key, value) in entries {
-                    let key = key.as_text().ok_or_else(|| {
-                        MdlError::Unreadable(format!(
-                            "element value contains a map with a non-text key: {key:?}"
-                        ))
-                    })?;
-                    map.insert(key.to_string(), Self::try_from(value)?);
-                }
-                Self::Map(map)
-            }
+            ciborium::Value::Map(entries) => Self::Map(
+                entries
+                    .iter()
+                    .map(|(key, value)| Ok((Self::try_from(key)?, Self::try_from(value)?)))
+                    .collect::<Result<Vec<_>, MdlError>>()?,
+            ),
             other => {
                 return Err(MdlError::Unreadable(format!(
                     "unsupported CBOR in element value: {other:?}"

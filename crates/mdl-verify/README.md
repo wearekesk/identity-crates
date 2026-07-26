@@ -37,9 +37,11 @@ transcript.
 Device authentication signs over the `SessionTranscript`, whose shape depends on how
 the credential was presented and is still moving between drafts. Rather than model
 each variant and go stale, `SessionTranscript::from_cbor` adopts the transcript your
-session layer already built, and rejects anything that is not deterministically
-encoded — a transcript this crate cannot reproduce byte-for-byte would silently
-verify against something the holder never signed.
+session layer already built, and rejects anything it cannot re-encode byte-for-byte —
+otherwise a mismatch surfaces later as a signature failure, indistinguishable from a
+real one. It checks reproducibility, not canonical form: the transcript comes from
+your session layer rather than the holder, and a holder that signed non-canonically
+ordered bytes must still verify against exactly those bytes.
 
 `SessionTranscript::openid4vp_handover` (ISO 18013-7 Annex B) and
 `SessionTranscript::openid4vp_dcapi_handover` (OpenID4VP 1.0 over the W3C Digital
@@ -67,6 +69,7 @@ distribution point:
 
 ```rust
 use mdl_verify::revocation::{verify_issuer_auth, CrlChecker};
+use mdl_verify::VerifyOptions;
 
 // Build once and share — CRLs are cached, not refetched per presentation.
 let crl = CrlChecker::new()?;

@@ -121,6 +121,9 @@ rm -rf newcerts index.txt index.txt.old index.txt.attr index.txt.attr.old \
 echo "regenerated:"
 echo "  iaca-cert.pem, ds-cert.pem, ds-key.pem, other-iaca-cert.pem"
 echo "  crl-clean.der, crl-revoked.der"
-echo "NOTE: the DS certificate is valid for 400 days from today; the tests pin"
-echo "      their verification time, so update TEST_TIME in tests/common/mod.rs"
-echo "      to a date inside the new window."
+echo
+echo "Document Signer validity window:"
+openssl x509 -in ds-cert.pem -noout -dates | sed 's/^/  /'
+echo
+echo "NOTE: the tests pin their verification time. Move test_time() in"
+echo "      tests/common/mod.rs to a date inside the window printed above."

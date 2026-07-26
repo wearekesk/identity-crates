@@ -6,8 +6,10 @@
 //! last week — for that the verifier has to go and look, which means fetching the CRL
 //! named in the certificate's CRL distribution point.
 //!
-//! Build a [`CrlChecker`] once — it caches, so a busy verifier is not refetching the
-//! same list for every presentation — and hand it to each verification:
+//! Build a [`CrlChecker`] once and hand it to each verification. With the default
+//! `bundled-http-client` feature it caches, so a busy verifier is not refetching the
+//! same list for every presentation; without that feature the fetch is uncached and
+//! you should wrap your own client in whatever cache the platform offers.
 //!
 //! ```no_run
 //! use mdl_verify::{

@@ -36,12 +36,21 @@ impl SessionTranscript {
     ///
     /// The bytes are decoded and re-encoded, and rejected with
     /// [`MdlError::NonCanonicalTranscript`] if that does not reproduce the input
-    /// exactly. That check matters: this crate hands the decoded value to the COSE
-    /// layer, which re-encodes it before verifying. If the two encodings could
-    /// differ, a genuine presentation would fail — or worse, a crafted non-canonical
-    /// transcript could verify against something the holder never signed. ISO/IEC
-    /// 18013-5 §9.1.5 requires deterministic encoding, so conforming implementations
-    /// round-trip cleanly.
+    /// exactly.
+    ///
+    /// The check is *reproducibility*, not canonical form. This crate hands the
+    /// decoded value to the COSE layer, which re-encodes it while building
+    /// `DeviceAuthentication`; if that re-encoding could differ from what you passed
+    /// in, verification would fail for a reason indistinguishable from a bad
+    /// signature. Catching it here turns a mystery into a clear error. In practice
+    /// the inputs that fail are the non-deterministic ones — indefinite-length items,
+    /// non-minimal integers — which ISO/IEC 18013-5 §9.1.5 forbids anyway.
+    ///
+    /// It deliberately does *not* enforce deterministic map ordering. The transcript
+    /// is built by your session layer, not supplied by the holder, so there is no
+    /// attacker input to police here — and a holder that signed a non-canonically
+    /// ordered transcript must still verify against those exact bytes. Canonicalising
+    /// would reject genuine presentations.
     pub fn from_cbor(bytes: &[u8]) -> Result<Self, MdlError> {
         let value: ciborium::Value = cbor::from_slice(bytes).map_err(|e| {
             MdlError::Unreadable(format!("session transcript is not valid CBOR: {e}"))
