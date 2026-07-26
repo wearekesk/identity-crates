@@ -62,7 +62,7 @@ const NAMED: &[(&str, &str, bool)] = &[
 ];
 
 impl SignerKey {
-    fn of(certificate: &Certificate) -> Self {
+    pub(crate) fn of(certificate: &Certificate) -> Self {
         let spki = &certificate.tbs_certificate.subject_public_key_info;
         let algorithm = spki.algorithm.oid.to_string();
 

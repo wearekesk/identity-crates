@@ -14,12 +14,13 @@ static AAMVA_VICAL: &[u8] = include_bytes!("fixtures/vical/aamva-vical-2025-11-1
 static AAMVA_ROOT: &str = include_str!("fixtures/vical/aamva_ca_root.crt");
 static AAMVA_INTERMEDIATE: &str = include_str!("fixtures/vical/aamva_ca_intermediate.crt");
 
-/// The AAMVA VICAL signer certificate ran from 2023-04-18 to 2026-04-18. Pinned to a
-/// date inside that window so the fixture does not rot; also after the AAMVA CRL's
-/// `thisUpdate`, which the chain checks care about.
+/// Pinned so the fixture does not rot, and chosen to sit *after* the list was
+/// published (2025-11-18) and before its signer expired (2026-04-18). Verifying at a
+/// time before publication would happily accept a future-dated list, which is not a
+/// property worth testing for.
 fn at_signing_time() -> VerifyOptions {
     VerifyOptions {
-        at: Some(Utc.with_ymd_and_hms(2025, 1, 1, 0, 0, 0).unwrap()),
+        at: Some(Utc.with_ymd_and_hms(2025, 12, 1, 0, 0, 0).unwrap()),
         ..Default::default()
     }
 }
@@ -53,6 +54,11 @@ fn the_aamva_vical_verifies_and_yields_issuer_anchors() {
         .entries
         .iter()
         .any(|e| e.issuing_authority.is_some() && e.state_or_province.is_some()));
+
+    assert!(
+        list.issued < at_signing_time().at.unwrap(),
+        "verifying before the list was published would not prove much"
+    );
 
     println!(
         "{} issued {} with {} issuers",
@@ -145,5 +151,8 @@ fn staleness_is_reported_against_next_update() {
     };
 
     assert!(!list.is_stale_at(next_update - chrono::Duration::days(1)));
+    // The deadline itself is already past due — the provider said a new list would be
+    // out by then.
+    assert!(list.is_stale_at(next_update));
     assert!(list.is_stale_at(next_update + chrono::Duration::days(1)));
 }

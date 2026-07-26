@@ -258,17 +258,34 @@ final result = await verify(
   eReaderKey: readerKey,           // required if the holder used DeviceMac
 );
 
+// Issuer-signed, chained to a trusted IACA, inside its validity window.
 if (!result.authentic) {
   return Denied(reasons: result.trustErrors);
 }
-if (result.revocationErrors.isNotEmpty) {
-  // The CRL could not be reached. Fail open or closed — your call.
-  log('revocation not established: ${result.revocationErrors}');
+
+// A reader app is doing a live presentation, so require holder possession. Without
+// it, a response captured off the wire once replays forever.
+if (!result.deviceAuthenticated) {
+  return Denied(reasons: ['device authentication not established']);
 }
+
+// The CRL could not be checked, so "not revoked" is unproven rather than true.
+// Failing closed is the right default for an in-person check; a deployment that
+// must work offline can decide otherwise, deliberately and in one place.
+if (result.revocationErrors.isNotEmpty) {
+  return Denied(reasons: result.revocationErrors);
+}
+
 if (result.ageOver21 == true) {
   return Allowed(portrait: result.portrait);
 }
+return Denied(reasons: ['age not attested']);
 ```
+
+Note what that does *not* do: it never reaches `Allowed` on an unproven result.
+`authentic` covers the issuer's signature and trust chain, `deviceAuthenticated`
+covers the holder, and an unchecked CRL is treated as unknown rather than clean. Each
+is a separate decision, and each defaults to no.
 
 ## Gotchas
 

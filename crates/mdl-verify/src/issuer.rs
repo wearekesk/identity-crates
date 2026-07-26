@@ -14,10 +14,10 @@ use isomdl::definitions::x509::trust_anchor::TrustAnchorRegistry;
 use isomdl::definitions::x509::validation::{
     ValidationOptions, ValidationOutcome, ValidationRuleset,
 };
+use isomdl::definitions::x509::SupportedCurve;
 use isomdl::definitions::x509::X5Chain;
 use isomdl::definitions::ValidityInfo;
 use isomdl::presentation::authentication::mdoc::issuer_authentication;
-use isomdl::presentation::reader::Error as ReaderError;
 
 use crate::anchor::{registry, IacaAnchor, TrustRules};
 use crate::block_on::try_block_on;
@@ -256,18 +256,20 @@ pub(crate) async fn verify_documents_with<R: RevocationFetcher>(
     let mut verified = Vec::new();
     for document in documents.iter() {
         let x5chain = x5chain(document)?;
-        let mso =
-            issuer_authentication(x5chain.clone(), &document.issuer_signed).map_err(
-                |e| match e {
-                    // "I cannot check this" is not "this failed the check" — a caller who
-                    // conflates the two ends up reporting a forgery for an algorithm they
-                    // simply do not support.
-                    ReaderError::IssuerPublicKey(_) => {
-                        MdlError::UnsupportedAlgorithm(e.to_string())
-                    }
-                    other => MdlError::Tampered(other.to_string()),
-                },
-            )?;
+        // Ask about the curve up front rather than inferring it from a failure.
+        // Upstream's `IssuerPublicKey` error covers both "this curve is not
+        // implemented" and "this key is malformed", and those must not look alike: the
+        // first is our capability gap, the second is a bad credential. Checking here
+        // keeps that honest, and lets the error name the algorithm instead of quoting
+        // an opaque message.
+        if SupportedCurve::from_certificate(x5chain.end_entity_certificate()).is_none() {
+            return Err(MdlError::UnsupportedAlgorithm(
+                crate::preflight::SignerKey::of(x5chain.end_entity_certificate()).algorithm,
+            ));
+        }
+
+        let mso = issuer_authentication(x5chain.clone(), &document.issuer_signed)
+            .map_err(|e| MdlError::Tampered(e.to_string()))?;
 
         // ISO/IEC 18013-5 §8.3.2.1.2.2: the MSO's docType is what the issuer signed;
         // the Document's is what the holder claims. They must agree, or a holder

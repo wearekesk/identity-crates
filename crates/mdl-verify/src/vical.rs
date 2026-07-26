@@ -139,8 +139,12 @@ impl Vical {
     /// A stale VICAL is a liability, not a fallback: it is how an issuer that was
     /// removed from the list stays trusted. Treat this as "refetch, and fail if you
     /// cannot" rather than "carry on".
+    ///
+    /// The deadline itself counts as stale — at `nextUpdate` the provider said a new
+    /// list would already be out, so that instant is the first one where this is no
+    /// longer current.
     pub fn is_stale_at(&self, at: DateTime<Utc>) -> bool {
-        self.next_update.is_some_and(|next| at > next)
+        self.next_update.is_some_and(|next| at >= next)
     }
 }
 
