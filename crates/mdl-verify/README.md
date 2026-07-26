@@ -115,14 +115,21 @@ Judgements a caller can reasonably disagree about stay as fields —
 
 ## Status
 
-`0.0.0`, unpublished, and `publish = false` until that changes.
+`0.0.0`, in-workspace only, `publish = false`.
 
-The crate depends on [`isomdl`](https://github.com/spruceid/isomdl) by git revision
-rather than the crates.io release. The published 0.2.0 verifies the `COSE_Sign1` over
-the MSO but never binds the disclosed elements to `valueDigests` and never checks the
-MSO validity window — a holder could disclose arbitrary values under a genuine issuer
-signature. Both are fixed upstream (spruceid/isomdl#132, #133) but unreleased, and a
-crate with a git dependency cannot be published to crates.io.
+The crate depends on [`isomdl`](https://github.com/spruceid/isomdl) by **pinned git
+revision** rather than the crates.io release. The published 0.2.0 verifies the
+`COSE_Sign1` over the MSO but never binds the disclosed elements to `valueDigests`
+and never checks the MSO validity window — a holder could disclose arbitrary values
+under a genuine issuer signature. Both are fixed upstream (spruceid/isomdl#132, #133)
+but unreleased.
+
+The pin is load-bearing. Do not relax it to a version requirement (`isomdl = "0.2"`)
+while 0.2.0 is the newest published version: that silently reintroduces a verifier
+which accepts forged element values. The consequence is that this crate cannot be
+published to crates.io — cargo refuses git dependencies — hence `0.0.0` and
+`publish = false`. That is a distribution constraint, not a correctness one; the
+verification itself is complete and tested.
 
 The tests here do not take that on faith: they issue real mdocs signed by a fixture
 Document Signer and assert that a flipped `age_over_21` is rejected, that a response

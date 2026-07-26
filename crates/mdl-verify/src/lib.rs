@@ -76,12 +76,16 @@
 //!
 //! # Status
 //!
-//! `0.0.0`, unpublished. The crate depends on [`isomdl`] by git revision because the
-//! released 0.2.0 never binds disclosed elements to the MSO digests and never checks
-//! the MSO validity window — a holder could disclose arbitrary values under a genuine
-//! issuer signature. Both are fixed upstream (spruceid/isomdl#132, #133) but
-//! unreleased, and a crate with a git dependency cannot be published. See `PLAN.md`
-//! at the workspace root.
+//! `0.0.0`, in-workspace only. The crate depends on `isomdl` by pinned git revision
+//! because the released 0.2.0 never binds disclosed elements to the MSO digests and
+//! never checks the MSO validity window — a holder could disclose arbitrary values
+//! under a genuine issuer signature. Both are fixed upstream (spruceid/isomdl#132,
+//! \#133) but unreleased.
+//!
+//! The pin is load-bearing: do not relax it to a version requirement while 0.2.0 is
+//! the newest published version, or that vulnerability comes back. It also means this
+//! crate cannot go to crates.io — cargo refuses git dependencies — which is why the
+//! version is `0.0.0` and `publish = false`.
 
 #![forbid(unsafe_code)]
 #![warn(missing_debug_implementations)]
