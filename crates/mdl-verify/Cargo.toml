@@ -41,6 +41,12 @@ serde = "1.0"
 time = "0.3.35"
 chrono.workspace = true
 thiserror.workspace = true
+# Re-exported so callers can implement `HttpClient` for their own transport (a
+# platform HTTP stack on iOS/Android) without matching versions by hand.
+async-trait = "0.1"
+# Drives `BlockingCrlChecker` for callers with no runtime of their own — reader apps
+# reaching the crate over FFI. Already in the graph via the CRL HTTP client.
+tokio = { version = "1", features = ["rt", "net", "time"] }
 
 [dev-dependencies]
 # The tests issue real, signed mdocs rather than replaying canned blobs, so they

@@ -16,8 +16,13 @@ mod common;
 
 use std::sync::Mutex;
 
-use common::{iaca_anchor, test_time, CrlServer, ResponseBuilder, CRL_CLEAN, CRL_REVOKED};
-use mdl_verify::revocation::{verify_issuer_auth, CrlChecker};
+use common::{
+    iaca_anchor, test_time, CrlServer, ResponseBuilder, CRL_CLEAN, CRL_PORT, CRL_REVOKED,
+};
+use mdl_verify::revocation::{
+    async_trait, verify_issuer_auth, BlockingCrlChecker, CrlChecker, HttpClient, HttpRequest,
+    HttpResponse,
+};
 use mdl_verify::VerifyOptions;
 
 /// One fixed port, one test at a time.
@@ -118,6 +123,104 @@ async fn an_unreachable_crl_is_reported_not_enforced() {
         "an unreachable CRL must never be reported as revocation: {:?}",
         mdl.trust_errors
     );
+}
+
+/// A reader app on a phone should fetch through the platform's HTTP stack, not a
+/// bundled one — so the CRL fetch has to be pluggable. This stands in for that
+/// `URLSession`/OkHttp bridge: no socket, no reqwest, just the trait.
+struct StubHttp {
+    crl: &'static [u8],
+    /// What URL the crate actually asked for; shared so the test can read it back.
+    requested: std::sync::Arc<Mutex<Option<String>>>,
+}
+
+impl StubHttp {
+    fn new(crl: &'static [u8]) -> Self {
+        Self {
+            crl,
+            requested: Default::default(),
+        }
+    }
+}
+
+#[async_trait]
+impl HttpClient for StubHttp {
+    type Error = std::io::Error;
+
+    async fn request(&self, request: HttpRequest) -> Result<HttpResponse, Self::Error> {
+        *self.requested.lock().unwrap() = Some(request.url);
+        Ok(HttpResponse {
+            status: 200,
+            body: self.crl.to_vec(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn a_caller_supplied_http_client_is_used_for_the_fetch() {
+    let response = ResponseBuilder::default().build();
+    let checker = CrlChecker::with_http_client(StubHttp::new(CRL_REVOKED));
+
+    let verification = verify_issuer_auth(&response, &[iaca_anchor()], &options(), &checker)
+        .await
+        .expect("verifies");
+    let mdl = verification.mdl().expect("mDL");
+
+    assert!(
+        !mdl.issuer_trusted,
+        "the CRL served by the caller's client must be honoured: {:?}",
+        mdl.revocation_errors
+    );
+    assert!(mdl.trust_errors.iter().any(|e| e.contains("revoked")));
+}
+
+/// The URL comes out of the certificate's own distribution point — the crate does not
+/// invent it, and a platform client can therefore be handed exactly what to fetch.
+#[tokio::test]
+async fn the_fetch_targets_the_certificates_distribution_point() {
+    let response = ResponseBuilder::default().build();
+    let client = StubHttp::new(CRL_CLEAN);
+    let requested = client.requested.clone();
+    let checker = CrlChecker::with_http_client(client);
+
+    verify_issuer_auth(&response, &[iaca_anchor()], &options(), &checker)
+        .await
+        .expect("verifies");
+
+    assert_eq!(
+        requested.lock().unwrap().as_deref(),
+        Some(format!("http://127.0.0.1:{CRL_PORT}/crl").as_str())
+    );
+}
+
+/// The FFI-shaped path: no runtime at the call site, no async in the signature.
+#[test]
+fn the_blocking_checker_works_without_a_runtime() {
+    let response = ResponseBuilder::default().build();
+    let checker =
+        BlockingCrlChecker::with_http_client(StubHttp::new(CRL_CLEAN)).expect("build checker");
+
+    let verification = checker
+        .verify_issuer_auth(&response, &[iaca_anchor()], &options())
+        .expect("verifies");
+    let mdl = verification.mdl().expect("mDL");
+
+    assert!(mdl.issuer_trusted, "{:?}", mdl.trust_errors);
+    assert!(mdl.revocation_errors.is_empty());
+    assert!(mdl.is_authentic());
+}
+
+#[test]
+fn the_blocking_checker_reports_revocation_too() {
+    let response = ResponseBuilder::default().build();
+    let checker =
+        BlockingCrlChecker::with_http_client(StubHttp::new(CRL_REVOKED)).expect("build checker");
+
+    let verification = checker
+        .verify_issuer_auth(&response, &[iaca_anchor()], &options())
+        .expect("verifies");
+
+    assert!(!verification.mdl().expect("mDL").issuer_trusted);
 }
 
 /// Without the checker, the no-network path says so rather than staying silent.

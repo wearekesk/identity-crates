@@ -2906,6 +2906,7 @@ dependencies = [
 name = "mdl-verify"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "ciborium",
  "coset",
