@@ -13,11 +13,10 @@ use std::io::Read;
 
 use super::data::{AadhaarData, Gender};
 use super::error::AadhaarError;
+use super::signature::SIGNATURE_LEN;
 
 /// Number of delimited text fields before the photo.
 const TEXT_FIELD_COUNT: usize = 16;
-/// Size of the RSA-SHA256 signature at the tail of every payload.
-const SIGNATURE_LEN: usize = 256;
 /// Size of the SHA-256 mobile / email hashes.
 const HASH_LEN: usize = 32;
 /// Maximum number of bytes we will inflate from a gzip payload. A genuine Aadhaar
@@ -84,6 +83,10 @@ pub fn parse_decompressed(raw: &[u8]) -> Result<AadhaarData, AadhaarError> {
     }
     let signature = tail[tail.len() - SIGNATURE_LEN..].to_vec();
     let tail_minus_sig = &tail[..tail.len() - SIGNATURE_LEN];
+    // UIDAI signs the whole decompressed blob except the trailing signature —
+    // text fields, delimiters, photo and hashes included. Keep those bytes so the
+    // signature can be checked later without re-serialising the parsed fields.
+    let signed_bytes = raw[..raw.len() - SIGNATURE_LEN].to_vec();
 
     let indicator = parse_indicator(text_fields[0])?;
     let mobile_present = indicator & 0b01 != 0;
@@ -151,7 +154,38 @@ pub fn parse_decompressed(raw: &[u8]) -> Result<AadhaarData, AadhaarError> {
         mobile_hash,
         email_hash,
         signature,
+        signed_bytes,
+        signature_verified: false,
     })
+}
+
+/// Parses the raw QR text **and** verifies the UIDAI signature, failing closed.
+///
+/// Mirrors [`parse_offline_ekyc`](crate::parse_offline_ekyc): an unsigned or
+/// tampered payload is an [`AadhaarError::SignatureInvalid`], never an `Ok`
+/// record. The returned record has `signature_verified == true`.
+pub fn parse_and_verify_secure_qr_text(text: &str) -> Result<AadhaarData, AadhaarError> {
+    verified(parse_secure_qr_text(text)?)
+}
+
+/// Compressed-payload counterpart of [`parse_and_verify_secure_qr_text`].
+pub fn parse_and_verify_secure_qr_bytes(bytes: &[u8]) -> Result<AadhaarData, AadhaarError> {
+    verified(parse_secure_qr_bytes(bytes)?)
+}
+
+/// Decompressed-payload counterpart of [`parse_and_verify_secure_qr_text`].
+pub fn parse_and_verify_decompressed(raw: &[u8]) -> Result<AadhaarData, AadhaarError> {
+    verified(parse_decompressed(raw)?)
+}
+
+/// Checks the UIDAI signature on a freshly parsed record and marks it verified,
+/// or fails closed.
+fn verified(mut data: AadhaarData) -> Result<AadhaarData, AadhaarError> {
+    if !data.verify()? {
+        return Err(AadhaarError::SignatureInvalid);
+    }
+    data.signature_verified = true;
+    Ok(data)
 }
 
 /// Splits `raw` at the first [`TEXT_FIELD_COUNT`] `0xFF` delimiters. Returns
@@ -521,6 +555,74 @@ mod tests {
         assert!(matches!(
             parse_secure_qr_bytes(&bytes).unwrap_err(),
             AadhaarError::Gunzip(_)
+        ));
+    }
+
+    #[test]
+    fn signed_bytes_are_the_payload_minus_the_signature() {
+        let raw = sample().encode();
+        let data = parse_decompressed(&raw).unwrap();
+        assert_eq!(data.signed_bytes, raw[..raw.len() - SIGNATURE_LEN]);
+        assert_eq!(data.signature, raw[raw.len() - SIGNATURE_LEN..]);
+        // Plain parsing does not check the signature, so the flag stays false.
+        assert!(!data.signature_verified);
+    }
+
+    /// The parser's split must line up byte-for-byte with what a UIDAI-style
+    /// signer covers: sign `payload[..len-256]`, append the signature, parse,
+    /// and the retained `signed_bytes` + `signature` must verify together.
+    #[test]
+    fn parsed_record_verifies_against_the_signer_that_produced_it() {
+        use crate::signature::test_support::{test_sign, TEST_CERT};
+        use crate::signature::verify_with_certs;
+
+        let mut p = sample();
+        let placeholder = [0u8; SIGNATURE_LEN];
+        p.signature = &placeholder;
+        let unsigned = p.encode();
+        let signed_region = &unsigned[..unsigned.len() - SIGNATURE_LEN];
+        let sig = test_sign(signed_region);
+
+        let mut payload = signed_region.to_vec();
+        payload.extend_from_slice(&sig);
+
+        let data = parse_decompressed(&payload).unwrap();
+        assert!(verify_with_certs(&data.signed_bytes, &data.signature, &[TEST_CERT]).unwrap());
+
+        // Flip the last byte of the signed region (inside the email hash, so the
+        // record still parses) → the same signature must no longer verify.
+        let mut tampered = payload.clone();
+        let last_signed = signed_region.len() - 1;
+        tampered[last_signed] ^= 0x01;
+        let tampered_data = parse_decompressed(&tampered).unwrap();
+        assert!(!verify_with_certs(
+            &tampered_data.signed_bytes,
+            &tampered_data.signature,
+            &[TEST_CERT]
+        )
+        .unwrap());
+    }
+
+    #[test]
+    fn verified_entry_point_fails_closed_on_a_non_uidai_signature() {
+        // The payload parses fine but was not signed by UIDAI, so the verifying
+        // entry point must error rather than return a record.
+        let raw = sample().encode();
+        assert!(matches!(
+            parse_and_verify_decompressed(&raw).unwrap_err(),
+            AadhaarError::SignatureInvalid
+        ));
+        assert!(!parse_decompressed(&raw).unwrap().verify().unwrap());
+    }
+
+    #[test]
+    fn verify_on_a_record_without_signed_bytes_is_an_error() {
+        // A hand-built record carries no signed bytes; verifying must report
+        // that rather than silently answering "not verified".
+        let data = AadhaarData::default();
+        assert!(matches!(
+            data.verify().unwrap_err(),
+            AadhaarError::Signature(_)
         ));
     }
 

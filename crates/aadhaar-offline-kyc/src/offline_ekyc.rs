@@ -26,7 +26,7 @@ use std::io::Read as _;
 /// still in active use, so the older signer keys must stay trusted. We therefore
 /// pin the public keys and deliberately do not enforce certificate validity
 /// windows. Add UIDAI's newest signer cert here as they rotate (newest first).
-const UIDAI_CERTS: &[&str] = &[
+pub(crate) const UIDAI_CERTS: &[&str] = &[
     include_str!("../certs/uidai_prod_2023.pem"),
     include_str!("../certs/uidai_prod.pem"),
 ];
