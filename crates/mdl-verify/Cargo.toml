@@ -1,0 +1,49 @@
+[package]
+name = "mdl-verify"
+# 0.0.0 while the crate depends on `isomdl` by git rev: a git dependency cannot be
+# published to crates.io, so this is a name reservation and an in-workspace crate
+# only. Bump to a real version once isomdl cuts a release containing the digest /
+# MSO-validity fixes (see README "Status").
+version = "0.0.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ISO/IEC 18013-5 mobile driving licence (mDL / mdoc) verification: issuer data authentication, MSO digest binding and IACA trust-chain validation."
+readme = "README.md"
+keywords = ["mdl", "mdoc", "iso18013", "identity", "verification"]
+categories = ["cryptography", "parser-implementations"]
+# Cannot be published while `isomdl` is a git dependency; flip this once the
+# dependency is a released crates.io version.
+publish = false
+
+[dependencies]
+# ISO 18013-5 CBOR/COSE machinery. Pinned to a git rev, not the crates.io 0.2.0
+# release: 0.2.0 verifies the COSE_Sign1 over the MSO but never binds the disclosed
+# elements to `valueDigests`, and never checks `validityInfo` — a holder could
+# disclose arbitrary values under a genuine issuer signature. Both were fixed in
+# spruceid/isomdl#132 and #133, which are unreleased.
+isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa028a12183ee7fab1e46a5dc" }
+# Must track isomdl's x509-cert major: `TrustAnchor.certificate` is an
+# `x509_cert::Certificate`, so the types have to unify.
+x509-cert = { version = "0.2.4", features = ["pem"] }
+ciborium = "0.2.2"
+coset = "0.3.8"
+# `SessionTranscript` implements Serialize/Deserialize by hand: isomdl's transcript
+# trait requires them, and the derive would not preserve the encoded bytes.
+serde = "1.0"
+# isomdl's timestamps are `time::OffsetDateTime`; the public API converts to chrono
+# to stay consistent with the sibling crates.
+time = "0.3.35"
+chrono.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+# The tests issue real, signed mdocs rather than replaying canned blobs, so they
+# reach for the same machinery the library wraps.
+isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa028a12183ee7fab1e46a5dc" }
+# Must match isomdl's p256 major — the signing keys cross the boundary.
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+chrono.workspace = true
+hex.workspace = true

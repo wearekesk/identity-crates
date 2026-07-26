@@ -1,0 +1,113 @@
+# mdl-verify
+
+ISO/IEC 18013-5 mobile driving licence (mDL / mdoc) verification, server-side.
+
+Give it a decrypted CBOR `DeviceResponse` and a set of IACA trust anchors; get back
+the disclosed identity elements plus exactly what was proven about them.
+
+```rust
+use mdl_verify::{verify_issuer_auth, IacaAnchor};
+
+let anchors = [IacaAnchor::from_certificate(iaca_root_der)?];
+let verification = verify_issuer_auth(device_response, &anchors)?;
+
+let mdl = verification.mdl().ok_or("no mDL in the response")?;
+if mdl.is_authentic() && mdl.age_over(21) == Some(true) {
+    println!("{} {}", mdl.given_name().unwrap_or(""), mdl.family_name().unwrap_or(""));
+}
+```
+
+## The two layers
+
+An mdoc presentation carries two independent proofs, and they answer different
+questions:
+
+| Layer | Proves | Entry point |
+|---|---|---|
+| **Issuer data authentication** — `COSE_Sign1` over the MSO, Document Signer chaining to an IACA root, every disclosed element's digest matching `valueDigests` | the data is genuine, issuer-signed and unmodified | `verify_issuer_auth` |
+| **Device authentication** — `DeviceSignature` / `DeviceMac` over a transcript carrying the verifier's nonce | this holder controls the device key bound in the MSO, right now | `verify_device_auth` |
+
+Only the first is verifiable from a static blob. Without the second, a genuine
+`DeviceResponse` captured once can be replayed forever — fine for some server-side
+flows, fatal for others. `verify_presentation` runs both when you have a session
+transcript.
+
+## Session transcripts
+
+Device authentication signs over the `SessionTranscript`, whose shape depends on how
+the credential was presented and is still moving between drafts. Rather than model
+each variant and go stale, `SessionTranscript::from_cbor` adopts the transcript your
+session layer already built, and rejects anything that is not deterministically
+encoded — a transcript this crate cannot reproduce byte-for-byte would silently
+verify against something the holder never signed.
+
+`SessionTranscript::openid4vp_handover` (ISO 18013-7 Annex B) and
+`SessionTranscript::openid4vp_dcapi_handover` (OpenID4VP 1.0 over the W3C Digital
+Credentials API — the browser path for Apple Wallet and Google Wallet) assemble the
+two online shapes, taking the hashes as inputs because *what* gets hashed is exactly
+the part that differs between drafts.
+
+## Apple Wallet and Google Wallet
+
+Issuer data authentication is wallet-agnostic: it verifies the issuer's signature, so
+an mDL from Apple Wallet, Google Wallet or a state app all go through the same path.
+Two things to be aware of:
+
+- The input must be the **decrypted** `DeviceResponse`. Session establishment,
+  BLE/NFC engagement and response decryption belong to your reader or OpenID4VP
+  layer; this crate is no-transport and no-network by design.
+- For device authentication you need the transcript that session produced, including
+  the reader's ephemeral private key if the holder used `COSE_Mac0`.
+
+## Trust anchors
+
+IACA roots are per-jurisdiction — US state DMVs distribute theirs through the AAMVA
+Digital Trust Service, EU issuers through their own lists. Sourcing and rotation is
+the caller's job, as with the CSCA masterlist in [`dmrtd`](../dmrtd). Verifying with
+an empty anchor list is allowed and useful: signatures and digests are still checked
+and the result reports `issuer_trusted = false`.
+
+`TrustRules::Iso18013_5` (the default) applies the Annex B profile;
+`TrustRules::Aamva` adds the AAMVA-specific constraints on top.
+
+## Failure model
+
+Anything meaning "these bytes are not what the issuer signed" is an error, never a
+flag: `MdlError::Tampered` for a bad signature or a digest mismatch,
+`MdlError::DeviceAuth` for a failed device signature. There is no way to read element
+values out of this crate without that having passed.
+
+Judgements a caller can reasonably disagree about stay as fields —
+`issuer_trusted` and `validity.in_window`. `is_authentic()` bundles them.
+
+## Status
+
+`0.0.0`, unpublished, and `publish = false` until that changes.
+
+The crate depends on [`isomdl`](https://github.com/spruceid/isomdl) by git revision
+rather than the crates.io release. The published 0.2.0 verifies the `COSE_Sign1` over
+the MSO but never binds the disclosed elements to `valueDigests` and never checks the
+MSO validity window — a holder could disclose arbitrary values under a genuine issuer
+signature. Both are fixed upstream (spruceid/isomdl#132, #133) but unreleased, and a
+crate with a git dependency cannot be published to crates.io.
+
+The tests here do not take that on faith: they issue real mdocs signed by a fixture
+Document Signer and assert that a flipped `age_over_21` is rejected, that a response
+replayed into another session fails device authentication, and that a chain only
+verifies against its own IACA.
+
+## Tests
+
+```sh
+cargo test -p mdl-verify
+```
+
+The IACA and Document Signer fixtures in `tests/fixtures` are generated by
+`tests/fixtures/generate.sh` and conform to the Annex B certificate profiles. The DS
+certificate is deliberately short-lived, so the tests pin their verification time
+rather than using "now".
+
+## License
+
+Licensed under either of [Apache-2.0](../../LICENSE-APACHE) or [MIT](../../LICENSE-MIT)
+at your option.
