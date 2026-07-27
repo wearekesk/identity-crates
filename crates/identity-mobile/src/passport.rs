@@ -227,11 +227,17 @@ pub fn read_passport(
 
     // Past this point every read is mandatory, so any failure is fatal either way —
     // but the message still tells the holder which kind of problem they have.
+    // The session is up. Anything the flag recorded on the way here — a PACE attempt
+    // that failed at transport before BAC succeeded — is history, and leaving it set
+    // would make the next optional read look like a lost tag.
+    transport_failed.set(false);
+
     let dg1 = passport
         .read_ef_dg1()
         .map_err(|e| IdentityError::Nfc(format!("could not read the MRZ (DG1): {e}")))?;
 
     let dg2 = if options.read_portrait {
+        transport_failed.set(false);
         match passport.read_ef_dg2() {
             Ok(dg2) => Some(dg2.to_bytes().to_vec()),
             // A document without a readable photograph is not a reason to fail an
@@ -256,6 +262,7 @@ pub fn read_passport(
     // Active authentication needs a challenge the chip cannot have seen before —
     // a fixed one lets a recorded response be replayed, which defeats the point.
     let active_authentication = if options.active_authentication {
+        transport_failed.set(false);
         let mut challenge = [0u8; 8];
         getrandom::fill(&mut challenge)
             .map_err(|e| IdentityError::Nfc(format!("no source of randomness: {e}")))?;

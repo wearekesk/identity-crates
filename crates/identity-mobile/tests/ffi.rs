@@ -185,6 +185,32 @@ fn a_wrong_sized_reader_key_is_rejected_by_name() {
     );
 }
 
+/// A transport failure is reported by a negative code. Casting that to a length before
+/// checking the sign wraps it to something enormous, which is how it briefly came back
+/// as "you reported 18446744073709551615 bytes".
+#[test]
+fn a_negative_transceive_code_is_a_transport_failure_not_an_overflow() {
+    use identity_mobile::passport::{self, ApduChannel, MrzKey, PassportOptions};
+
+    struct Refusing;
+
+    impl ApduChannel for Refusing {
+        fn transceive(&mut self, _apdu: &[u8]) -> Result<Vec<u8>, String> {
+            Err("tag lost".to_string())
+        }
+    }
+
+    let key = MrzKey::new("123456789", "1988-03-14", "2030-01-01").unwrap();
+    let result =
+        passport::read_passport(Box::new(Refusing), &key, &[], &PassportOptions::default());
+
+    let message = result.unwrap_err().to_string();
+    assert!(
+        !message.contains("byte buffer"),
+        "a lost tag must not be described as an oversized response: {message}"
+    );
+}
+
 /// Freeing twice would be a double free; freeing null must simply do nothing, because
 /// a host's cleanup path will hit that case.
 #[test]

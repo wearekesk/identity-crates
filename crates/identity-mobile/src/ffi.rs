@@ -369,20 +369,28 @@ impl ApduChannel for HostChannel {
             response.len(),
         );
 
-        match written {
+        // Order matters: a negative `c_int` cast to `usize` wraps to something huge,
+        // so testing the length before the sign would report every transport failure
+        // as an oversized response.
+        if written < 0 {
+            return Err(format!(
+                "the host could not exchange an APDU (code {written})"
+            ));
+        }
+
+        let len = written as usize;
+        if len > response.len() {
             // `truncate` past the end is a no-op, so an over-long length would leave
             // 64 KiB of zeroes standing in for the chip's answer and corrupt the
             // session in a way that is very hard to trace back to here.
-            len if len as usize > response.len() => Err(format!(
+            return Err(format!(
                 "the host reported {len} bytes for a {} byte buffer",
                 response.len()
-            )),
-            len if len >= 0 => {
-                response.truncate(len as usize);
-                Ok(response)
-            }
-            code => Err(format!("the host could not exchange an APDU (code {code})")),
+            ));
         }
+
+        response.truncate(len);
+        Ok(response)
     }
 }
 

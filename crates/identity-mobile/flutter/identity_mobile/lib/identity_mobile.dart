@@ -16,6 +16,45 @@ export 'src/models.dart'
     show Authenticity, DocumentKind, IdentityErrorKind, IdentityException, VerifiedIdentity;
 export 'src/passport_reader.dart' show DBAKey, PassportReader;
 
+/// Native allocations that live exactly as long as one call.
+///
+/// The reason this exists rather than freeing inline: a `Struct` obtained through
+/// `Pointer.ref` is a *view* onto native memory, not a copy. Passing one by value to an
+/// FFI function reads that memory at call time, so anything freed beforehand is read
+/// after it is gone. Everything goes in here and is released once the call has
+/// returned.
+class _Arena {
+  final List<Pointer<NativeType>> _allocations = [];
+
+  /// Copy bytes into native memory. Returns `nullptr` for absent or empty input,
+  /// which the Rust side reads as "not supplied".
+  Pointer<Uint8> bytes(Uint8List? source) {
+    if (source == null || source.isEmpty) return nullptr;
+
+    final buffer = calloc<Uint8>(source.length);
+    buffer.asTypedList(source.length).setAll(0, source);
+    _allocations.add(buffer);
+    return buffer;
+  }
+
+  /// Build a `NativeBytes` whose backing memory outlives the call that uses it.
+  NativeBytes slice(Pointer<Uint8> ptr, int len) {
+    final descriptor = calloc<NativeBytes>();
+    descriptor.ref
+      ..ptr = ptr
+      ..len = len;
+    _allocations.add(descriptor);
+    return descriptor.ref;
+  }
+
+  void release() {
+    for (final allocation in _allocations) {
+      calloc.free(allocation);
+    }
+    _allocations.clear();
+  }
+}
+
 /// Verification that needs no NFC: an mDL presentation, or passport files someone else
 /// already read.
 abstract final class IdentityMobile {
@@ -36,39 +75,28 @@ abstract final class IdentityMobile {
     Uint8List? eReaderKey,
   }) {
     final bindings = IdentityBindings.instance;
-
-    final response = calloc<Uint8>(deviceResponse.length);
-    final transcript = _copy(sessionTranscript);
-    final readerKey = _copy(eReaderKey);
-    final (anchors, buffers) = allocateAnchors(iacaAnchors);
+    final arena = _Arena();
+    final (anchors, anchorBuffers) = allocateAnchors(iacaAnchors);
 
     try {
-      response.asTypedList(deviceResponse.length).setAll(0, deviceResponse);
+      final response = arena.slice(arena.bytes(deviceResponse), deviceResponse.length);
+      final transcript =
+          arena.slice(arena.bytes(sessionTranscript), sessionTranscript?.length ?? 0);
+      final readerKey = arena.slice(arena.bytes(eReaderKey), eReaderKey?.length ?? 0);
 
       final result = bindings.verifyMdl(
-        _bytes(response, deviceResponse.length),
+        response,
         anchors,
         iacaAnchors.length,
-        _bytes(transcript, sessionTranscript?.length ?? 0),
-        _bytes(readerKey, eReaderKey?.length ?? 0),
+        transcript,
+        readerKey,
       );
 
       return VerifiedIdentity.parseResult(bindings.consumeString(result));
     } finally {
-      calloc.free(response);
-      if (transcript != nullptr) calloc.free(transcript);
-      if (readerKey != nullptr) calloc.free(readerKey);
-      freeAnchors(anchors, buffers);
+      arena.release();
+      freeAnchors(anchors, anchorBuffers);
     }
-  }
-
-  /// Copy an optional byte list into native memory, or null for absent.
-  static Pointer<Uint8> _copy(Uint8List? bytes) {
-    if (bytes == null || bytes.isEmpty) return nullptr;
-
-    final buffer = calloc<Uint8>(bytes.length);
-    buffer.asTypedList(bytes.length).setAll(0, bytes);
-    return buffer;
   }
 
   /// Verify passport files read by something other than [PassportReader].
@@ -83,47 +111,22 @@ abstract final class IdentityMobile {
     List<Uint8List> cscaAnchors = const [],
   }) {
     final bindings = IdentityBindings.instance;
-
-    final sodBuffer = calloc<Uint8>(sod.length);
-    final dg1Buffer = calloc<Uint8>(dg1.length);
-    final dg2Buffer = dg2 == null ? nullptr : calloc<Uint8>(dg2.length);
-    final (anchors, buffers) = allocateAnchors(cscaAnchors);
+    final arena = _Arena();
+    final (anchors, anchorBuffers) = allocateAnchors(cscaAnchors);
 
     try {
-      sodBuffer.asTypedList(sod.length).setAll(0, sod);
-      dg1Buffer.asTypedList(dg1.length).setAll(0, dg1);
-      if (dg2 != null) {
-        dg2Buffer.cast<Uint8>().asTypedList(dg2.length).setAll(0, dg2);
-      }
-
       final result = bindings.verifyPassport(
-        _bytes(sodBuffer, sod.length),
-        _bytes(dg1Buffer, dg1.length),
-        _bytes(dg2Buffer.cast<Uint8>(), dg2?.length ?? 0),
+        arena.slice(arena.bytes(sod), sod.length),
+        arena.slice(arena.bytes(dg1), dg1.length),
+        arena.slice(arena.bytes(dg2), dg2?.length ?? 0),
         anchors,
         cscaAnchors.length,
       );
 
       return VerifiedIdentity.parseResult(bindings.consumeString(result));
     } finally {
-      calloc.free(sodBuffer);
-      calloc.free(dg1Buffer);
-      if (dg2Buffer != nullptr) {
-        calloc.free(dg2Buffer);
-      }
-      freeAnchors(anchors, buffers);
+      arena.release();
+      freeAnchors(anchors, anchorBuffers);
     }
-  }
-
-  static NativeBytes _bytes(Pointer<Uint8> ptr, int len) {
-    final bytes = calloc<NativeBytes>();
-    bytes.ref
-      ..ptr = ptr
-      ..len = len;
-    // Structs pass by value, so the allocation is only needed to build one. Reading it
-    // out immediately and freeing keeps this from leaking a struct per call.
-    final value = bytes.ref;
-    calloc.free(bytes);
-    return value;
   }
 }

@@ -140,10 +140,11 @@ jobs:
   # on a crate selection. They produce build artifacts, not a crates.io upload, so
   # they hold no id-token and need no branch gating.
   #
-  # NB: the crate has no `extern "C"` surface of its own — the C ABI is generated
-  # in the app's wrapper crate by flutter_rust_bridge (see
-  # crates/identity-mobile/docs/flutter.md). These jobs prove it cross-compiles to
-  # every mobile ABI and produce the artifacts to link against.
+  # The crate exports its own C ABI (crates/identity-mobile/src/ffi.rs), which the
+  # Flutter plugin in crates/identity-mobile/flutter binds through dart:ffi. These
+  # jobs cross-compile it to every mobile ABI and produce the artifacts that plugin
+  # links against — the .so files under jniLibs, and the xcframework the Swift
+  # package declares as a binary target.
   ffi-ios:
     name: flutter-ffi (iOS)
     runs-on: macos-latest
