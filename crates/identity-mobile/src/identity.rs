@@ -58,6 +58,12 @@ pub struct Authenticity {
     ///
     /// `None` means it was not attempted — which is not the same as `Some(false)`.
     /// Without it, cloned chip data and captured mDL responses both verify.
+    ///
+    /// It binds the **document**, not the person. `Some(true)` says the chip or device
+    /// present holds the private key the issuer signed; it says nothing about whether
+    /// the person presenting it is the person it was issued to. That comparison is
+    /// between [`portrait`](VerifiedIdentity::portrait) and the face in front of you,
+    /// and this crate does not make it.
     pub holder_bound: Option<bool>,
 
     /// The credential is inside its own validity window.

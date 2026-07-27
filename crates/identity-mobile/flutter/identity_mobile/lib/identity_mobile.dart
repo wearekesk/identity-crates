@@ -96,9 +96,12 @@ abstract final class IdentityMobile {
   ///
   /// Pass [sessionTranscript] when you have one. Without it this is issuer
   /// authentication only: [Authenticity.holderBound] comes back null and a captured
-  /// response replays forever. [eReaderKey] is the reader's 32-byte ephemeral private
-  /// key, required when the holder authenticated with `DeviceMac` — omit it and you
-  /// get an error rather than a wrong answer.
+  /// response can be replayed for as long as the credential remains valid — expiry
+  /// still applies, and it is all that bounds the replay.
+  ///
+  /// [eReaderKey] is the reader's 32-byte ephemeral private key, required when the
+  /// holder authenticated with `DeviceMac` — omit it and you get an error rather than a
+  /// wrong answer.
   static VerifiedIdentity verifyMdl(
     Uint8List deviceResponse, {
     List<Uint8List> iacaAnchors = const [],

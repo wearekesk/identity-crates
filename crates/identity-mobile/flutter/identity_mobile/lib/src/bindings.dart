@@ -16,6 +16,18 @@ import 'package:ffi/ffi.dart';
 
   for (var i = 0; i < anchors.length; i++) {
     final anchor = anchors[i];
+
+    // A zero-byte allocation is allowed to return null, which `calloc` reports as an
+    // ArgumentError — so an empty anchor in the list would take down the whole call.
+    // Rust reads a null pointer with length zero as an empty slice, which is what an
+    // empty anchor is.
+    if (anchor.isEmpty) {
+      array[i]
+        ..ptr = nullptr
+        ..len = 0;
+      continue;
+    }
+
     final buffer = calloc<Uint8>(anchor.length);
     buffer.asTypedList(anchor.length).setAll(0, anchor);
     buffers.add(buffer);

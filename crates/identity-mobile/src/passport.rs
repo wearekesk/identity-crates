@@ -520,9 +520,13 @@ fn authenticity(
     }
 
     if holder_bound == Some(false) {
+        // Only a chip that was asked and answered wrongly reaches here: a document
+        // without EF.DG15 is `None`, and a lost tag is an error. Offering "it may simply
+        // not support it" as an alternative would talk down the one result that actually
+        // suggests a clone.
         warnings.push(
-            "active authentication did not succeed: the chip may be a clone, or may \
-             simply not support it (no EF.DG15)"
+            "active authentication failed: the chip did not prove possession of the \
+             private key for the DG15 public key the issuer signed"
                 .to_string(),
         );
     }

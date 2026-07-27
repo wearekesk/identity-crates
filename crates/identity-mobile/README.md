@@ -36,6 +36,13 @@ than flattening it into one boolean:
 `is_trustworthy()` deliberately excludes it; use `is_present_and_trustworthy()` when
 you are checking a document in person and a copy would not do.
 
+Read the name precisely: it binds the *document*, not the person. Active authentication
+proves the chip in front of you holds the private key the issuer signed into DG15, and
+device authentication proves the same of an mDL's device key — so neither is a copy.
+Neither says anything about whether the person presenting it is the person it was issued
+to. That question is answered by comparing the portrait against the face in front of you,
+and this crate does not do it.
+
 There is no single "valid" boolean because there is no honest one: a genuine credential
 from an unknown issuer and a well-formed forgery are both "invalid" for very different
 reasons, and an app should be able to tell them apart.
@@ -67,7 +74,9 @@ opposite responses from the holder: hold still, versus check the document number
 
 `mdl::verify_mdl` wraps [`mdl-verify`](../mdl-verify) and maps the result. Pass a
 `Session` when you have one — without a session transcript there is no proof of
-presence, `holder_bound` stays `None`, and a captured response replays forever.
+presence, `holder_bound` stays `None`, and a captured response can be replayed for
+as long as the credential itself remains valid — the expiry and MSO validity checks
+still apply, and they are all that bounds it.
 
 For the parts this crate does not wrap — CRL revocation with your own HTTP client,
 VICAL-sourced trust anchors, the `preflight` algorithm check — `mdl_verify` is

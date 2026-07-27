@@ -34,7 +34,9 @@ final identity = IdentityMobile.verifyMdl(deviceResponse, iacaAnchors: anchors);
 This package does no session establishment.
 
 That call does issuer authentication only — `holderBound` comes back null and a captured
-response replays forever. To bind the response to your session, hand over the OpenID4VP
+response can be replayed for as long as the credential stays valid — expiry still
+applies, and it is the only thing bounding the replay. To bind the response to your
+session, hand over the OpenID4VP
 request parameters instead of building a transcript yourself:
 
 ```dart
@@ -100,6 +102,12 @@ identity.authenticity.isPresentAndTrustworthy  // ...and provably the original
 Use the second when the document is in front of you and a copy would not do. There is
 no single `isValid`, because a genuine credential from an unknown issuer and a
 well-formed forgery are both unusable for completely different reasons.
+
+Read `holderBound` precisely: it binds the **document**, not the person. It proves the
+chip or device in front of you holds the private key the issuer signed, so it is not a
+copy. It says nothing about whether the person presenting it is the person it was issued
+to — that is answered by comparing `portrait` against the face in front of you, and this
+package does not do it for you.
 
 ## Handling failures
 

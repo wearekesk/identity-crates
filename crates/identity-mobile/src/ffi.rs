@@ -62,7 +62,8 @@ pub type TransceiveFn = extern "C" fn(
 ///
 /// Pass the session transcript when you have one — a null `session_transcript` means
 /// issuer authentication only, `holderBound` comes back null, and a captured response
-/// replays forever. `e_reader_key` is the reader's 32-byte ephemeral private key,
+/// can be replayed for as long as the credential remains valid — expiry still applies
+/// and is all that bounds it. `e_reader_key` is the reader's 32-byte ephemeral private key,
 /// required when the holder authenticated with `DeviceMac`.
 ///
 /// # Safety
