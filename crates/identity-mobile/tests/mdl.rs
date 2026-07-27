@@ -234,6 +234,19 @@ fn an_mdl_comes_back_in_the_same_shape_as_a_passport() {
     assert_eq!(identity.display_name().as_deref(), Some("Priya Sharma"));
     // ISO/IEC 5218 in the credential, the MRZ's letter in the result — one shape.
     assert_eq!(identity.sex.as_deref(), Some("F"));
+
+    // "Not known" (0) and "not applicable" (9) are the document declining to answer, and
+    // have to read as absence — the same as an MRZ `<` on the passport path. `Some("")`
+    // would make the identical fact test differently by document type.
+    for declined in [0, 9] {
+        let mut elements = elements();
+        elements.insert("sex".to_string(), ciborium::Value::Integer(declined.into()));
+
+        let identity =
+            mdl::verify_mdl(&device_response(elements), &[iaca_der()], None).expect("verifies");
+
+        assert_eq!(identity.sex, None, "ISO/IEC 5218 code {declined}");
+    }
     assert_eq!(
         identity.portrait.as_deref(),
         Some(&[0xFF, 0xD8, 0xFF, 0xE0][..])

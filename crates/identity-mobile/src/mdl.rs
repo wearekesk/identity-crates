@@ -304,14 +304,19 @@ fn identity(document: &MdlDocument, session_profile: Option<String>) -> Verified
         sex: document
             .iso("sex")
             .and_then(|v| v.as_int())
-            .map(|code| match code {
-                // ISO/IEC 5218, which the mDL uses and the MRZ does not. The MRZ
-                // spells the unknown cases as `<`, so they normalise to empty here
-                // rather than arriving as a bare number the caller has to decode.
-                1 => "M".to_string(),
-                2 => "F".to_string(),
-                0 | 9 => String::new(),
-                other => other.to_string(),
+            .and_then(|code| match code {
+                // ISO/IEC 5218, which the mDL uses and the MRZ does not.
+                1 => Some("M".to_string()),
+                2 => Some("F".to_string()),
+                // "Not known" and "not applicable" are the document declining to say,
+                // which is absence — the same answer the passport path gives for an MRZ
+                // `<`. Reporting it as `Some("")` would make the same fact test
+                // differently depending on which document it came from, which is the
+                // one thing this crate exists to avoid.
+                0 | 9 => None,
+                // Anything else arrives as its number rather than being discarded: the
+                // issuer signed it, and this crate should not pretend otherwise.
+                other => Some(other.to_string()),
             }),
         portrait: document.portrait().map(<[u8]>::to_vec),
         // Read from what was disclosed rather than from a list of ages we thought to

@@ -113,13 +113,14 @@ pub struct VerifiedIdentity {
     pub document_number: Option<String>,
     /// Three-letter code for a passport, ISO 3166 for an mDL.
     pub nationality: Option<String>,
-    /// `M`, `F`, or empty when the document does not say.
+    /// `M`, `F`, or `None` when the document does not say.
     ///
     /// Normalised across the two: a passport's MRZ already uses these letters, and an
-    /// mDL's ISO/IEC 5218 codes are mapped onto them (1 and 2 to `M` and `F`, 0 and 9
-    /// to empty). A code outside that set arrives as its number rather than being
-    /// discarded, since the issuer signed it and this crate should not pretend
-    /// otherwise.
+    /// mDL's ISO/IEC 5218 codes are mapped onto them (1 and 2 to `M` and `F`). Both
+    /// spell "not stated" as absence — an MRZ `<`, and codes 0 and 9 — so the same fact
+    /// tests the same way whichever document it came from. A code outside that set
+    /// arrives as its number rather than being discarded, since the issuer signed it and
+    /// this crate should not pretend otherwise.
     pub sex: Option<String>,
     /// The holder's photograph, as the bytes the issuer signed — JPEG or JPEG 2000
     /// from a passport's DG2, JPEG from an mDL's `portrait`.
