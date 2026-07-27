@@ -174,8 +174,8 @@ One behavioural difference: the caching CRL fetcher lives behind the same upstre
 feature, so a build without it fetches uncached. Wrap your own client in a cache if
 that matters.
 
-`BlockingCrlChecker` exposes the same two calls synchronously for callers with no
-runtime — reader apps reaching the crate over FFI. See [docs/flutter.md](docs/flutter.md).
+`BlockingCrlChecker` exposes all of them synchronously for callers with no runtime —
+reader apps reaching the crate over FFI. See [docs/flutter.md](docs/flutter.md).
 
 ## Trust anchors
 

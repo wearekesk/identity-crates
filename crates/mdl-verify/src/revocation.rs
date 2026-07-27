@@ -76,8 +76,9 @@
 //! ```
 //!
 //! Across an FFI boundary an `async fn` is awkward, so [`BlockingCrlChecker`] owns a
-//! small runtime and exposes the same two calls synchronously — build it once, hold
-//! it, call it from whatever thread the platform hands you.
+//! small runtime and exposes every one of these synchronously — issuer auth, a full
+//! presentation, the candidate-transcript path and VICAL. Build it once, hold it, call
+//! it from whatever thread the platform hands you.
 //!
 //! # Why the async entry points are `async`
 //!
