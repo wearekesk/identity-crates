@@ -14,9 +14,11 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use chrono::NaiveDate;
+use dmrtd::auth::active;
 use dmrtd::auth::passive::{self, ChainStatus, DataGroup, PassiveAuth, TrustAnchor};
 use dmrtd::com::{TransceiveError, Transceiver};
 use dmrtd::lds::df1::efdg1::EfDG1;
+use dmrtd::lds::df1::efdg15::EfDG15;
 use dmrtd::lds::df1::efdg2::EfDG2;
 use dmrtd::lds::ef::ElementaryFile;
 use dmrtd::passport::Passport;
@@ -303,29 +305,49 @@ pub fn read_passport(
 
     // Active authentication needs a challenge the chip cannot have seen before —
     // a fixed one lets a recorded response be replayed, which defeats the point.
-    let active_authentication = if options.active_authentication {
-        transport_failed.set(false);
-        let mut challenge = [0u8; 8];
-        getrandom::fill(&mut challenge)
-            .map_err(|e| IdentityError::Nfc(format!("no source of randomness: {e}")))?;
+    //
+    // The verification deliberately does not use `Passport::verify_active_authentication`,
+    // which re-reads DG15 from the chip. That would leave two reads of the same group:
+    // the one hashed against EF.SOD, and the one the challenge is checked against. A
+    // chip that answers the first honestly and the second with a key of its choosing
+    // would pass both, which is the whole attack this check exists to stop. The bytes
+    // captured above are used for both purposes.
+    let active_authentication = match (options.active_authentication, dg15.as_deref()) {
+        (true, Some(dg15_bytes)) => {
+            transport_failed.set(false);
 
-        match passport.verify_active_authentication(&challenge) {
-            Ok(()) => Some(true),
-            // A lost tag here would otherwise be recorded as "this chip may be a
-            // clone", which is a serious thing to say about a document that was
-            // merely moved.
-            Err(_) if transport_failed.get() => {
-                return Err(IdentityError::Nfc(
-                    "the chip stopped responding during active authentication".to_string(),
-                ))
+            let mut challenge = [0u8; 8];
+            getrandom::fill(&mut challenge)
+                .map_err(|e| IdentityError::Nfc(format!("no source of randomness: {e}")))?;
+
+            let response = match passport.active_authenticate(&challenge) {
+                Ok(response) => Some(response),
+                // A lost tag here would otherwise be recorded as "this chip may be a
+                // clone", which is a serious thing to say about a document that was
+                // merely moved.
+                Err(_) if transport_failed.get() => {
+                    return Err(IdentityError::Nfc(
+                        "the chip stopped responding during active authentication".to_string(),
+                    ))
+                }
+                // The chip answered, and refused. That is a failure.
+                Err(_) => None,
+            };
+
+            match (response, EfDG15::from_bytes(dg15_bytes.to_vec())) {
+                (Some(response), Ok(dg15_file)) => {
+                    Some(active::verify(dg15_file.aa_public_key(), &challenge, &response).is_ok())
+                }
+                // DG15 was read but does not parse, so there is no key to check
+                // against — not established, rather than failed.
+                (_, Err(_)) => None,
+                (None, _) => Some(false),
             }
-            // A document without DG15 cannot do this at all, which is different from
-            // failing it. Both arrive as `Err`, so record "not established" and let
-            // the warning say which.
-            Err(_) => Some(false),
         }
-    } else {
-        None
+        // No DG15 means the document does not support active authentication at all,
+        // which is not the same as failing it.
+        (true, None) => None,
+        (false, _) => None,
     };
 
     let files = PassportFiles {
