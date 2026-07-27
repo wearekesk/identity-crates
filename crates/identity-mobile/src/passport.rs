@@ -18,7 +18,6 @@ use dmrtd::auth::active;
 use dmrtd::auth::passive::{self, ChainStatus, DataGroup, PassiveAuth, TrustAnchor};
 use dmrtd::com::{TransceiveError, Transceiver};
 use dmrtd::lds::df1::efdg1::EfDG1;
-use dmrtd::lds::df1::efdg15::EfDG15;
 use dmrtd::lds::df1::efdg2::EfDG2;
 use dmrtd::lds::ef::ElementaryFile;
 use dmrtd::passport::Passport;
@@ -282,15 +281,16 @@ pub fn read_passport(
     // read and passed through passive authentication — an AA result against a DG15
     // nobody verified proves nothing, since an attacker who can rewrite the group can
     // supply their own key and answer their own challenge.
-    let dg15 = if options.active_authentication {
+    // Kept parsed rather than as bytes: the key checked below and the bytes hashed
+    // against EF.SOD then come from one object, so there is no second parse that could
+    // disagree with the first.
+    let dg15_file = if options.active_authentication {
         transport_failed.set(false);
-        passport
-            .read_ef_dg15()
-            .ok()
-            .map(|dg| dg.to_bytes().to_vec())
+        passport.read_ef_dg15().ok()
     } else {
         None
     };
+    let dg15 = dg15_file.as_ref().map(|dg| dg.to_bytes().to_vec());
 
     transport_failed.set(false);
     let sod = passport.read_ef_sod().map_err(|e| {
@@ -310,10 +310,10 @@ pub fn read_passport(
     // which re-reads DG15 from the chip. That would leave two reads of the same group:
     // the one hashed against EF.SOD, and the one the challenge is checked against. A
     // chip that answers the first honestly and the second with a key of its choosing
-    // would pass both, which is the whole attack this check exists to stop. The bytes
-    // captured above are used for both purposes.
-    let active_authentication = match (options.active_authentication, dg15.as_deref()) {
-        (true, Some(dg15_bytes)) => {
+    // would pass both, which is the whole attack this check exists to stop. The file
+    // captured above is used for both purposes.
+    let active_authentication = match (options.active_authentication, dg15_file.as_ref()) {
+        (true, Some(dg15_file)) => {
             transport_failed.set(false);
 
             let mut challenge = [0u8; 8];
@@ -334,14 +334,11 @@ pub fn read_passport(
                 Err(_) => None,
             };
 
-            match (response, EfDG15::from_bytes(dg15_bytes.to_vec())) {
-                (Some(response), Ok(dg15_file)) => {
+            match response {
+                Some(response) => {
                     Some(active::verify(dg15_file.aa_public_key(), &challenge, &response).is_ok())
                 }
-                // DG15 was read but does not parse, so there is no key to check
-                // against — not established, rather than failed.
-                (_, Err(_)) => None,
-                (None, _) => Some(false),
+                None => Some(false),
             }
         }
         // No DG15 means the document does not support active authentication at all,
