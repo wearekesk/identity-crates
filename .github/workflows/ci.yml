@@ -82,10 +82,30 @@ jobs:
       # notice it breaking.
       - name: Test mdl-verify without the bundled HTTP client
         run: cargo test -p mdl-verify --no-default-features --verbose
-      # Without the bundled client nothing in the graph compiles C, so the Android
-      # target checks with no NDK. That is the property worth protecting: if it ever
-      # needs one again, this step is where it shows up.
-      - name: Check the Android target (no NDK)
-        run: |
-          rustup target add aarch64-linux-android
-          cargo check -p mdl-verify --no-default-features --target aarch64-linux-android --verbose
+
+  # `identity-mobile` is the crate that ships to phones, so it is the one whose mobile
+  # targets are worth guarding. Checking it covers `dmrtd` and `mdl-verify` too, since
+  # it depends on both — and it does so with the bundled HTTP client off, which is what
+  # keeps `ring` out of the graph and the Android build free of an NDK. If that ever
+  # stops being true, this job is where it shows up.
+  # Android only. iOS needs a macOS runner, which bills at a multiplier, and
+  # release.yml's `ffi-ios` job already cross-compiles the same crate for all three
+  # iOS slices — paying for it on every pull request as well buys very little.
+  android:
+    name: android target
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable + aarch64-linux-android)
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      # No NDK is installed on purpose: needing one would mean something in the
+      # dependency graph started compiling C.
+      - name: Check
+        run: cargo check -p identity-mobile --target aarch64-linux-android --verbose

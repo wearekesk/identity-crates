@@ -1,0 +1,49 @@
+[package]
+name = "identity-mobile"
+# Unpublished: it depends on `mdl-verify`, which cannot be published while its own
+# dependency is a git revision.
+version = "0.0.0"
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "One identity-verification API over ePassport chips (ICAO 9303) and mobile driving licences (ISO/IEC 18013-5), shaped for Android, iOS and Flutter."
+readme = "README.md"
+publish = false
+
+[lib]
+# `cdylib` for Android (a .so loaded through JNI/dart:ffi), `staticlib` for iOS
+# (linked into an xcframework), `rlib` so the tests and other Rust crates can use it.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+dmrtd = { path = "../dmrtd" }
+# `default-features = false` deliberately: it drops reqwest, rustls and `ring`, which
+# is what lets an Android build work without an NDK. CRL checking is still available —
+# the caller supplies the HTTP client through the platform (see the `revocation`
+# re-export and docs/flutter.md).
+mdl-verify = { path = "../mdl-verify", default-features = false }
+chrono.workspace = true
+thiserror.workspace = true
+# The active-authentication challenge must be unpredictable, so it is generated here
+# rather than accepted from the caller — a constant passed in from Dart would silently
+# turn the check into theatre.
+getrandom = "0.3"
+
+[dev-dependencies]
+hex.workspace = true
+# The mDL tests issue a real signed mdoc rather than replaying a canned blob, so they
+# reach for the same machinery `mdl-verify` wraps.
+isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa028a12183ee7fab1e46a5dc" }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
+ciborium = "0.2.2"
+coset = "0.3.8"
+chrono.workspace = true
+# Used by examples/make_fixtures.rs to hash the data groups into the security object.
+sha2.workspace = true
+# isomdl's validity timestamps.
+time = "0.3"
+# The FFI tests parse what the hand-rolled JSON writer emits, rather than matching
+# substrings — a writer that emits almost-valid JSON would pass a substring check.
+serde_json = "1"

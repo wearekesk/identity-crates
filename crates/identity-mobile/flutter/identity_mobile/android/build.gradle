@@ -1,0 +1,45 @@
+// Packages the prebuilt Rust libraries into the app.
+//
+// The .so files are produced by release.yml's `flutter-ffi (Android)` job, or locally
+// by `cargo ndk`. Drop them under src/main/jniLibs/<abi>/libidentity_mobile.so and
+// Gradle carries them into the APK, where dart:ffi opens them by name.
+//
+// Nothing is compiled here: the Rust build happens outside Gradle, so this module
+// exists purely to place the artifacts.
+group = "dev.kesk.identity_mobile"
+version = "0.0.1"
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.5.0")
+    }
+}
+
+rootProject.allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+apply plugin: "com.android.library"
+
+android {
+    namespace = "dev.kesk.identity_mobile"
+    compileSdk = 34
+
+    defaultConfig {
+        // NFC ISO-DEP with the timeouts a passport read needs.
+        minSdk = 21
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ["src/main/jniLibs"]
+        }
+    }
+}

@@ -128,19 +128,25 @@ jobs:
           done
 
   # ---------------------------------------------------------------------------
-  # Flutter FFI: cross-compile dmrtd for the mobile targets a Dart `dart:ffi`
-  # binding loads — iOS static libs bundled as an XCFramework, Android shared
-  # libs laid out per-ABI under jniLibs. Runs whenever dmrtd is in scope, on both
-  # dry runs and real publishes (it produces build artifacts, not a crates.io
-  # upload, so it holds no id-token and needs no branch gating).
+  # Flutter FFI: cross-compile `identity-mobile` for the mobile targets a Dart
+  # `dart:ffi` binding loads — iOS static libs bundled as an XCFramework, Android
+  # shared libs laid out per-ABI under jniLibs.
   #
-  # NB: dmrtd has no `extern "C"` surface yet, so these libraries currently expose
-  # the crate compiled for each target but no C-callable API. This job proves the
-  # crate cross-compiles to every mobile ABI and produces the artifacts; the C ABI
-  # / uniffi layer Flutter calls through is a separate change.
+  # `identity-mobile` is the crate that belongs here: it is the one shaped for the
+  # boundary, combining the passport and mDL paths behind a single result. Building
+  # `dmrtd` alone produced a library with no reason to be loaded on its own.
+  #
+  # It is unpublished, so these jobs run on any invocation rather than being gated
+  # on a crate selection. They produce build artifacts, not a crates.io upload, so
+  # they hold no id-token and need no branch gating.
+  #
+  # The crate exports its own C ABI (crates/identity-mobile/src/ffi.rs), which the
+  # Flutter plugin in crates/identity-mobile/flutter binds through dart:ffi. These
+  # jobs cross-compile it to every mobile ABI and produce the artifacts that plugin
+  # links against — the .so files under jniLibs, and the xcframework the Swift
+  # package declares as a binary target.
   ffi-ios:
     name: flutter-ffi (iOS)
-    if: ${{ inputs.crate == 'dmrtd' || inputs.crate == 'all' }}
     runs-on: macos-latest
     permissions:
       contents: read
@@ -162,7 +168,7 @@ jobs:
           # the pointless cdylib (.dylib) and its dynamic-link step.
           for t in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
             echo "::group::cargo rustc --target ${t} --crate-type staticlib"
-            cargo rustc -p dmrtd --release --locked --target "${t}" --crate-type staticlib
+            cargo rustc -p identity-mobile --release --locked --target "${t}" --crate-type staticlib
             echo "::endgroup::"
           done
       - name: Assemble XCFramework
@@ -171,24 +177,25 @@ jobs:
           # The two simulator slices (Apple-silicon + Intel) share one platform, so
           # they must be a single fat library; the device slice stays on its own.
           lipo -create \
-            target/aarch64-apple-ios-sim/release/libdmrtd.a \
-            target/x86_64-apple-ios/release/libdmrtd.a \
-            -output libdmrtd-sim.a
-          rm -rf dmrtd.xcframework
+            target/aarch64-apple-ios-sim/release/libidentity_mobile.a \
+            target/x86_64-apple-ios/release/libidentity_mobile.a \
+            -output libidentity_mobile-sim.a
+          rm -rf identity_mobile.xcframework
           xcodebuild -create-xcframework \
-            -library target/aarch64-apple-ios/release/libdmrtd.a \
-            -library libdmrtd-sim.a \
-            -output dmrtd.xcframework
+            -library target/aarch64-apple-ios/release/libidentity_mobile.a \
+            -library libidentity_mobile-sim.a \
+            -output identity_mobile.xcframework
+      # Drops beside the plugin's Package.swift, which declares it as a binary target.
+      # SwiftPM, not CocoaPods: see crates/identity-mobile/flutter/identity_mobile.
       - name: Upload XCFramework
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dmrtd-ios-xcframework
-          path: dmrtd.xcframework
+          name: identity-mobile-ios-xcframework
+          path: identity_mobile.xcframework
           if-no-files-found: error
 
   ffi-android:
     name: flutter-ffi (Android)
-    if: ${{ inputs.crate == 'dmrtd' || inputs.crate == 'all' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -213,10 +220,10 @@ jobs:
           cargo ndk \
             -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 \
             -o ./jniLibs \
-            build -p dmrtd --release --locked
+            build -p identity-mobile --release --locked
       - name: Upload jniLibs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dmrtd-android-jnilibs
+          name: identity-mobile-android-jnilibs
           path: jniLibs
           if-no-files-found: error
