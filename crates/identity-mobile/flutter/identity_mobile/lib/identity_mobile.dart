@@ -131,9 +131,12 @@ abstract final class IdentityMobile {
   /// bound into the MSO. It costs one signature check per candidate.
   ///
   /// Supply [origin] for the DC API, or [clientId] and [responseUri] for the redirect
-  /// flow; [nonce] is always required and is *your* nonce, not the wallet's. Pass
-  /// [jwkThumbprint] only when the response was encrypted — an absent thumbprint and an
-  /// empty one produce different transcripts, and the spec means the former.
+  /// flow; [nonce] is always required and is *your* nonce, not the wallet's.
+  ///
+  /// [jwkThumbprint] is the 32-byte RFC 7638 SHA-256 thumbprint of the key the response
+  /// was encrypted to, and `null` when it was not encrypted. The spec encodes absent as
+  /// a CBOR `null`, which is a different transcript from any byte string — so an empty
+  /// list is rejected rather than quietly treated as either one.
   static VerifiedIdentity verifyMdlOpenId4Vp(
     Uint8List deviceResponse, {
     required String nonce,
@@ -145,6 +148,19 @@ abstract final class IdentityMobile {
     Uint8List? jwkThumbprint,
     Uint8List? eReaderKey,
   }) {
+    // The ABI carries bytes as a pointer and a length, and an empty list arrives as a
+    // null pointer — indistinguishable from one that was never supplied. Since this API
+    // makes a point of absent and empty being different transcripts, an empty list here
+    // cannot be honoured and must not be silently read as absent.
+    if (jwkThumbprint != null && jwkThumbprint.isEmpty) {
+      throw ArgumentError.value(
+        jwkThumbprint,
+        'jwkThumbprint',
+        'an empty thumbprint is not the same as an absent one — pass null when the '
+            'response was not encrypted',
+      );
+    }
+
     final bindings = IdentityBindings.instance;
     final arena = _Arena();
     final (anchors, anchorBuffers) = allocateAnchors(iacaAnchors);

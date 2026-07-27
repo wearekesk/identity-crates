@@ -177,8 +177,21 @@ pub unsafe extern "C" fn identity_mobile_verify_mdl_openid4vp(
         )
     };
 
+    // A thumbprint is a SHA-256 digest or it is nothing. Checked here rather than left
+    // to build a transcript nobody signed: a wrong-length value produces a valid-looking
+    // handover that fails device authentication, which is indistinguishable from a
+    // replayed response and sends the reader looking in the wrong place entirely.
     let thumbprint = unsafe { params.jwk_thumbprint.as_slice() };
-    let thumbprint = (!thumbprint.is_empty()).then_some(thumbprint);
+    let thumbprint = match thumbprint.len() {
+        0 => None,
+        32 => Some(thumbprint),
+        other => {
+            return json::<VerifiedIdentity>(Err(IdentityError::Unreadable(format!(
+                "the response-encryption key thumbprint must be a 32-byte SHA-256 value, \
+                 got {other} bytes"
+            ))))
+        }
+    };
 
     let Some(nonce) = nonce.as_deref() else {
         return json::<VerifiedIdentity>(Err(IdentityError::Unreadable(

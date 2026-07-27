@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:identity_mobile/identity_mobile.dart';
@@ -95,6 +96,24 @@ void main() {
     expect(identity.ageOver(25), isFalse);
     expect(identity.ageOver(65), isNull);
     expect(identity.dateOfBirth, isNull);
+  });
+
+  /// The ABI cannot carry "present but empty" — an empty list reaches Rust as a null
+  /// pointer. Since absent and present are different transcripts, the ambiguity has to
+  /// be refused at this edge rather than resolved by guessing.
+  ///
+  /// Testable without the native library because the check runs before the library is
+  /// opened, which is also why it is a good place for it.
+  test('an empty thumbprint is refused rather than read as absent', () {
+    expect(
+      () => IdentityMobile.verifyMdlOpenId4Vp(
+        Uint8List.fromList([0x00]),
+        nonce: 'nonce-1',
+        origin: 'verifier.example',
+        jwkThumbprint: Uint8List(0),
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
   });
 
   test('an mDL verified without a session reports no profile', () {

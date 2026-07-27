@@ -398,11 +398,11 @@ fn the_builders_agree_with_mdl_verify_byte_for_byte() {
 }
 
 /// An encrypted and an unencrypted response are different sessions, and the spec says so
-/// with a CBOR `null` rather than an empty byte string.
+/// with a CBOR `null` rather than a byte string.
 #[test]
-fn an_absent_thumbprint_is_not_an_empty_one() {
+fn an_absent_thumbprint_is_not_a_present_one() {
     let with = mdl::Session::candidates(None)
-        .openid4vp_dcapi("verifier.example", "nonce-1", Some(&[]))
+        .openid4vp_dcapi("verifier.example", "nonce-1", Some(&[0x11; 32]))
         .expect("builds");
     let without = mdl::Session::candidates(None)
         .openid4vp_dcapi("verifier.example", "nonce-1", None)
@@ -411,7 +411,7 @@ fn an_absent_thumbprint_is_not_an_empty_one() {
     assert_ne!(
         with.candidates[0].transcript.as_bytes(),
         without.candidates[0].transcript.as_bytes(),
-        "an empty thumbprint must not encode the same as an absent one"
+        "a present thumbprint must not encode the same as an absent one"
     );
 }
 
