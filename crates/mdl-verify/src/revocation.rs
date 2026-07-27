@@ -76,8 +76,9 @@
 //! ```
 //!
 //! Across an FFI boundary an `async fn` is awkward, so [`BlockingCrlChecker`] owns a
-//! small runtime and exposes the same two calls synchronously — build it once, hold
-//! it, call it from whatever thread the platform hands you.
+//! small runtime and exposes every one of these synchronously — issuer auth, a full
+//! presentation, the candidate-transcript path and VICAL. Build it once, hold it, call
+//! it from whatever thread the platform hands you.
 //!
 //! # Why the async entry points are `async`
 //!
@@ -247,6 +248,31 @@ pub async fn verify_presentation<C: HttpClient>(
     Ok(verification)
 }
 
+/// [`crate::verify_presentation_any`], additionally checking the Document Signer
+/// against its CRL.
+///
+/// Without this, a caller who moved to candidate transcripts would quietly lose
+/// revocation checking — the multi-candidate path would otherwise always use the
+/// no-network verifier.
+pub async fn verify_presentation_any<C: HttpClient>(
+    device_response: &[u8],
+    anchors: &[IacaAnchor],
+    transcripts: &[SessionTranscript],
+    e_reader_key_private: Option<&[u8; 32]>,
+    options: &VerifyOptions,
+    crl: &CrlChecker<C>,
+) -> Result<(MdlVerification, usize), MdlError> {
+    crate::device::verify_presentation_any_with(
+        device_response,
+        anchors,
+        transcripts,
+        e_reader_key_private,
+        options,
+        &crl.fetcher,
+    )
+    .await
+}
+
 /// [`crate::vical::verify`], additionally checking the VICAL signer against its CRL.
 ///
 /// Worth doing for a trust-anchor list specifically: a compromised VICAL signer can
@@ -319,6 +345,29 @@ impl<C: HttpClient> BlockingCrlChecker<C> {
         self.runtime.block_on(verify_issuer_auth(
             device_response,
             anchors,
+            options,
+            &self.checker,
+        ))
+    }
+
+    /// [`verify_presentation_any`], driven to completion on this checker's runtime.
+    ///
+    /// # Panics
+    ///
+    /// If called from inside another async runtime.
+    pub fn verify_presentation_any(
+        &self,
+        device_response: &[u8],
+        anchors: &[IacaAnchor],
+        transcripts: &[SessionTranscript],
+        e_reader_key_private: Option<&[u8; 32]>,
+        options: &VerifyOptions,
+    ) -> Result<(MdlVerification, usize), MdlError> {
+        self.runtime.block_on(verify_presentation_any(
+            device_response,
+            anchors,
+            transcripts,
+            e_reader_key_private,
             options,
             &self.checker,
         ))

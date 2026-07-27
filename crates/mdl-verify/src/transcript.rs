@@ -92,14 +92,109 @@ impl SessionTranscript {
         Ok(Self { value, bytes })
     }
 
+    /// The ISO/IEC 18013-7 Annex B online handover, built from the values your
+    /// OpenID4VP layer already has.
+    ///
+    /// This is the **older draft** profile, identifiable by its use of a wallet-supplied
+    /// `mdoc_generated_nonce`. If your wallets follow OpenID4VP 1.0, they build the
+    /// handover differently and there is no wallet nonce at all — use
+    /// [`openid4vp_1_0`](Self::openid4vp_1_0). Both shapes are still in the wild, which
+    /// is what [`crate::verify_presentation_any`] exists for.
+    ///
+    /// The hashing is done here on purpose. It is SHA-256 over a CBOR array of two
+    /// text strings — not the concatenation, not JSON — and getting it wrong produces
+    /// a device-authentication failure indistinguishable from a real one. That is a
+    /// miserable thing to debug in a verifier, so it lives in one tested place.
+    pub fn openid4vp_iso_18013_7(
+        client_id: &str,
+        response_uri: &str,
+        nonce: &str,
+        mdoc_generated_nonce: &str,
+    ) -> Result<Self, MdlError> {
+        Self::openid4vp_handover(
+            &hash_pair(client_id, mdoc_generated_nonce)?,
+            &hash_pair(response_uri, mdoc_generated_nonce)?,
+            nonce,
+        )
+    }
+
+    /// The OpenID4VP 1.0 handover for a redirect flow — `response_uri` or
+    /// `redirect_uri` (Appendix B.2.6.1).
+    ///
+    /// ```text
+    /// OpenID4VPHandover     = ["OpenID4VPHandover", sha-256(OpenID4VPHandoverInfoBytes)]
+    /// OpenID4VPHandoverInfo = [clientId, nonce, jwkThumbprint, responseUri]
+    /// ```
+    ///
+    /// `client_id` includes the Client Identifier Prefix where one applies, and
+    /// `response_uri` is whichever of `response_uri` / `redirect_uri` the response mode
+    /// uses. `jwk_thumbprint` is the RFC 7638 SHA-256 thumbprint of the key the
+    /// response is encrypted to, and **`None` when the response is not encrypted** —
+    /// the spec requires a CBOR `null` there, which an empty byte string is not.
+    ///
+    /// Note what is absent: no `mdoc_generated_nonce`. That belongs to the older
+    /// ISO/IEC 18013-7 Annex B profile — see
+    /// [`openid4vp_iso_18013_7`](Self::openid4vp_iso_18013_7). If your wallets are on
+    /// OpenID4VP 1.0, this is the one to use and the wallet nonce plays no part.
+    pub fn openid4vp_1_0(
+        client_id: &str,
+        nonce: &str,
+        jwk_thumbprint: Option<&[u8]>,
+        response_uri: &str,
+    ) -> Result<Self, MdlError> {
+        let info = ciborium::Value::Array(vec![
+            ciborium::Value::Text(client_id.to_string()),
+            ciborium::Value::Text(nonce.to_string()),
+            thumbprint(jwk_thumbprint),
+            ciborium::Value::Text(response_uri.to_string()),
+        ]);
+
+        Self::from_parts(
+            None,
+            None,
+            ciborium::Value::Array(vec![
+                ciborium::Value::Text("OpenID4VPHandover".to_string()),
+                ciborium::Value::Bytes(sha256(&info)?),
+            ]),
+        )
+    }
+
+    /// The OpenID4VP 1.0 Digital Credentials API handover (Appendix B.2.6.2).
+    ///
+    /// ```text
+    /// OpenID4VPDCAPIHandover     = ["OpenID4VPDCAPIHandover", sha-256(InfoBytes)]
+    /// OpenID4VPDCAPIHandoverInfo = [origin, nonce, jwkThumbprint]
+    /// ```
+    ///
+    /// `origin` is the request's origin **without** an `origin:` prefix, `nonce` the
+    /// `nonce` request parameter, and `jwk_thumbprint` the RFC 7638 SHA-256 thumbprint
+    /// of the verifier's response-encryption key.
+    ///
+    /// Pass `None` for the thumbprint when the response mode is `dc_api` rather than
+    /// `dc_api.jwt`: the spec requires a CBOR `null` in that position, and an empty
+    /// byte string would produce a different transcript and therefore a device
+    /// authentication failure with no useful explanation.
+    pub fn openid4vp_dcapi(
+        origin: &str,
+        nonce: &str,
+        jwk_thumbprint: Option<&[u8]>,
+    ) -> Result<Self, MdlError> {
+        let info = ciborium::Value::Array(vec![
+            ciborium::Value::Text(origin.to_string()),
+            ciborium::Value::Text(nonce.to_string()),
+            thumbprint(jwk_thumbprint),
+        ]);
+
+        Self::openid4vp_dcapi_handover(&sha256(&info)?)
+    }
+
     /// The ISO/IEC 18013-7 Annex B online handover:
     /// `[null, null, [clientIdHash, responseUriHash, nonce]]`.
     ///
-    /// Both hashes are SHA-256 over a two-element CBOR array of the value and the
-    /// mdoc-generated nonce — `[client_id, mdoc_nonce]` and `[response_uri,
-    /// mdoc_nonce]`. They are taken as inputs rather than computed here because the
-    /// exact preimage has changed between drafts, and getting it wrong should fail
-    /// loudly in your OpenID4VP layer, not silently here.
+    /// Takes the hashes already computed. Prefer
+    /// [`openid4vp_iso_18013_7`](Self::openid4vp_iso_18013_7), which computes them;
+    /// this exists for a profile whose preimage differs from the one that method
+    /// assumes.
     pub fn openid4vp_handover(
         client_id_hash: &[u8],
         response_uri_hash: &[u8],
@@ -143,6 +238,32 @@ impl SessionTranscript {
     pub fn as_value(&self) -> &ciborium::Value {
         &self.value
     }
+}
+
+/// A present thumbprint is a byte string; an absent one is `null`, not an empty
+/// string. The two encode differently and only one of them verifies.
+fn thumbprint(value: Option<&[u8]>) -> ciborium::Value {
+    match value {
+        Some(bytes) => ciborium::Value::Bytes(bytes.to_vec()),
+        None => ciborium::Value::Null,
+    }
+}
+
+/// `SHA-256(CBOR([value, mdoc_generated_nonce]))` — the Annex B hash.
+fn hash_pair(value: &str, mdoc_generated_nonce: &str) -> Result<Vec<u8>, MdlError> {
+    sha256(&ciborium::Value::Array(vec![
+        ciborium::Value::Text(value.to_string()),
+        ciborium::Value::Text(mdoc_generated_nonce.to_string()),
+    ]))
+}
+
+fn sha256(value: &ciborium::Value) -> Result<Vec<u8>, MdlError> {
+    use sha2::{Digest, Sha256};
+
+    let encoded = cbor::to_vec(value)
+        .map_err(|e| MdlError::Unreadable(format!("could not encode the handover inputs: {e}")))?;
+
+    Ok(Sha256::digest(&encoded).to_vec())
 }
 
 impl Serialize for SessionTranscript {

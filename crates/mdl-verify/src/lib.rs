@@ -123,7 +123,7 @@ pub mod revocation;
 pub mod vical;
 
 pub use anchor::{IacaAnchor, TrustRules};
-pub use device::{verify_device_auth, verify_presentation};
+pub use device::{verify_device_auth, verify_presentation, verify_presentation_any};
 pub use error::MdlError;
 pub use issuer::{
     verify_issuer_auth, verify_issuer_auth_with, MdlDocument, MdlVerification, MsoValidity,

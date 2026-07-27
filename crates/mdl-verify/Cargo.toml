@@ -53,6 +53,9 @@ coset = "0.3.8"
 # `SessionTranscript` implements Serialize/Deserialize by hand: isomdl's transcript
 # trait requires them, and the derive would not preserve the encoded bytes.
 serde = "1.0"
+# Hashes the OpenID4VP handover inputs. Pinned to isomdl's major so there is one sha2
+# in the graph rather than two.
+sha2 = "0.10"
 # isomdl's timestamps are `time::OffsetDateTime`; the public API converts to chrono
 # to stay consistent with the sibling crates.
 time = "0.3.35"
