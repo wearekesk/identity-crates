@@ -43,11 +43,38 @@ real one. It checks reproducibility, not canonical form: the transcript comes fr
 your session layer rather than the holder, and a holder that signed non-canonically
 ordered bytes must still verify against exactly those bytes.
 
-`SessionTranscript::openid4vp_handover` (ISO 18013-7 Annex B) and
-`SessionTranscript::openid4vp_dcapi_handover` (OpenID4VP 1.0 over the W3C Digital
-Credentials API — the browser path for Apple Wallet and Google Wallet) assemble the
-two online shapes, taking the hashes as inputs because *what* gets hashed is exactly
-the part that differs between drafts.
+For the online flows, build it from the values you already have:
+
+```rust
+// ISO 18013-7 Annex B — the response_uri flow.
+let transcript = SessionTranscript::openid4vp_iso_18013_7(
+    client_id, response_uri, verifier_nonce, mdoc_generated_nonce,
+)?;
+
+// OpenID4VP 1.0 over the W3C Digital Credentials API — the browser path.
+let transcript = SessionTranscript::openid4vp_dcapi(origin, nonce, jwk_thumbprint)?;
+```
+
+Both do the hashing, which is worth having in one place: it is SHA-256 over a CBOR
+array — not a concatenation, not JSON — and getting it wrong produces a device
+authentication failure indistinguishable from a real one.
+
+### When you do not know which profile the wallet is on
+
+The profiles disagree about the handover, and which one a wallet emits depends on the
+wallet. `verify_presentation_any` takes candidates and tells you which matched:
+
+```rust
+let (verification, matched) = verify_presentation_any(
+    response, &anchors, &[annex_b, dcapi], None, &options,
+)?;
+```
+
+This weakens nothing. Every candidate is built by *you* from the same session inputs,
+so trying several is a question about encoding rather than trust — the holder still has
+to have signed one of them with the device key the issuer bound into the MSO. Log
+`matched`; after a day of real traffic you will know what your wallets emit and can
+narrow it.
 
 ## Apple Wallet and Google Wallet
 

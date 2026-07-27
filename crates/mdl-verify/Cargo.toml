@@ -53,6 +53,9 @@ coset = "0.3.8"
 # `SessionTranscript` implements Serialize/Deserialize by hand: isomdl's transcript
 # trait requires them, and the derive would not preserve the encoded bytes.
 serde = "1.0"
+# Hashes the OpenID4VP handover inputs. Pinned to isomdl's major so there is one sha2
+# in the graph rather than two.
+sha2 = "0.10"
 # isomdl's timestamps are `time::OffsetDateTime`; the public API converts to chrono
 # to stay consistent with the sibling crates.
 time = "0.3.35"
@@ -76,5 +79,7 @@ isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa0
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 chrono.workspace = true
 hex.workspace = true
+# The handover tests recompute the hashes by hand, as a backend would.
+sha2 = "0.10"
 # The `revocation` entry points are async, so the tests need a runtime to drive them.
 tokio = { version = "1", features = ["rt", "macros"] }

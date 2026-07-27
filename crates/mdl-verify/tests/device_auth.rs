@@ -81,6 +81,132 @@ fn a_maced_response_without_the_reader_key_is_refused_not_failed() {
     );
 }
 
+/// The Annex B handover, built from the values a verifier actually holds. The point of
+/// the constructor is that the hashing — SHA-256 over a CBOR pair, not a concatenation
+/// — lives in one place rather than in every backend.
+#[test]
+fn the_18013_7_handover_is_built_from_its_inputs() {
+    let built = SessionTranscript::openid4vp_iso_18013_7(
+        "https://verifier.example/cb",
+        "https://verifier.example/response",
+        "verifier-nonce",
+        "wallet-nonce",
+    )
+    .expect("builds");
+
+    // The same thing, hashed by hand, as a backend would have had to do.
+    let hash = |value: &str| {
+        use sha2::{Digest, Sha256};
+        let pair = ciborium::Value::Array(vec![
+            ciborium::Value::Text(value.to_string()),
+            ciborium::Value::Text("wallet-nonce".to_string()),
+        ]);
+        let mut encoded = Vec::new();
+        ciborium::into_writer(&pair, &mut encoded).unwrap();
+        Sha256::digest(&encoded).to_vec()
+    };
+
+    let expected = SessionTranscript::openid4vp_handover(
+        &hash("https://verifier.example/cb"),
+        &hash("https://verifier.example/response"),
+        "verifier-nonce",
+    )
+    .expect("builds");
+
+    assert_eq!(built, expected);
+}
+
+/// Changing any input changes the transcript, which is what binds the response to
+/// this session and no other.
+#[test]
+fn every_handover_input_is_bound() {
+    let base = SessionTranscript::openid4vp_iso_18013_7("a", "b", "c", "d").unwrap();
+
+    for other in [
+        SessionTranscript::openid4vp_iso_18013_7("z", "b", "c", "d").unwrap(),
+        SessionTranscript::openid4vp_iso_18013_7("a", "z", "c", "d").unwrap(),
+        SessionTranscript::openid4vp_iso_18013_7("a", "b", "z", "d").unwrap(),
+        // The wallet's own nonce matters too: it is inside both hashes.
+        SessionTranscript::openid4vp_iso_18013_7("a", "b", "c", "z").unwrap(),
+    ] {
+        assert_ne!(base, other);
+    }
+}
+
+#[test]
+fn the_dcapi_handover_is_built_from_its_inputs() {
+    let built =
+        SessionTranscript::openid4vp_dcapi("https://verifier.example", "nonce", &[0xAB; 32])
+            .expect("builds");
+
+    assert_ne!(
+        built,
+        SessionTranscript::openid4vp_dcapi("https://other.example", "nonce", &[0xAB; 32]).unwrap()
+    );
+}
+
+/// The question a verifier should not have to answer in advance: which profile is this
+/// wallet on? Hand in the candidates and be told.
+#[test]
+fn a_presentation_verifies_against_whichever_candidate_matches() {
+    let actual = transcript("the-nonce-the-wallet-signed");
+    let response = ResponseBuilder::default()
+        .transcript(actual.clone())
+        .build();
+
+    let candidates = [
+        // A plausible-but-wrong shape first, as a real deployment would have.
+        SessionTranscript::openid4vp_iso_18013_7(
+            "client",
+            "uri",
+            "the-nonce-the-wallet-signed",
+            "w",
+        ),
+        Ok(actual),
+    ]
+    .map(|t| t.expect("builds"));
+
+    let (verification, matched) = mdl_verify::verify_presentation_any(
+        &response,
+        &[iaca_anchor()],
+        &candidates,
+        None,
+        &options(),
+    )
+    .expect("one candidate matches");
+
+    assert_eq!(matched, 1, "and it says which");
+    assert!(verification.mdl().unwrap().device_authenticated);
+}
+
+/// Trying several candidates must not become a way to pass without matching any.
+#[test]
+fn no_matching_candidate_is_still_a_failure() {
+    let response = ResponseBuilder::default()
+        .transcript(transcript("what-the-wallet-signed"))
+        .build();
+
+    let wrong = [
+        transcript("not-this-one"),
+        SessionTranscript::openid4vp_iso_18013_7("a", "b", "c", "d").unwrap(),
+    ];
+
+    let result =
+        mdl_verify::verify_presentation_any(&response, &[iaca_anchor()], &wrong, None, &options());
+
+    assert!(matches!(result, Err(MdlError::DeviceAuth(_))), "{result:?}");
+}
+
+#[test]
+fn no_candidates_at_all_is_refused() {
+    let response = ResponseBuilder::default().build();
+
+    let result =
+        mdl_verify::verify_presentation_any(&response, &[iaca_anchor()], &[], None, &options());
+
+    assert!(matches!(result, Err(MdlError::DeviceAuth(_))), "{result:?}");
+}
+
 #[test]
 fn a_transcript_round_trips_through_its_encoding() {
     let session = transcript("nonce");

@@ -69,6 +69,71 @@ pub fn verify_presentation(
     Ok(verification)
 }
 
+/// Verify a presentation against several candidate transcripts, using whichever one
+/// the holder actually signed over.
+///
+/// The online mDL profiles disagree about how the handover is built — ISO/IEC 18013-7
+/// Annex B, OpenID4VP 1.0, and the Digital Credentials API each specify a different
+/// shape, and which one a wallet emits depends on the wallet. Rather than making that
+/// a deployment question you answer wrongly once and debug for a day, hand in the
+/// candidates and find out.
+///
+/// Returns the verification and the index of the transcript that matched.
+///
+/// This does not weaken anything. Every candidate is built by *you* from the same
+/// session inputs — your nonce, your `client_id`, your `response_uri` — so trying
+/// several is a question about encoding, not about trust. The holder still has to have
+/// signed one of them with the device key the issuer bound into the MSO. What it costs
+/// is a signature check per candidate.
+///
+/// Log which index matched: after a day of real traffic you will know what your
+/// wallets emit, and can narrow it.
+pub fn verify_presentation_any(
+    device_response: &[u8],
+    anchors: &[IacaAnchor],
+    transcripts: &[SessionTranscript],
+    e_reader_key_private: Option<&[u8; 32]>,
+    options: &VerifyOptions,
+) -> Result<(MdlVerification, usize), MdlError> {
+    if transcripts.is_empty() {
+        return Err(MdlError::DeviceAuth(
+            "no candidate session transcripts were supplied".to_string(),
+        ));
+    }
+
+    let response: DeviceResponse = cbor::from_slice(device_response)
+        .map_err(|e| MdlError::Unreadable(format!("could not decode a DeviceResponse: {e}")))?;
+
+    // Issuer authentication first, and only once: it does not depend on the transcript,
+    // and a document that is not issuer-authentic should fail as that rather than as a
+    // device-authentication problem.
+    let mut verification = verify_documents(&response, anchors, options)?;
+
+    let mut last = None;
+    for (index, transcript) in transcripts.iter().enumerate() {
+        match verify_response_device_auth(&response, transcript, e_reader_key_private) {
+            Ok(()) => {
+                for document in &mut verification.documents {
+                    document.device_authenticated = true;
+                }
+                return Ok((verification, index));
+            }
+            // A missing reader key is a caller mistake, not a wrong guess at the
+            // handover — trying the remaining candidates would only produce the same
+            // error with a worse message.
+            Err(e @ MdlError::EReaderKeyRequired) => return Err(e),
+            Err(e) => last = Some(e),
+        }
+    }
+
+    Err(MdlError::DeviceAuth(format!(
+        "none of the {} candidate transcripts matched the holder's signature; \
+         the last attempt said: {}",
+        transcripts.len(),
+        last.map(|e| e.to_string()).unwrap_or_default()
+    )))
+}
+
 pub(crate) fn verify_response_device_auth(
     response: &DeviceResponse,
     transcript: &SessionTranscript,

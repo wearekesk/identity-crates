@@ -92,14 +92,57 @@ impl SessionTranscript {
         Ok(Self { value, bytes })
     }
 
+    /// The ISO/IEC 18013-7 Annex B online handover, built from the values your
+    /// OpenID4VP layer already has.
+    ///
+    /// This is the one to reach for in a `response_uri` flow: you minted `nonce` when
+    /// you built the request, and the wallet returned `mdoc_generated_nonce` with the
+    /// `vp_token`.
+    ///
+    /// The hashing is done here on purpose. It is SHA-256 over a CBOR array of two
+    /// text strings — not the concatenation, not JSON — and getting it wrong produces
+    /// a device-authentication failure indistinguishable from a real one. That is a
+    /// miserable thing to debug in a verifier, so it lives in one tested place.
+    pub fn openid4vp_iso_18013_7(
+        client_id: &str,
+        response_uri: &str,
+        nonce: &str,
+        mdoc_generated_nonce: &str,
+    ) -> Result<Self, MdlError> {
+        Self::openid4vp_handover(
+            &hash_pair(client_id, mdoc_generated_nonce)?,
+            &hash_pair(response_uri, mdoc_generated_nonce)?,
+            nonce,
+        )
+    }
+
+    /// The OpenID4VP 1.0 Digital Credentials API handover, built from its inputs.
+    ///
+    /// `origin` is the browser origin or the Android APK key hash, `nonce` the one
+    /// from the credential request, and `jwk_thumbprint` the thumbprint of your
+    /// response-encryption key. They are hashed as `SHA-256(CBOR([origin, nonce,
+    /// jwk_thumbprint]))`, per the DC API profile.
+    pub fn openid4vp_dcapi(
+        origin: &str,
+        nonce: &str,
+        jwk_thumbprint: &[u8],
+    ) -> Result<Self, MdlError> {
+        let info = ciborium::Value::Array(vec![
+            ciborium::Value::Text(origin.to_string()),
+            ciborium::Value::Text(nonce.to_string()),
+            ciborium::Value::Bytes(jwk_thumbprint.to_vec()),
+        ]);
+
+        Self::openid4vp_dcapi_handover(&sha256(&info)?)
+    }
+
     /// The ISO/IEC 18013-7 Annex B online handover:
     /// `[null, null, [clientIdHash, responseUriHash, nonce]]`.
     ///
-    /// Both hashes are SHA-256 over a two-element CBOR array of the value and the
-    /// mdoc-generated nonce — `[client_id, mdoc_nonce]` and `[response_uri,
-    /// mdoc_nonce]`. They are taken as inputs rather than computed here because the
-    /// exact preimage has changed between drafts, and getting it wrong should fail
-    /// loudly in your OpenID4VP layer, not silently here.
+    /// Takes the hashes already computed. Prefer
+    /// [`openid4vp_iso_18013_7`](Self::openid4vp_iso_18013_7), which computes them;
+    /// this exists for a profile whose preimage differs from the one that method
+    /// assumes.
     pub fn openid4vp_handover(
         client_id_hash: &[u8],
         response_uri_hash: &[u8],
@@ -143,6 +186,23 @@ impl SessionTranscript {
     pub fn as_value(&self) -> &ciborium::Value {
         &self.value
     }
+}
+
+/// `SHA-256(CBOR([value, mdoc_generated_nonce]))` — the Annex B hash.
+fn hash_pair(value: &str, mdoc_generated_nonce: &str) -> Result<Vec<u8>, MdlError> {
+    sha256(&ciborium::Value::Array(vec![
+        ciborium::Value::Text(value.to_string()),
+        ciborium::Value::Text(mdoc_generated_nonce.to_string()),
+    ]))
+}
+
+fn sha256(value: &ciborium::Value) -> Result<Vec<u8>, MdlError> {
+    use sha2::{Digest, Sha256};
+
+    let encoded = cbor::to_vec(value)
+        .map_err(|e| MdlError::Unreadable(format!("could not encode the handover inputs: {e}")))?;
+
+    Ok(Sha256::digest(&encoded).to_vec())
 }
 
 impl Serialize for SessionTranscript {
