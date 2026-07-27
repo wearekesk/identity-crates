@@ -5,6 +5,7 @@
 library;
 
 import 'dart:ffi';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -108,6 +109,7 @@ abstract final class IdentityMobile {
     required Uint8List sod,
     required Uint8List dg1,
     Uint8List? dg2,
+    Uint8List? dg15,
     List<Uint8List> cscaAnchors = const [],
   }) {
     final bindings = IdentityBindings.instance;
@@ -119,6 +121,7 @@ abstract final class IdentityMobile {
         arena.slice(arena.bytes(sod), sod.length),
         arena.slice(arena.bytes(dg1), dg1.length),
         arena.slice(arena.bytes(dg2), dg2?.length ?? 0),
+        arena.slice(arena.bytes(dg15), dg15?.length ?? 0),
         anchors,
         cscaAnchors.length,
       );
@@ -129,4 +132,38 @@ abstract final class IdentityMobile {
       freeAnchors(anchors, anchorBuffers);
     }
   }
+
+  /// [verifyMdl] on a worker isolate.
+  ///
+  /// Verification is CPU work — signature checks and digests — and on a large response
+  /// it is long enough to drop frames. `PassportReader` already keeps its work off the
+  /// UI isolate; these do the same for the paths that have no NFC to wait on.
+  static Future<VerifiedIdentity> verifyMdlAsync(
+    Uint8List deviceResponse, {
+    List<Uint8List> iacaAnchors = const [],
+    Uint8List? sessionTranscript,
+    Uint8List? eReaderKey,
+  }) =>
+      Isolate.run(() => verifyMdl(
+            deviceResponse,
+            iacaAnchors: iacaAnchors,
+            sessionTranscript: sessionTranscript,
+            eReaderKey: eReaderKey,
+          ));
+
+  /// [verifyPassportFiles] on a worker isolate.
+  static Future<VerifiedIdentity> verifyPassportFilesAsync({
+    required Uint8List sod,
+    required Uint8List dg1,
+    Uint8List? dg2,
+    Uint8List? dg15,
+    List<Uint8List> cscaAnchors = const [],
+  }) =>
+      Isolate.run(() => verifyPassportFiles(
+            sod: sod,
+            dg1: dg1,
+            dg2: dg2,
+            dg15: dg15,
+            cscaAnchors: cscaAnchors,
+          ));
 }

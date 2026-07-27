@@ -51,6 +51,7 @@ fn a_verified_passport_crosses_the_boundary_intact() {
             bytes(SOD),
             bytes(DG1),
             bytes(DG2),
+            NOTHING,
             anchors.as_ptr(),
             anchors.len(),
         )
@@ -91,6 +92,7 @@ fn an_absent_portrait_is_reported_rather_than_assumed() {
             bytes(SOD),
             bytes(DG1),
             NOTHING,
+            NOTHING,
             anchors.as_ptr(),
             anchors.len(),
         )
@@ -127,6 +129,7 @@ fn a_failure_crosses_as_a_typed_error() {
             bytes(SOD),
             bytes(&tampered),
             bytes(DG2),
+            NOTHING,
             anchors.as_ptr(),
             anchors.len(),
         )
@@ -140,7 +143,14 @@ fn a_failure_crosses_as_a_typed_error() {
 #[test]
 fn no_anchors_is_a_valid_call() {
     let value = take(unsafe {
-        identity_mobile_verify_passport(bytes(SOD), bytes(DG1), bytes(DG2), std::ptr::null(), 0)
+        identity_mobile_verify_passport(
+            bytes(SOD),
+            bytes(DG1),
+            bytes(DG2),
+            NOTHING,
+            std::ptr::null(),
+            0,
+        )
     });
 
     assert_eq!(value["identity"]["authenticity"]["dataAuthentic"], true);
@@ -226,6 +236,7 @@ fn text_is_escaped_for_json() {
         identity_mobile_verify_passport(
             bytes(b"not a security object"),
             bytes(DG1),
+            NOTHING,
             NOTHING,
             std::ptr::null(),
             0,

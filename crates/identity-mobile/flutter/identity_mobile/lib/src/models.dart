@@ -19,6 +19,10 @@ enum IdentityErrorKind {
   /// The data does not match what the issuer signed. Not a retry.
   notAuthentic,
 
+  /// The presentation used `DeviceMac`, which needs the reader's ephemeral private
+  /// key. The caller can fix this — the key exists, it just was not passed in.
+  sessionKeyRequired,
+
   /// A supplied trust anchor could not be parsed.
   anchor,
 
@@ -34,6 +38,7 @@ enum IdentityErrorKind {
         'access' => IdentityErrorKind.access,
         'unreadable' => IdentityErrorKind.unreadable,
         'notAuthentic' => IdentityErrorKind.notAuthentic,
+        'sessionKeyRequired' => IdentityErrorKind.sessionKeyRequired,
         'anchor' => IdentityErrorKind.anchor,
         'unsupportedAlgorithm' => IdentityErrorKind.unsupportedAlgorithm,
         _ => IdentityErrorKind.unknown,

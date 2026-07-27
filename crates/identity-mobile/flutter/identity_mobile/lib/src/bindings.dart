@@ -118,10 +118,20 @@ typedef VerifyMdl = Pointer<Utf8> Function(
   NativeBytes eReaderKey,
 );
 
-typedef VerifyPassportNative = Pointer<Utf8> Function(NativeBytes sod, NativeBytes dg1,
-    NativeBytes dg2, Pointer<NativeBytes> anchors, Size anchorCount);
-typedef VerifyPassport = Pointer<Utf8> Function(NativeBytes sod, NativeBytes dg1,
-    NativeBytes dg2, Pointer<NativeBytes> anchors, int anchorCount);
+typedef VerifyPassportNative = Pointer<Utf8> Function(
+    NativeBytes sod,
+    NativeBytes dg1,
+    NativeBytes dg2,
+    NativeBytes dg15,
+    Pointer<NativeBytes> anchors,
+    Size anchorCount);
+typedef VerifyPassport = Pointer<Utf8> Function(
+    NativeBytes sod,
+    NativeBytes dg1,
+    NativeBytes dg2,
+    NativeBytes dg15,
+    Pointer<NativeBytes> anchors,
+    int anchorCount);
 
 typedef ReadPassportNative = Pointer<Utf8> Function(
   Pointer<Utf8> documentNumber,

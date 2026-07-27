@@ -175,6 +175,7 @@ fn map_error(error: MdlError) -> IdentityError {
             "the holder did not prove possession of the device key: {why}"
         )),
         MdlError::UnsupportedAlgorithm(what) => IdentityError::UnsupportedAlgorithm(what),
+        MdlError::EReaderKeyRequired => IdentityError::SessionKeyRequired,
         MdlError::Anchor(why) => IdentityError::Anchor(why),
         other => IdentityError::Unreadable(other.to_string()),
     }

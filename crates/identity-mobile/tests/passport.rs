@@ -18,7 +18,7 @@ fn files() -> PassportFiles {
         sod: SOD.to_vec(),
         dg1: DG1.to_vec(),
         dg2: Some(DG2.to_vec()),
-        active_authentication: None,
+        dg15: None,
     }
 }
 
@@ -148,20 +148,19 @@ fn skipping_the_portrait_is_reported_as_uncovered() {
     );
 }
 
+/// The files-only path performs no challenge, so it cannot establish holder binding —
+/// and must not let a caller assert it either. A set of files somebody assembled must
+/// never clear the in-person bar.
 #[test]
-fn a_failed_active_authentication_is_carried_through_as_a_warning() {
-    let mut cloned = files();
-    cloned.active_authentication = Some(false);
+fn verifying_files_never_reports_holder_binding() {
+    let identity = passport::verify_passport(&files(), &[CSCA.to_vec()]).expect("verifies");
 
-    let identity = passport::verify_passport(&cloned, &[CSCA.to_vec()]).expect("verifies");
-
-    assert_eq!(identity.authenticity.holder_bound, Some(false));
-    assert!(!identity.authenticity.is_present_and_trustworthy());
-    assert!(identity
-        .authenticity
-        .warnings
-        .iter()
-        .any(|w| w.contains("active authentication")));
+    assert_eq!(identity.authenticity.holder_bound, None);
+    assert!(identity.authenticity.is_trustworthy());
+    assert!(
+        !identity.authenticity.is_present_and_trustworthy(),
+        "holder binding is established by challenging the chip, not by passing a flag"
+    );
 }
 
 #[test]

@@ -35,6 +35,15 @@ pub enum IdentityError {
     #[error("the document is not authentic: {0}")]
     NotAuthentic(String),
 
+    /// The holder authenticated with `DeviceMac`, whose key is derived by ECDH with
+    /// the reader's ephemeral key — so it cannot be checked without that key.
+    ///
+    /// Its own variant because the caller can fix it, unlike everything else here: the
+    /// session key exists, it just was not passed in. Reported as "unreadable" it looks
+    /// like a bad document.
+    #[error("this presentation needs the reader's ephemeral private key to verify")]
+    SessionKeyRequired,
+
     /// A supplied trust anchor could not be parsed.
     #[error("a trust anchor could not be parsed: {0}")]
     Anchor(String),

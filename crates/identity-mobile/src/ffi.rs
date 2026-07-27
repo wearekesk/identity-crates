@@ -106,8 +106,11 @@ pub unsafe extern "C" fn identity_mobile_verify_mdl(
 
 /// Verify passport files that were read elsewhere.
 ///
-/// Pass a null `dg2` when the photograph was not read; the result reports the gap
-/// rather than pretending the group was covered.
+/// Pass a null `dg2` or `dg15` for groups that were not read; the result reports the
+/// gap rather than pretending they were covered.
+///
+/// This path never reports holder binding: establishing it means challenging the chip,
+/// which only [`identity_mobile_read_passport_async`] does.
 ///
 /// # Safety
 ///
@@ -117,16 +120,18 @@ pub unsafe extern "C" fn identity_mobile_verify_passport(
     sod: Bytes,
     dg1: Bytes,
     dg2: Bytes,
+    dg15: Bytes,
     anchors: *const Bytes,
     anchor_count: usize,
 ) -> *mut c_char {
     let dg2 = unsafe { dg2.as_slice() };
+    let dg15 = unsafe { dg15.as_slice() };
 
     let files = PassportFiles {
         sod: unsafe { sod.as_slice() }.to_vec(),
         dg1: unsafe { dg1.as_slice() }.to_vec(),
         dg2: (!dg2.is_empty()).then(|| dg2.to_vec()),
-        active_authentication: None,
+        dg15: (!dg15.is_empty()).then(|| dg15.to_vec()),
     };
 
     let anchors = unsafe { collect(anchors, anchor_count) };
@@ -311,10 +316,14 @@ impl ApduChannel for AsyncChannel {
         // duration of this call, and this call ends when the exchange is answered *or
         // times out* — so a host that was slow to reach the callback could otherwise
         // read a buffer that no longer exists.
-        let mut owned = apdu.to_vec();
-        owned.shrink_to_fit();
-        let (ptr, len) = (owned.as_mut_ptr(), owned.len());
-        std::mem::forget(owned);
+        // A boxed slice, not a `Vec`: `shrink_to_fit` is permitted to leave spare
+        // capacity, and reconstructing with `Vec::from_raw_parts(ptr, len, len)` when
+        // the real capacity differs is undefined behaviour. `into_boxed_slice` gives an
+        // allocation whose size is exactly its length, which the free path can rebuild
+        // without knowing anything else.
+        let owned: Box<[u8]> = apdu.to_vec().into_boxed_slice();
+        let len = owned.len();
+        let ptr = Box::into_raw(owned).cast::<u8>();
 
         (self.post)(self.context, exchange.id(), ptr, len);
         exchange.wait()
@@ -333,7 +342,8 @@ impl ApduChannel for AsyncChannel {
 #[no_mangle]
 pub unsafe extern "C" fn identity_mobile_free_apdu(apdu: *mut u8, len: usize) {
     if !apdu.is_null() && len > 0 {
-        drop(unsafe { Vec::from_raw_parts(apdu, len, len) });
+        // Rebuilt as the boxed slice it was allocated as; see `AsyncChannel::transceive`.
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(apdu, len)) });
     }
 }
 
@@ -454,6 +464,7 @@ impl Json {
             IdentityError::Access => "access",
             IdentityError::Unreadable(_) => "unreadable",
             IdentityError::NotAuthentic(_) => "notAuthentic",
+            IdentityError::SessionKeyRequired => "sessionKeyRequired",
             IdentityError::Anchor(_) => "anchor",
             IdentityError::UnsupportedAlgorithm(_) => "unsupportedAlgorithm",
         };

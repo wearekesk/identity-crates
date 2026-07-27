@@ -146,9 +146,22 @@ pub struct PassportFiles {
     pub dg1: Vec<u8>,
     /// EF.DG2 — the photograph.
     pub dg2: Option<Vec<u8>>,
-    /// Whether active authentication succeeded, if it was attempted.
-    pub active_authentication: Option<bool>,
+    /// EF.DG15 — the chip's active-authentication public key.
+    ///
+    /// Supply it if you read it. It is hashed against EF.SOD like any other group,
+    /// which is the only thing that makes an active-authentication result mean
+    /// anything: the key AA is checked against has to be the key the issuer signed.
+    pub dg15: Option<Vec<u8>>,
 }
+
+// Note what is *not* here: a field saying active authentication succeeded.
+//
+// It used to be one, and that was wrong. Holder binding is a property this crate
+// establishes by challenging the chip, not a claim a caller can hand in — with it as
+// an input, `is_present_and_trustworthy()` would pass for a set of files someone
+// assembled, which is exactly the assurance it is supposed to deny. `verify_passport`
+// therefore always reports `holder_bound: None`; only [`read_passport`], which does
+// the exchange, can report anything else.
 
 /// Read a passport from a live chip and verify it.
 ///
@@ -232,9 +245,17 @@ pub fn read_passport(
     // would make the next optional read look like a lost tag.
     transport_failed.set(false);
 
-    let dg1 = passport
-        .read_ef_dg1()
-        .map_err(|e| IdentityError::Nfc(format!("could not read the MRZ (DG1): {e}")))?;
+    let dg1 = passport.read_ef_dg1().map_err(|e| {
+        // A chip that answered with something unparseable is a different problem from
+        // one that stopped answering, and the holder is told to do different things.
+        if transport_failed.get() {
+            IdentityError::Nfc(format!(
+                "the chip stopped responding while reading the MRZ: {e}"
+            ))
+        } else {
+            IdentityError::Unreadable(format!("EF.DG1 (the MRZ) could not be read: {e}"))
+        }
+    })?;
 
     let dg2 = if options.read_portrait {
         transport_failed.set(false);
@@ -255,9 +276,30 @@ pub fn read_passport(
         None
     };
 
-    let sod = passport
-        .read_ef_sod()
-        .map_err(|e| IdentityError::Nfc(format!("could not read EF.SOD: {e}")))?;
+    // DG15 carries the key active authentication is checked against, so it has to be
+    // read and passed through passive authentication — an AA result against a DG15
+    // nobody verified proves nothing, since an attacker who can rewrite the group can
+    // supply their own key and answer their own challenge.
+    let dg15 = if options.active_authentication {
+        transport_failed.set(false);
+        passport
+            .read_ef_dg15()
+            .ok()
+            .map(|dg| dg.to_bytes().to_vec())
+    } else {
+        None
+    };
+
+    transport_failed.set(false);
+    let sod = passport.read_ef_sod().map_err(|e| {
+        if transport_failed.get() {
+            IdentityError::Nfc(format!(
+                "the chip stopped responding while reading EF.SOD: {e}"
+            ))
+        } else {
+            IdentityError::Unreadable(format!("EF.SOD could not be read: {e}"))
+        }
+    })?;
 
     // Active authentication needs a challenge the chip cannot have seen before —
     // a fixed one lets a recorded response be replayed, which defeats the point.
@@ -286,15 +328,16 @@ pub fn read_passport(
         None
     };
 
-    verify_passport(
-        &PassportFiles {
-            sod: sod.to_bytes().to_vec(),
-            dg1: dg1.to_bytes().to_vec(),
-            dg2,
-            active_authentication,
-        },
-        anchors,
-    )
+    let files = PassportFiles {
+        sod: sod.to_bytes().to_vec(),
+        dg1: dg1.to_bytes().to_vec(),
+        dg2,
+        dg15,
+    };
+
+    // Only now, with the data groups verified against EF.SOD, is an active
+    // authentication result worth anything.
+    verify_files(&files, anchors, active_authentication)
 }
 
 /// Verify files already read off a chip, and map them to an identity.
@@ -305,6 +348,16 @@ pub fn read_passport(
 pub fn verify_passport(
     files: &PassportFiles,
     anchors: &[Vec<u8>],
+) -> Result<VerifiedIdentity, IdentityError> {
+    // `None`: this path performs no challenge, so it cannot establish holder binding
+    // and must not appear to.
+    verify_files(files, anchors, None)
+}
+
+fn verify_files(
+    files: &PassportFiles,
+    anchors: &[Vec<u8>],
+    active_authentication: Option<bool>,
 ) -> Result<VerifiedIdentity, IdentityError> {
     let anchors = anchors
         .iter()
@@ -327,12 +380,23 @@ pub fn verify_passport(
             bytes: dg2,
         });
     }
+    if let Some(dg15) = files.dg15.as_deref() {
+        groups.push(DataGroup {
+            number: 15,
+            bytes: dg15,
+        });
+    }
 
     let passive = passive::verify(&files.sod, &groups, &anchors)
         .map_err(|e| IdentityError::NotAuthentic(e.to_string()))?;
 
+    // An active-authentication success is only meaningful if the key it was checked
+    // against came through passive authentication. If DG15 was not read, or EF.SOD does
+    // not cover it, the answer is "not established" rather than "yes".
+    let holder_bound = holder_binding(active_authentication, passive.verified_groups.contains(&15));
+
     let (mut identity, document_code, issuing_state) = identity_from_files(files)?;
-    identity.authenticity = authenticity(&passive, files, &identity);
+    identity.authenticity = authenticity(&passive, files, &identity, holder_bound);
     identity.source = Some(DocumentSource::Passport {
         document_code,
         // The MRZ's issuing state, not the holder's nationality. They usually match
@@ -384,6 +448,7 @@ fn authenticity(
     passive: &PassiveAuth,
     files: &PassportFiles,
     identity: &VerifiedIdentity,
+    holder_bound: Option<bool>,
 ) -> Authenticity {
     let mut warnings = Vec::new();
 
@@ -406,10 +471,18 @@ fn authenticity(
         warnings.push("EF.DG2 was read but no image could be decoded from it".to_string());
     }
 
-    if files.active_authentication == Some(false) {
+    if holder_bound == Some(false) {
         warnings.push(
             "active authentication did not succeed: the chip may be a clone, or may \
              simply not support it (no EF.DG15)"
+                .to_string(),
+        );
+    }
+
+    if files.dg15.is_some() && !passive.verified_groups.contains(&15) {
+        warnings.push(
+            "EF.DG15 was read but EF.SOD does not cover it, so the active \
+             authentication key is not the one the issuer signed"
                 .to_string(),
         );
     }
@@ -429,7 +502,7 @@ fn authenticity(
         // EF.SOD; the chain is a separate question.
         data_authentic: true,
         issuer_trusted: matches!(passive.chain, ChainStatus::Trusted { .. }),
-        holder_bound: files.active_authentication,
+        holder_bound,
         not_expired,
         warnings,
     }
@@ -438,4 +511,42 @@ fn authenticity(
 fn non_empty(value: &str) -> Option<String> {
     let trimmed = value.trim().trim_matches('<').trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+/// Whether an active-authentication result may be reported as holder binding.
+///
+/// A success only counts if EF.SOD covered DG15, because DG15 holds the key the
+/// challenge was checked against. Without that, an attacker who can rewrite the group
+/// supplies their own key, answers their own challenge, and a cloned chip reports as
+/// the original.
+fn holder_binding(active_authentication: Option<bool>, dg15_authenticated: bool) -> Option<bool> {
+    match active_authentication {
+        Some(true) if !dg15_authenticated => None,
+        other => other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::holder_binding;
+
+    #[test]
+    fn a_success_needs_an_authenticated_dg15() {
+        assert_eq!(holder_binding(Some(true), true), Some(true));
+        // The dangerous case: AA said yes, but against a key nobody verified.
+        assert_eq!(holder_binding(Some(true), false), None);
+    }
+
+    #[test]
+    fn a_failure_stands_regardless() {
+        // Still worth telling the caller about; it is not a claim of authenticity.
+        assert_eq!(holder_binding(Some(false), false), Some(false));
+        assert_eq!(holder_binding(Some(false), true), Some(false));
+    }
+
+    #[test]
+    fn not_attempted_stays_not_attempted() {
+        assert_eq!(holder_binding(None, true), None);
+        assert_eq!(holder_binding(None, false), None);
+    }
 }
