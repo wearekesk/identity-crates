@@ -134,7 +134,13 @@ pub(crate) async fn verify_presentation_any_with<R: RevocationFetcher>(
     // checked without it whichever transcript is used, and finding that out only after
     // every candidate has failed would report a capability gap as a handover mismatch.
     if e_reader_key_private.is_none() {
-        let documents = response.documents.as_ref().ok_or(MdlError::NoDocuments)?;
+        // Not fallible: `verify_documents_with` above returns `NoDocuments` if the
+        // response carried none, so reaching here means there are some. Written as an
+        // expectation rather than a `?` so it reads as the invariant it is.
+        let documents = response
+            .documents
+            .as_ref()
+            .expect("issuer authentication already established that documents are present");
         if documents
             .iter()
             .any(|d| matches!(d.device_signed.device_auth, DeviceAuth::DeviceMac(_)))
