@@ -139,32 +139,60 @@ fn the_dcapi_handover_is_built_from_its_inputs() {
         SessionTranscript::openid4vp_dcapi("https://verifier.example", "nonce", &[0xAB; 32])
             .expect("builds");
 
-    assert_ne!(
-        built,
-        SessionTranscript::openid4vp_dcapi("https://other.example", "nonce", &[0xAB; 32]).unwrap()
-    );
+    // The preimage the DC API profile specifies: SHA-256 over CBOR
+    // `[origin, nonce, jwk_thumbprint]`.
+    let expected = {
+        use sha2::{Digest, Sha256};
+        let info = ciborium::Value::Array(vec![
+            ciborium::Value::Text("https://verifier.example".to_string()),
+            ciborium::Value::Text("nonce".to_string()),
+            ciborium::Value::Bytes(vec![0xAB; 32]),
+        ]);
+        let mut encoded = Vec::new();
+        ciborium::into_writer(&info, &mut encoded).unwrap();
+        SessionTranscript::openid4vp_dcapi_handover(&Sha256::digest(&encoded)).unwrap()
+    };
+
+    assert_eq!(built, expected);
+
+    // All three inputs are bound, not just the origin.
+    for other in [
+        SessionTranscript::openid4vp_dcapi("https://other.example", "nonce", &[0xAB; 32]).unwrap(),
+        SessionTranscript::openid4vp_dcapi("https://verifier.example", "other", &[0xAB; 32])
+            .unwrap(),
+        SessionTranscript::openid4vp_dcapi("https://verifier.example", "nonce", &[0xCD; 32])
+            .unwrap(),
+    ] {
+        assert_ne!(built, other);
+    }
 }
 
 /// The question a verifier should not have to answer in advance: which profile is this
 /// wallet on? Hand in the candidates and be told.
+///
+/// The wallet here signs over a transcript built by the **Annex B constructor**, so a
+/// regression in its hashing fails here rather than being masked by a hand-built
+/// transcript that happens to match.
 #[test]
-fn a_presentation_verifies_against_whichever_candidate_matches() {
-    let actual = transcript("the-nonce-the-wallet-signed");
+fn a_presentation_verifies_against_the_annex_b_candidate() {
+    let signed = SessionTranscript::openid4vp_iso_18013_7(
+        "https://verifier.example/client",
+        "https://verifier.example/response",
+        "verifier-nonce",
+        "wallet-nonce",
+    )
+    .expect("builds");
+
     let response = ResponseBuilder::default()
-        .transcript(actual.clone())
+        .transcript(signed.clone())
         .build();
 
     let candidates = [
         // A plausible-but-wrong shape first, as a real deployment would have.
-        SessionTranscript::openid4vp_iso_18013_7(
-            "client",
-            "uri",
-            "the-nonce-the-wallet-signed",
-            "w",
-        ),
-        Ok(actual),
-    ]
-    .map(|t| t.expect("builds"));
+        SessionTranscript::openid4vp_dcapi("https://verifier.example", "verifier-nonce", &[0; 32])
+            .expect("builds"),
+        signed,
+    ];
 
     let (verification, matched) = mdl_verify::verify_presentation_any(
         &response,
@@ -177,6 +205,57 @@ fn a_presentation_verifies_against_whichever_candidate_matches() {
 
     assert_eq!(matched, 1, "and it says which");
     assert!(verification.mdl().unwrap().device_authenticated);
+}
+
+/// The mirror case, so neither constructor is only ever exercised as the *wrong*
+/// candidate.
+#[test]
+fn a_presentation_verifies_against_the_dcapi_candidate() {
+    let signed = SessionTranscript::openid4vp_dcapi("https://verifier.example", "nonce", &[7; 32])
+        .expect("builds");
+
+    let response = ResponseBuilder::default()
+        .transcript(signed.clone())
+        .build();
+
+    let candidates = [
+        SessionTranscript::openid4vp_iso_18013_7("client", "uri", "nonce", "wallet").unwrap(),
+        signed,
+    ];
+
+    let (_, matched) = mdl_verify::verify_presentation_any(
+        &response,
+        &[iaca_anchor()],
+        &candidates,
+        None,
+        &options(),
+    )
+    .expect("one candidate matches");
+
+    assert_eq!(matched, 1);
+}
+
+/// A `DeviceMac` document without the reader key is a caller mistake, and has to be
+/// named as one before the candidates are tried — otherwise it surfaces as "none of
+/// your transcripts matched", which sends the reader looking in the wrong place.
+#[test]
+fn a_missing_reader_key_is_named_before_candidates_are_tried() {
+    let response = ResponseBuilder::default()
+        .device_auth(DeviceAuthKind::UnverifiableMac)
+        .build();
+
+    let result = mdl_verify::verify_presentation_any(
+        &response,
+        &[iaca_anchor()],
+        &[transcript("a"), transcript("b")],
+        None,
+        &options(),
+    );
+
+    assert!(
+        matches!(result, Err(MdlError::EReaderKeyRequired)),
+        "{result:?}"
+    );
 }
 
 /// Trying several candidates must not become a way to pass without matching any.

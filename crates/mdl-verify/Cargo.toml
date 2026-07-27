@@ -79,7 +79,5 @@ isomdl = { git = "https://github.com/spruceid/isomdl", rev = "fcb49d15ad9d54afa0
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 chrono.workspace = true
 hex.workspace = true
-# The handover tests recompute the hashes by hand, as a backend would.
-sha2 = "0.10"
 # The `revocation` entry points are async, so the tests need a runtime to drive them.
 tokio = { version = "1", features = ["rt", "macros"] }

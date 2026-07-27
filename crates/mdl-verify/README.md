@@ -46,6 +46,8 @@ ordered bytes must still verify against exactly those bytes.
 For the online flows, build it from the values you already have:
 
 ```rust
+use mdl_verify::{verify_presentation_any, SessionTranscript};
+
 // ISO 18013-7 Annex B — the response_uri flow.
 let transcript = SessionTranscript::openid4vp_iso_18013_7(
     client_id, response_uri, verifier_nonce, mdoc_generated_nonce,

@@ -12,9 +12,10 @@
 use isomdl::cbor;
 use isomdl::definitions::device_response::DeviceResponse;
 use isomdl::definitions::device_signed::DeviceAuth;
+use isomdl::definitions::x509::revocation::RevocationFetcher;
 use isomdl::presentation::authentication::mdoc::device_authentication;
 
-use crate::issuer::{verify_documents, MdlVerification, VerifyOptions};
+use crate::issuer::{verify_documents, verify_documents_with, MdlVerification, VerifyOptions};
 use crate::{IacaAnchor, MdlError, SessionTranscript};
 
 /// Unused on the `DeviceSignature` path, where no ECDH happens. Upstream takes the
@@ -95,6 +96,25 @@ pub fn verify_presentation_any(
     e_reader_key_private: Option<&[u8; 32]>,
     options: &VerifyOptions,
 ) -> Result<(MdlVerification, usize), MdlError> {
+    crate::block_on::try_block_on(verify_presentation_any_with(
+        device_response,
+        anchors,
+        transcripts,
+        e_reader_key_private,
+        options,
+        &(),
+    ))
+    .ok_or(MdlError::ValidationDidNotComplete)?
+}
+
+pub(crate) async fn verify_presentation_any_with<R: RevocationFetcher>(
+    device_response: &[u8],
+    anchors: &[IacaAnchor],
+    transcripts: &[SessionTranscript],
+    e_reader_key_private: Option<&[u8; 32]>,
+    options: &VerifyOptions,
+    revocation_fetcher: &R,
+) -> Result<(MdlVerification, usize), MdlError> {
     if transcripts.is_empty() {
         return Err(MdlError::DeviceAuth(
             "no candidate session transcripts were supplied".to_string(),
@@ -107,7 +127,21 @@ pub fn verify_presentation_any(
     // Issuer authentication first, and only once: it does not depend on the transcript,
     // and a document that is not issuer-authentic should fail as that rather than as a
     // device-authentication problem.
-    let mut verification = verify_documents(&response, anchors, options)?;
+    let mut verification =
+        verify_documents_with(&response, anchors, options, revocation_fetcher).await?;
+
+    // Ask about the reader key before trying anything. A `DeviceMac` document cannot be
+    // checked without it whichever transcript is used, and finding that out only after
+    // every candidate has failed would report a capability gap as a handover mismatch.
+    if e_reader_key_private.is_none() {
+        let documents = response.documents.as_ref().ok_or(MdlError::NoDocuments)?;
+        if documents
+            .iter()
+            .any(|d| matches!(d.device_signed.device_auth, DeviceAuth::DeviceMac(_)))
+        {
+            return Err(MdlError::EReaderKeyRequired);
+        }
+    }
 
     let mut last = None;
     for (index, transcript) in transcripts.iter().enumerate() {
@@ -118,9 +152,6 @@ pub fn verify_presentation_any(
                 }
                 return Ok((verification, index));
             }
-            // A missing reader key is a caller mistake, not a wrong guess at the
-            // handover — trying the remaining candidates would only produce the same
-            // error with a worse message.
             Err(e @ MdlError::EReaderKeyRequired) => return Err(e),
             Err(e) => last = Some(e),
         }
