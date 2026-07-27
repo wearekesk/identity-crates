@@ -1,7 +1,6 @@
 [package]
 name = "identity-mobile"
-# Unpublished: this is the FFI-facing layer for the Kesk apps, not a general-purpose
-# crate, and it depends on `mdl-verify`, which cannot be published while its own
+# Unpublished: it depends on `mdl-verify`, which cannot be published while its own
 # dependency is a git revision.
 version = "0.0.0"
 authors.workspace = true
