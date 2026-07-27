@@ -30,7 +30,7 @@ pub fn parse(input: &[String]) -> Result<MRZResult, MRZError> {
     let first_line = &input[0];
     let second_line = &input[1];
 
-    let is_visa_document = first_line.chars().next() == Some('V');
+    let is_visa_document = first_line.starts_with('V');
     let document_type_raw = &first_line[0..2];
     let country_code_raw = &first_line[2..5];
     let names_raw = &first_line[5..];
@@ -131,7 +131,7 @@ pub fn parse(input: &[String]) -> Result<MRZResult, MRZError> {
     let expiry_date = MRZFieldParser::parse_expiry_date(&expiry_date_fixed)?;
     let optional_data = MRZFieldParser::parse_optional_data(&optional_data_fixed);
 
-    let surnames = names.get(0).cloned().unwrap_or_default();
+    let surnames = names.first().cloned().unwrap_or_default();
     let given_names = names.get(1).cloned().unwrap_or_default();
 
     Ok(MRZResult::new(
@@ -187,7 +187,7 @@ fn is_french_id(input: &[String]) -> bool {
     }
     let first = &input[0];
     // first char 'I' and substring(2,5) == "FRA"
-    first.chars().next() == Some('I') && first.get(2..5) == Some("FRA")
+    first.starts_with('I') && first.get(2..5) == Some("FRA")
 }
 
 fn parse_french_id(input: &[String]) -> Result<MRZResult, MRZError> {
@@ -300,7 +300,7 @@ fn parse_french_id(input: &[String]) -> Result<MRZResult, MRZError> {
         issue_date.month(),
         issue_date.day(),
     )
-    .ok_or_else(|| MRZError::invalid_expiry_date())?;
+    .ok_or_else(MRZError::invalid_expiry_date)?;
 
     let optional_data = MRZFieldParser::parse_optional_data(&department_and_office_fixed);
     let optional_data2 = MRZFieldParser::parse_optional_data(&department_fixed);

@@ -60,9 +60,8 @@ impl TD1FormatMRZParser {
                     // whose check digit actually validates: try the full match
                     // first, then one character shorter (the last matched char
                     // becoming the check digit).
-                    let validates = |doc: &str, cd: &str| {
-                        cd.parse::<u8>().ok() == Some(get_check_digit(doc) as u8)
-                    };
+                    let validates =
+                        |doc: &str, cd: &str| cd.parse::<u8>().ok() == Some(get_check_digit(doc));
                     let full_cd = (match_end < Self::LINES_LENGTH)
                         .then(|| &first_line[match_end..match_end + 1]);
                     if let Some(cd) = full_cd.filter(|cd| validates(matched, cd)) {
@@ -152,21 +151,21 @@ impl TD1FormatMRZParser {
 
         // Validate document number check digit
         let doc_check_digit_parsed = document_number_check_digit_fixed.parse::<u8>().ok();
-        let doc_calc = get_check_digit(&document_number_fixed) as u8;
+        let doc_calc = get_check_digit(&document_number_fixed);
         if doc_check_digit_parsed != Some(doc_calc) {
             return Err(MRZError::invalid_document_number());
         }
 
         // Validate birth date check digit
         let birth_check_digit_parsed = birth_date_check_digit_fixed.parse::<u8>().ok();
-        let birth_calc = get_check_digit(&birth_date_fixed) as u8;
+        let birth_calc = get_check_digit(&birth_date_fixed);
         if birth_check_digit_parsed != Some(birth_calc) {
             return Err(MRZError::invalid_birth_date());
         }
 
         // Validate expiry date check digit
         let expiry_check_digit_parsed = expiry_date_check_digit_fixed.parse::<u8>().ok();
-        let expiry_calc = get_check_digit(&expiry_date_fixed) as u8;
+        let expiry_calc = get_check_digit(&expiry_date_fixed);
         if expiry_check_digit_parsed != Some(expiry_calc) {
             return Err(MRZError::invalid_expiry_date());
         }
@@ -218,7 +217,7 @@ impl TD1FormatMRZParser {
         let names = MRZFieldParser::parse_names(&third_line[0..30]);
 
         // names returns Vec<String> with surname and given names as earlier implemented
-        let surnames = names.get(0).cloned().unwrap_or_default();
+        let surnames = names.first().cloned().unwrap_or_default();
         let given_names = names.get(1).cloned().unwrap_or_default();
 
         Ok(MRZResult::new(

@@ -20,7 +20,7 @@ pub fn parse(input: &[String]) -> Result<MRZResult, MRZError> {
     let first_line = &input[0];
     let second_line = &input[1];
 
-    let is_visa_document = first_line.chars().next() == Some('V');
+    let is_visa_document = first_line.starts_with('V');
     let document_type_raw = &first_line[0..2];
     let country_code_raw = &first_line[2..5];
     let names_raw = &first_line[5..];
@@ -64,9 +64,9 @@ pub fn parse(input: &[String]) -> Result<MRZResult, MRZError> {
         MRZFieldRecognitionDefectsFixer::fix_check_digit(expiry_date_check_digit_raw);
     let optional_data_fixed = optional_data_raw.to_string();
     let optional_data_check_digit_fixed =
-        optional_data_check_digit_raw.map(|s| MRZFieldRecognitionDefectsFixer::fix_check_digit(s));
+        optional_data_check_digit_raw.map(MRZFieldRecognitionDefectsFixer::fix_check_digit);
     let final_check_digit_fixed =
-        final_check_digit_raw.map(|s| MRZFieldRecognitionDefectsFixer::fix_check_digit(s));
+        final_check_digit_raw.map(MRZFieldRecognitionDefectsFixer::fix_check_digit);
 
     // Validate document number check digit
     let doc_check = document_number_check_digit_fixed
@@ -104,7 +104,7 @@ pub fn parse(input: &[String]) -> Result<MRZResult, MRZError> {
             .chars()
             .next()
             .and_then(|c| c.to_digit(10))
-            .map(|d| d as u32 == get_check_digit(&optional_data_fixed) as u32)
+            .map(|d| d == get_check_digit(&optional_data_fixed) as u32)
             .unwrap_or(false);
 
         let valid_by_empty = opt_cd_fixed == "<"
@@ -147,7 +147,7 @@ pub fn parse(input: &[String]) -> Result<MRZResult, MRZError> {
     let expiry_date = MRZFieldParser::parse_expiry_date(&expiry_date_fixed)?;
     let optional_data = MRZFieldParser::parse_optional_data(&optional_data_fixed);
 
-    let surnames = names.get(0).cloned().unwrap_or_default();
+    let surnames = names.first().cloned().unwrap_or_default();
     let given_names = names.get(1).cloned().unwrap_or_default();
 
     Ok(MRZResult::new(
@@ -174,7 +174,7 @@ mod tests {
         let first = format!("{: <44}", "P<UTOERIKSSON<<ANNA<MARIA");
         let second = format!("{: <44}", "L898902C360UTO7408122F1204159<<<<<<<<");
         assert_eq!(
-            is_valid_input(&vec![first.clone(), second.clone()]),
+            is_valid_input(&[first.clone(), second.clone()]),
             first.len() == 44 && second.len() == 44
         );
     }

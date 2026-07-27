@@ -159,11 +159,11 @@ impl AesCipher {
     /// - `data`    – Plaintext bytes.
     /// - `key`     – Must be exactly [`key_size()`] bytes.
     /// - `iv`      – 16-byte IV. Required for CBC mode (`None` returns
-    ///               [`AesCipherError::MissingIv`]). Ignored for ECB mode.
+    ///   [`AesCipherError::MissingIv`]). Ignored for ECB mode.
     /// - `mode`    – [`BlockCipherMode::Cbc`] (default) or [`BlockCipherMode::Ecb`].
     /// - `padding` – If `true`, `data` is zero-padded to the next 16-byte boundary
-    ///               before encryption. If `false`, `data` must already be a multiple
-    ///               of 16 bytes.
+    ///   before encryption. If `false`, `data` must already be a multiple of 16
+    ///   bytes.
     ///
     /// # Errors
     /// - [`AesCipherError::InvalidKeyLength`] if `key.len() != key_size`.
@@ -208,7 +208,7 @@ impl AesCipher {
     /// - `data` – Ciphertext bytes; must be a multiple of 16 bytes.
     /// - `key`  – Must be exactly [`key_size()`] bytes.
     /// - `iv`   – 16-byte IV. Required for CBC mode (`None` returns
-    ///            [`AesCipherError::MissingIv`]). Ignored for ECB mode.
+    ///   [`AesCipherError::MissingIv`]). Ignored for ECB mode.
     /// - `mode` – [`BlockCipherMode::Cbc`] or [`BlockCipherMode::Ecb`].
     ///
     /// # Errors
@@ -222,7 +222,7 @@ impl AesCipher {
     ) -> Result<Vec<u8>, AesCipherError> {
         self.validate_key(key)?;
 
-        if data.len() % AES_BLOCK_SIZE != 0 {
+        if !data.len().is_multiple_of(AES_BLOCK_SIZE) {
             return Err(AesCipherError::InvalidDataLength(data.len()));
         }
 

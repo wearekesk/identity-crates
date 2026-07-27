@@ -30,10 +30,7 @@ impl MRZParser {
     /// Input accepts an optional outer vector whose elements may themselves
     /// be optional strings (to model upstream OCR results that may be null).
     pub fn try_parse(input: Option<Vec<Option<String>>>) -> Option<MRZResult> {
-        match Self::parse(input) {
-            Ok(r) => Some(r),
-            Err(_) => None,
-        }
+        Self::parse(input).ok()
     }
 
     /// Parse MRZ input and return a `MRZResult` or a `MRZError`.
@@ -44,7 +41,7 @@ impl MRZParser {
     /// 3. Otherwise attempt TD2, then TD3.
     /// 4. If none match, return `InvalidMRZInput`.
     pub fn parse(input: Option<Vec<Option<String>>>) -> Result<MRZResult, MRZError> {
-        let polished = polish_input(input).ok_or_else(|| MRZError::invalid_mrz_input())?;
+        let polished = polish_input(input).ok_or_else(MRZError::invalid_mrz_input)?;
 
         // Try format-specific parsers (order: TD1, TD2, TD3).
         // Each format module is expected to provide:
@@ -151,9 +148,6 @@ mod tests {
     #[test]
     fn parse_returns_invalid_error_on_bad_input() {
         let err = MRZParser::parse(None).unwrap_err();
-        assert_eq!(
-            format!("{}", err).contains("Invalid MRZ parser input"),
-            true
-        );
+        assert!(format!("{}", err).contains("Invalid MRZ parser input"));
     }
 }

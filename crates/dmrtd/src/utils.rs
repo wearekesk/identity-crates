@@ -43,7 +43,7 @@ pub fn bit_count(n: u64) -> usize {
 /// assert_eq!(byte_count(0x10000),3);
 /// ```
 pub fn byte_count(n: u64) -> usize {
-    (bit_count(n) + 7) / 8
+    bit_count(n).div_ceil(8)
 }
 
 // ---------------------------------------------------------------------------

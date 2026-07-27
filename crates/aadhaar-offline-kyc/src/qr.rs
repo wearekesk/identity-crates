@@ -36,8 +36,10 @@ pub fn decode_qr_from_luma8(
             expected
         )));
     }
-    let mut hints = DecodeHints::default();
-    hints.TryHarder = Some(true);
+    let mut hints = DecodeHints {
+        TryHarder: Some(true),
+        ..Default::default()
+    };
     let result = rxing::helpers::detect_in_luma_with_hints(
         luma,
         width,

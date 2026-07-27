@@ -34,8 +34,10 @@ pub fn decode_pdf417_from_luma8(
             expected
         )));
     }
-    let mut hints = DecodeHints::default();
-    hints.TryHarder = Some(true);
+    let mut hints = DecodeHints {
+        TryHarder: Some(true),
+        ..Default::default()
+    };
     let result = rxing::helpers::detect_in_luma_with_hints(
         luma,
         width,
@@ -70,7 +72,7 @@ mod tests {
 
     /// Renders a PDF417 of `text` into a luma8 buffer.
     fn encode_pdf417_to_luma(text: &str, width: i32, height: i32) -> (u32, u32, Vec<u8>) {
-        let writer = PDF417Writer::default();
+        let writer = PDF417Writer;
         let matrix = writer
             .encode_with_hints(
                 text,

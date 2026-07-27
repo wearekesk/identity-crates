@@ -25,6 +25,10 @@ impl MRZResult {
     ///
     /// `birth_date` and `expiry_date` are `NaiveDate` — date-only values are
     /// all MRZ carries for these fields.
+    // The count comes from the document, not from the design: these are the fields a
+    // machine-readable zone carries. Grouping them behind a builder would add a layer
+    // whose only purpose is to make the number smaller.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         document_type: impl Into<String>,
         country_code: impl Into<String>,

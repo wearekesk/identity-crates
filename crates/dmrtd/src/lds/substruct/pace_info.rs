@@ -123,11 +123,11 @@ fn check_domain_parameter_supported(id: i64, algo: TokenAgreementAlgo) -> bool {
     if !entry.is_supported {
         return false;
     }
-    match (algo, entry.kind) {
-        (TokenAgreementAlgo::Ecdh, DomainParameterType::Ecp) => true,
-        (TokenAgreementAlgo::Dh, DomainParameterType::Gfp) => true,
-        _ => false,
-    }
+    matches!(
+        (algo, entry.kind),
+        (TokenAgreementAlgo::Ecdh, DomainParameterType::Ecp)
+            | (TokenAgreementAlgo::Dh, DomainParameterType::Gfp)
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -145,8 +145,7 @@ mod tests {
     ///   OID suffix.
     /// - `version`      : the INTEGER value to emit for the version field.
     /// - `parameter_id` : optional INTEGER value for the parameter field;
-    ///                    `None` omits the element (to exercise the 3-elements
-    ///                    check).
+    ///   `None` omits the element (to exercise the 3-elements check).
     fn build_pace_info(oid_der: &[u8], version: u32, parameter_id: Option<u32>) -> Vec<u8> {
         asn1::write_single(&PaceInfoBuilder {
             oid_der,

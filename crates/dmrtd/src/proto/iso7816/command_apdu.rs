@@ -104,7 +104,7 @@ impl CommandApdu {
     pub fn to_bytes(&self) -> Vec<u8> {
         let data_len = self.data.as_ref().map_or(0, |d| d.len());
         // Non-empty data present in the Lc/data fields?
-        let has_data = self.data.as_ref().map_or(false, |d| !d.is_empty());
+        let has_data = self.data.as_ref().is_some_and(|d| !d.is_empty());
 
         // Extended form is required when data > 255 bytes OR ne > 256.
         let extended = data_len > 255 || self.ne > 256;

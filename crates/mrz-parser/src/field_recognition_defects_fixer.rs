@@ -83,11 +83,9 @@ mod tests {
             replace_similar_digits_with_letters("0 1 2 8 ABC"),
             "O I Z B ABC"
         );
-        // unchanged characters stay the same
-        assert_eq!(
-            replace_similar_digits_with_letters("MRZ<123"),
-            "MRZ<IZ3".replace('3', "3")
-        );
+        // `1` and `2` have look-alike letters and are substituted; `3` has none, so it
+        // survives the pass unchanged along with everything that is not a digit.
+        assert_eq!(replace_similar_digits_with_letters("MRZ<123"), "MRZ<IZ3");
     }
 
     #[test]

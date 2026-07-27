@@ -348,11 +348,7 @@ mod tests {
         let subfile_len = subfile.len();
 
         let designator = format!("DL{:04}{:04}", subfile_offset, subfile_len);
-        let mut payload = Vec::new();
-        payload.push(COMPLIANCE);
-        payload.push(DATA_ELEMENT_SEP);
-        payload.push(RECORD_SEP);
-        payload.push(SEGMENT_TERM);
+        let mut payload = vec![COMPLIANCE, DATA_ELEMENT_SEP, RECORD_SEP, SEGMENT_TERM];
         payload.extend_from_slice(ANSI_TAG);
         payload.extend_from_slice(iin);
         payload.extend_from_slice(version);

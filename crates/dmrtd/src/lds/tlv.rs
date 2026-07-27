@@ -238,9 +238,9 @@ impl Tlv {
         let bc = byte_count(n);
         let count = if bc == 0 { 1 } else { bc };
         let mut out = vec![0u8; count];
-        for i in 0..bc {
+        for (i, byte) in out.iter_mut().enumerate().take(bc) {
             let pos = 8 * (bc - i - 1);
-            out[i] = ((n >> pos) & 0xFF) as u8;
+            *byte = ((n >> pos) & 0xFF) as u8;
         }
         out
     }
@@ -380,8 +380,8 @@ impl Tlv {
             }
 
             let mut length = 0usize;
-            for i in 1..total_bytes {
-                length = length * 0x100 + (encoded_length[i] as usize);
+            for byte in &encoded_length[1..total_bytes] {
+                length = length * 0x100 + (*byte as usize);
             }
 
             Ok(DecodedLen {

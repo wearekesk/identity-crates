@@ -1,9 +1,9 @@
-/// Utilities for MRZ-specific string operations: validation, trimming a
-/// specific character, and OCR-friendly character replacements commonly used
-/// when processing MRZ zones.
-///
-/// These functions are intentionally simple and avoid heap allocations where
-/// possible, but return owned `String` when a transformed string is required.
+//! Utilities for MRZ-specific string operations: validation, trimming a
+//! specific character, and OCR-friendly character replacements commonly used
+//! when processing MRZ zones.
+//!
+//! These functions are intentionally simple and avoid heap allocations where
+//! possible, but return owned `String` when a transformed string is required.
 
 /// Return `true` if `s` contains only valid MRZ characters:
 /// uppercase A-Z, digits 0-9, or the filler '<'.
@@ -95,10 +95,8 @@ mod tests {
             replace_similar_digits_with_letters("0 1 2 8 ABC"),
             "O I Z B ABC"
         );
-        assert_eq!(
-            replace_similar_digits_with_letters("123"),
-            "IZ3".replace('3', "3")
-        );
+        // `3` has no look-alike letter, so it passes through where `1` and `2` do not.
+        assert_eq!(replace_similar_digits_with_letters("123"), "IZ3");
     }
 
     #[test]

@@ -85,7 +85,7 @@ pub fn pad(data: &[u8], block_size: usize) -> Result<Vec<u8>, Iso9797Error> {
     let mut padded = Vec::with_capacity(data.len() + pad_len);
     padded.extend_from_slice(data);
     padded.push(0x80);
-    padded.extend(std::iter::repeat(0x00).take(pad_len - 1));
+    padded.extend(std::iter::repeat_n(0x00, pad_len - 1));
     Ok(padded)
 }
 
@@ -114,7 +114,7 @@ pub fn pad(data: &[u8], block_size: usize) -> Result<Vec<u8>, Iso9797Error> {
 pub fn unpad(data: &[u8], block_size: usize) -> Result<&[u8], Iso9797Error> {
     // Method-2 padded ciphertext output is always a whole number of blocks;
     // a non-block-aligned (or empty) input cannot be validly padded.
-    if block_size != 0 && (data.is_empty() || data.len() % block_size != 0) {
+    if block_size != 0 && (data.is_empty() || !data.len().is_multiple_of(block_size)) {
         return Err(Iso9797Error::UnpadFailed);
     }
     let mut i = data.len();
@@ -150,7 +150,7 @@ pub fn unpad(data: &[u8], block_size: usize) -> Result<&[u8], Iso9797Error> {
 /// - `key`    – 16 or 24-byte key.
 /// - `msg`    – Message to authenticate.
 /// - `pad_msg`– When `true` the message is padded with Method 2 before MAC
-///              computation; when `false` the caller is responsible for padding.
+///   computation; when `false` the caller is responsible for padding.
 ///
 /// # Errors
 /// Returns [`Iso9797Error::InvalidKeyLength`] if the key length is not 16 or 24.
