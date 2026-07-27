@@ -132,6 +132,7 @@ class VerifiedIdentity {
     this.sex,
     this.portrait,
     this.issuingAuthority,
+    this.sessionProfile,
     this.ageAttestations = const {},
     this.verifiedDataGroups = const [],
     this.signedDataGroups = const [],
@@ -157,6 +158,14 @@ class VerifiedIdentity {
 
   /// Named on an mDL; absent on a passport.
   final String? issuingAuthority;
+
+  /// Which session transcript the holder signed, when more than one was offered —
+  /// `openid4vp-1.0`, `openid4vp-dcapi`, `iso-18013-7`, `cbor`.
+  ///
+  /// `null` when no session was supplied and device authentication did not happen.
+  /// Worth logging: after a day of real traffic this tells you what your wallets emit,
+  /// and therefore which profiles you can stop offering.
+  final String? sessionProfile;
 
   /// `age_over_NN` claims the document made. Passports carry none — they carry a date
   /// of birth and leave the arithmetic, and the disclosure, to you.
@@ -193,6 +202,7 @@ class VerifiedIdentity {
       sex: json['sex'] as String?,
       portrait: _decodeHex(json['portrait'] as String?),
       issuingAuthority: source?['issuingAuthority'] as String?,
+      sessionProfile: source?['sessionProfile'] as String?,
       ageAttestations: {
         for (final claim in json['ageAttestations'] as List<dynamic>? ?? const [])
           (claim as Map<String, dynamic>)['years'] as int: claim['answer'] as bool,

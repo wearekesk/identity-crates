@@ -118,6 +118,31 @@ typedef VerifyMdl = Pointer<Utf8> Function(
   NativeBytes eReaderKey,
 );
 
+/// Mirrors `OpenId4VpParams` in `ffi.rs`. Field order is the ABI — keep them in step.
+final class NativeOpenId4VpParams extends Struct {
+  external Pointer<Utf8> clientId;
+  external Pointer<Utf8> responseUri;
+  external Pointer<Utf8> nonce;
+  external Pointer<Utf8> mdocGeneratedNonce;
+  external Pointer<Utf8> origin;
+  external NativeBytes jwkThumbprint;
+}
+
+typedef VerifyMdlOpenId4VpNative = Pointer<Utf8> Function(
+  NativeBytes deviceResponse,
+  Pointer<NativeBytes> anchors,
+  Size anchorCount,
+  NativeOpenId4VpParams params,
+  NativeBytes eReaderKey,
+);
+typedef VerifyMdlOpenId4Vp = Pointer<Utf8> Function(
+  NativeBytes deviceResponse,
+  Pointer<NativeBytes> anchors,
+  int anchorCount,
+  NativeOpenId4VpParams params,
+  NativeBytes eReaderKey,
+);
+
 typedef VerifyPassportNative = Pointer<Utf8> Function(
     NativeBytes sod,
     NativeBytes dg1,
@@ -164,6 +189,9 @@ class IdentityBindings {
   IdentityBindings._(DynamicLibrary library)
       : verifyMdl =
             library.lookupFunction<VerifyMdlNative, VerifyMdl>('identity_mobile_verify_mdl'),
+        verifyMdlOpenId4Vp =
+            library.lookupFunction<VerifyMdlOpenId4VpNative, VerifyMdlOpenId4Vp>(
+                'identity_mobile_verify_mdl_openid4vp'),
         verifyPassport = library.lookupFunction<VerifyPassportNative, VerifyPassport>(
             'identity_mobile_verify_passport'),
         readPassport = library.lookupFunction<ReadPassportNative, ReadPassport>(
@@ -181,6 +209,7 @@ class IdentityBindings {
   static IdentityBindings? _instance;
 
   final VerifyMdl verifyMdl;
+  final VerifyMdlOpenId4Vp verifyMdlOpenId4Vp;
   final VerifyPassport verifyPassport;
   final ReadPassport readPassport;
   final ReadPassportAsync readPassportAsync;

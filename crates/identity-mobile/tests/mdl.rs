@@ -249,12 +249,18 @@ fn an_mdl_comes_back_in_the_same_shape_as_a_passport() {
     let Some(DocumentSource::MobileDrivingLicence {
         doc_type,
         issuing_authority,
+        session_profile,
     }) = &identity.source
     else {
         panic!("an mDL source");
     };
     assert_eq!(doc_type, "org.iso.18013.5.1.mDL");
     assert_eq!(issuing_authority.as_deref(), Some("NY DMV"));
+    assert_eq!(
+        session_profile.as_deref(),
+        None,
+        "no session was supplied, so no transcript was matched"
+    );
 }
 
 /// The thing a passport cannot do: answer the age question without giving up the date.
@@ -319,6 +325,118 @@ fn a_session_does_not_print_the_reader_key() {
         "the key bytes leaked: {rendered}"
     );
     assert!(!rendered.to_lowercase().contains("ab, ab"), "{rendered}");
+}
+
+/// Each builder must hand its arguments to `mdl-verify` in the order that crate expects.
+///
+/// This is the failure worth guarding: the two OpenID4VP profiles take overlapping
+/// string parameters in different orders, so a transposition still compiles, still
+/// produces a valid transcript, and fails only on a real device as a device
+/// authentication error with nothing to point at. Comparing bytes against the
+/// underlying builder makes that a test failure instead.
+#[test]
+fn the_builders_agree_with_mdl_verify_byte_for_byte() {
+    use mdl_verify::SessionTranscript;
+
+    let thumbprint = [0x11u8; 32];
+
+    let session = mdl::Session::candidates(None)
+        .openid4vp_1_0(
+            "x509_san_dns:verifier.example",
+            "nonce-1",
+            Some(&thumbprint),
+            "https://verifier.example/response",
+        )
+        .expect("1.0 candidate")
+        .openid4vp_dcapi("verifier.example", "nonce-1", Some(&thumbprint))
+        .expect("dcapi candidate")
+        .openid4vp_iso_18013_7(
+            "x509_san_dns:verifier.example",
+            "https://verifier.example/response",
+            "nonce-1",
+            "wallet-nonce",
+        )
+        .expect("18013-7 candidate");
+
+    let expected = [
+        (
+            "openid4vp-1.0",
+            SessionTranscript::openid4vp_1_0(
+                "x509_san_dns:verifier.example",
+                "nonce-1",
+                Some(&thumbprint),
+                "https://verifier.example/response",
+            )
+            .expect("builds"),
+        ),
+        (
+            "openid4vp-dcapi",
+            SessionTranscript::openid4vp_dcapi("verifier.example", "nonce-1", Some(&thumbprint))
+                .expect("builds"),
+        ),
+        (
+            "iso-18013-7",
+            SessionTranscript::openid4vp_iso_18013_7(
+                "x509_san_dns:verifier.example",
+                "https://verifier.example/response",
+                "nonce-1",
+                "wallet-nonce",
+            )
+            .expect("builds"),
+        ),
+    ];
+
+    assert_eq!(session.candidates.len(), expected.len());
+    for (candidate, (label, transcript)) in session.candidates.iter().zip(expected) {
+        assert_eq!(candidate.label, label);
+        assert_eq!(
+            candidate.transcript.as_bytes(),
+            transcript.as_bytes(),
+            "the {label} builder did not pass its arguments through unchanged"
+        );
+    }
+}
+
+/// An encrypted and an unencrypted response are different sessions, and the spec says so
+/// with a CBOR `null` rather than an empty byte string.
+#[test]
+fn an_absent_thumbprint_is_not_an_empty_one() {
+    let with = mdl::Session::candidates(None)
+        .openid4vp_dcapi("verifier.example", "nonce-1", Some(&[]))
+        .expect("builds");
+    let without = mdl::Session::candidates(None)
+        .openid4vp_dcapi("verifier.example", "nonce-1", None)
+        .expect("builds");
+
+    assert_ne!(
+        with.candidates[0].transcript.as_bytes(),
+        without.candidates[0].transcript.as_bytes(),
+        "an empty thumbprint must not encode the same as an absent one"
+    );
+}
+
+/// A session with nothing in it is a caller mistake, and has to read as one.
+#[test]
+fn an_empty_session_is_a_caller_error_not_a_device_auth_failure() {
+    let empty = mdl::Session::candidates(None);
+
+    let error = mdl::verify_mdl(&device_response(elements()), &[iaca_der()], Some(&empty))
+        .expect_err("no candidates cannot verify");
+
+    assert!(
+        matches!(error, IdentityError::Unreadable(_)),
+        "an empty candidate list should not be reported as the holder failing device \
+         authentication: {error:?}"
+    );
+}
+
+/// The labels are what a deployment reads back to learn which profile its wallets use,
+/// so they are part of the contract rather than debug text.
+#[test]
+fn a_matched_profile_is_reported_by_name_not_by_index() {
+    let session = mdl::Session::from_cbor(&[0x83, 0xf6, 0xf6, 0x80], None).expect("transcript");
+
+    assert_eq!(session.candidates[0].label, "cbor");
 }
 
 /// Without a session transcript there is no proof of presence, and the result has to

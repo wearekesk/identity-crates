@@ -34,17 +34,44 @@ pub fn verify_mdl(
 
     let options = VerifyOptions::default();
 
-    let verification = match session {
-        Some(session) => mdl_verify::verify_presentation(
-            device_response,
-            &anchors,
-            &session.transcript,
-            session.e_reader_key.as_ref(),
-            &options,
+    let (verification, matched) = match session {
+        // A session with nothing in it is a caller mistake, and saying so beats letting
+        // it arrive as "the holder did not prove possession of the device key" — which
+        // is what it would look like coming back from `mdl-verify`.
+        Some(session) if session.candidates.is_empty() => {
+            return Err(IdentityError::Unreadable(
+                "the session carried no candidate transcripts; pass None to skip device \
+                 authentication deliberately"
+                    .to_string(),
+            ))
+        }
+        Some(session) => {
+            let transcripts = session
+                .candidates
+                .iter()
+                .map(|c| c.transcript.clone())
+                .collect::<Vec<_>>();
+
+            let (verification, index) = mdl_verify::verify_presentation_any(
+                device_response,
+                &anchors,
+                &transcripts,
+                session.e_reader_key.as_ref(),
+                &options,
+            )
+            .map_err(map_error)?;
+
+            // Reported so a deployment can find out what its wallets actually emit and
+            // then stop offering the profiles they never use.
+            let label = session.candidates[index].label.clone();
+            (verification, Some(label))
+        }
+        None => (
+            mdl_verify::verify_issuer_auth_with(device_response, &anchors, &options)
+                .map_err(map_error)?,
+            None,
         ),
-        None => mdl_verify::verify_issuer_auth_with(device_response, &anchors, &options),
-    }
-    .map_err(map_error)?;
+    };
 
     // Only an actual mDL. Falling back to "whatever document came first" would let a
     // photo ID be returned as a driving licence, which is precisely the confusion the
@@ -64,14 +91,32 @@ pub fn verify_mdl(
         ))
     })?;
 
-    Ok(identity(document))
+    Ok(identity(document, matched))
+}
+
+/// One way the session transcript might have been built, and the name to report it by.
+///
+/// The label exists because a bare index is useless in a log line six months later:
+/// `openid4vp-1.0` tells you what your wallets actually do, which is the thing worth
+/// knowing.
+#[derive(Debug, Clone)]
+pub struct Candidate {
+    pub label: String,
+    pub transcript: SessionTranscript,
 }
 
 /// The session an mDL was presented in, which is what makes device authentication
 /// possible.
+///
+/// Holds *candidates* rather than one transcript. Over OpenID4VP the verifier supplies
+/// every input to the transcript — the nonce, the `client_id`, the `response_uri` — so
+/// the only open question is which encoding the wallet used, and there are two live
+/// profiles that answer it differently. Trying both is a question about encoding, not
+/// about trust: the holder still has to have signed one of them with the device key the
+/// issuer bound into the MSO.
 pub struct Session {
-    /// The `SessionTranscript` your session layer built.
-    pub transcript: SessionTranscript,
+    /// Tried in order; the first that device authentication accepts wins.
+    pub candidates: Vec<Candidate>,
     /// The reader's ephemeral private key from that session. Required when the holder
     /// authenticated with `DeviceMac` — without it the MAC key cannot be derived, and
     /// you get an error rather than a wrong answer.
@@ -84,7 +129,10 @@ pub struct Session {
 impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
-            .field("transcript", &self.transcript)
+            .field(
+                "candidates",
+                &self.candidates.iter().map(|c| &c.label).collect::<Vec<_>>(),
+            )
             .field(
                 "e_reader_key",
                 &self.e_reader_key.map(|_| "<redacted>").unwrap_or("None"),
@@ -94,19 +142,100 @@ impl std::fmt::Debug for Session {
 }
 
 impl Session {
-    /// Adopt a CBOR-encoded transcript.
+    /// Adopt a CBOR-encoded transcript your session layer already built.
     pub fn from_cbor(
         transcript: &[u8],
         e_reader_key: Option<[u8; 32]>,
     ) -> Result<Self, IdentityError> {
         Ok(Self {
-            transcript: SessionTranscript::from_cbor(transcript).map_err(map_error)?,
+            candidates: vec![Candidate {
+                label: "cbor".to_string(),
+                transcript: SessionTranscript::from_cbor(transcript).map_err(map_error)?,
+            }],
             e_reader_key,
         })
     }
+
+    /// An empty session to add candidates to. Verifying with no candidates is an error,
+    /// not a silent skip of device authentication — pass `None` for that.
+    pub fn candidates(e_reader_key: Option<[u8; 32]>) -> Self {
+        Self {
+            candidates: Vec::new(),
+            e_reader_key,
+        }
+    }
+
+    /// The OpenID4VP 1.0 redirect handover (Appendix B.2.6.1).
+    ///
+    /// `jwk_thumbprint` is the RFC 7638 thumbprint of the key the response is encrypted
+    /// to, and `None` when the response is not encrypted — the spec wants a CBOR `null`
+    /// there, which an empty byte string is not.
+    pub fn openid4vp_1_0(
+        mut self,
+        client_id: &str,
+        nonce: &str,
+        jwk_thumbprint: Option<&[u8]>,
+        response_uri: &str,
+    ) -> Result<Self, IdentityError> {
+        self.candidates.push(Candidate {
+            label: "openid4vp-1.0".to_string(),
+            transcript: SessionTranscript::openid4vp_1_0(
+                client_id,
+                nonce,
+                jwk_thumbprint,
+                response_uri,
+            )
+            .map_err(map_error)?,
+        });
+        Ok(self)
+    }
+
+    /// The OpenID4VP 1.0 Digital Credentials API handover (Appendix B.2.6.2).
+    ///
+    /// `origin` carries no `origin:` prefix. Pass `None` for the thumbprint when the
+    /// response mode is `dc_api` rather than `dc_api.jwt`.
+    pub fn openid4vp_dcapi(
+        mut self,
+        origin: &str,
+        nonce: &str,
+        jwk_thumbprint: Option<&[u8]>,
+    ) -> Result<Self, IdentityError> {
+        self.candidates.push(Candidate {
+            label: "openid4vp-dcapi".to_string(),
+            transcript: SessionTranscript::openid4vp_dcapi(origin, nonce, jwk_thumbprint)
+                .map_err(map_error)?,
+        });
+        Ok(self)
+    }
+
+    /// The older ISO/IEC 18013-7 Annex B handover, identifiable by its wallet-supplied
+    /// `mdoc_generated_nonce`.
+    ///
+    /// Still worth offering as a candidate: wallets on the earlier draft are in the
+    /// field, and they build the transcript from the same session inputs by a different
+    /// route.
+    pub fn openid4vp_iso_18013_7(
+        mut self,
+        client_id: &str,
+        response_uri: &str,
+        nonce: &str,
+        mdoc_generated_nonce: &str,
+    ) -> Result<Self, IdentityError> {
+        self.candidates.push(Candidate {
+            label: "iso-18013-7".to_string(),
+            transcript: SessionTranscript::openid4vp_iso_18013_7(
+                client_id,
+                response_uri,
+                nonce,
+                mdoc_generated_nonce,
+            )
+            .map_err(map_error)?,
+        });
+        Ok(self)
+    }
 }
 
-fn identity(document: &MdlDocument) -> VerifiedIdentity {
+fn identity(document: &MdlDocument, session_profile: Option<String>) -> VerifiedIdentity {
     let mut warnings = document.trust_errors.clone();
     warnings.extend(document.revocation_errors.iter().cloned());
 
@@ -137,6 +266,7 @@ fn identity(document: &MdlDocument) -> VerifiedIdentity {
         source: Some(DocumentSource::MobileDrivingLicence {
             doc_type: document.doc_type.clone(),
             issuing_authority: document.issuing_authority().map(str::to_owned),
+            session_profile,
         }),
         authenticity: Authenticity {
             // An `MdlDocument` only exists for a document that passed issuer

@@ -38,6 +38,23 @@ class _Arena {
     return buffer;
   }
 
+  /// Copy a string into native memory. `null` stays `nullptr`, which the Rust side
+  /// reads as "not supplied" — distinct from an empty string, which is a value.
+  Pointer<Utf8> text(String? value) {
+    if (value == null) return nullptr;
+
+    final ptr = value.toNativeUtf8(allocator: calloc);
+    _allocations.add(ptr);
+    return ptr;
+  }
+
+  /// An OpenID4VP parameter block whose memory outlives the call that reads it.
+  Pointer<NativeOpenId4VpParams> openId4VpParams() {
+    final ptr = calloc<NativeOpenId4VpParams>();
+    _allocations.add(ptr);
+    return ptr;
+  }
+
   /// Build a `NativeBytes` whose backing memory outlives the call that uses it.
   NativeBytes slice(Pointer<Uint8> ptr, int len) {
     final descriptor = calloc<NativeBytes>();
@@ -100,6 +117,66 @@ abstract final class IdentityMobile {
     }
   }
 
+  /// Verify an mDL presented over OpenID4VP, from the request parameters rather than a
+  /// transcript you built yourself.
+  ///
+  /// Two profiles are live and they encode the same session inputs differently:
+  /// OpenID4VP 1.0, its Digital Credentials API variant, and the older ISO/IEC 18013-7
+  /// Annex B shape with a wallet-supplied [mdocGeneratedNonce]. Every candidate your
+  /// parameters support is tried, and [VerifiedIdentity.sessionProfile] reports which
+  /// one the holder actually signed.
+  ///
+  /// That is a question about encoding, not about trust — you supplied every input, and
+  /// the holder still has to have signed one of them with the device key the issuer
+  /// bound into the MSO. It costs one signature check per candidate.
+  ///
+  /// Supply [origin] for the DC API, or [clientId] and [responseUri] for the redirect
+  /// flow; [nonce] is always required and is *your* nonce, not the wallet's. Pass
+  /// [jwkThumbprint] only when the response was encrypted — an absent thumbprint and an
+  /// empty one produce different transcripts, and the spec means the former.
+  static VerifiedIdentity verifyMdlOpenId4Vp(
+    Uint8List deviceResponse, {
+    required String nonce,
+    List<Uint8List> iacaAnchors = const [],
+    String? clientId,
+    String? responseUri,
+    String? mdocGeneratedNonce,
+    String? origin,
+    Uint8List? jwkThumbprint,
+    Uint8List? eReaderKey,
+  }) {
+    final bindings = IdentityBindings.instance;
+    final arena = _Arena();
+    final (anchors, anchorBuffers) = allocateAnchors(iacaAnchors);
+
+    try {
+      // Allocated through the arena for the same reason as everything else here: the
+      // struct is passed by value, so Rust reads this memory during the call.
+      final params = arena.openId4VpParams();
+      params.ref
+        ..clientId = arena.text(clientId)
+        ..responseUri = arena.text(responseUri)
+        ..nonce = arena.text(nonce)
+        ..mdocGeneratedNonce = arena.text(mdocGeneratedNonce)
+        ..origin = arena.text(origin)
+        ..jwkThumbprint =
+            arena.slice(arena.bytes(jwkThumbprint), jwkThumbprint?.length ?? 0);
+
+      final result = bindings.verifyMdlOpenId4Vp(
+        arena.slice(arena.bytes(deviceResponse), deviceResponse.length),
+        anchors,
+        iacaAnchors.length,
+        params.ref,
+        arena.slice(arena.bytes(eReaderKey), eReaderKey?.length ?? 0),
+      );
+
+      return VerifiedIdentity.parseResult(bindings.consumeString(result));
+    } finally {
+      arena.release();
+      freeAnchors(anchors, anchorBuffers);
+    }
+  }
+
   /// Verify passport files read by something other than [PassportReader].
   ///
   /// Pass a null [dg2] when the photograph was not read. The result then reports the
@@ -148,6 +225,33 @@ abstract final class IdentityMobile {
             deviceResponse,
             iacaAnchors: iacaAnchors,
             sessionTranscript: sessionTranscript,
+            eReaderKey: eReaderKey,
+          ));
+
+  /// [verifyMdlOpenId4Vp] on a worker isolate.
+  ///
+  /// Worth preferring here: trying several candidates costs a signature check each, so
+  /// this is the path most likely to be felt on the UI isolate.
+  static Future<VerifiedIdentity> verifyMdlOpenId4VpAsync(
+    Uint8List deviceResponse, {
+    required String nonce,
+    List<Uint8List> iacaAnchors = const [],
+    String? clientId,
+    String? responseUri,
+    String? mdocGeneratedNonce,
+    String? origin,
+    Uint8List? jwkThumbprint,
+    Uint8List? eReaderKey,
+  }) =>
+      Isolate.run(() => verifyMdlOpenId4Vp(
+            deviceResponse,
+            nonce: nonce,
+            iacaAnchors: iacaAnchors,
+            clientId: clientId,
+            responseUri: responseUri,
+            mdocGeneratedNonce: mdocGeneratedNonce,
+            origin: origin,
+            jwkThumbprint: jwkThumbprint,
             eReaderKey: eReaderKey,
           ));
 

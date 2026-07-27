@@ -104,6 +104,126 @@ pub unsafe extern "C" fn identity_mobile_verify_mdl(
     json(crate::mdl::verify_mdl(response, &anchors, Some(&session)))
 }
 
+/// The OpenID4VP values the session transcript is built from.
+///
+/// Every string is optional — pass null for what you do not have. Which candidates get
+/// built follows from what is present, so a caller holding only `origin` + `nonce` gets
+/// the DC API profile and a caller holding a wallet nonce as well gets the older ISO
+/// profile too.
+#[repr(C)]
+#[derive(Debug)]
+pub struct OpenId4VpParams {
+    /// Including the Client Identifier Prefix where one applies.
+    pub client_id: *const c_char,
+    /// Whichever of `response_uri` / `redirect_uri` the response mode uses.
+    pub response_uri: *const c_char,
+    /// The `nonce` request parameter — yours, not the wallet's.
+    pub nonce: *const c_char,
+    /// The wallet-supplied `mdoc_generated_nonce`, for the ISO/IEC 18013-7 profile.
+    pub mdoc_generated_nonce: *const c_char,
+    /// The request origin for the Digital Credentials API profile, with no `origin:`
+    /// prefix.
+    pub origin: *const c_char,
+    /// RFC 7638 SHA-256 thumbprint of the response-encryption key. Empty means the
+    /// response was not encrypted, which the spec encodes as a CBOR `null` — not as an
+    /// empty byte string, which would hash differently.
+    pub jwk_thumbprint: Bytes,
+}
+
+/// Verify an mDL presented over OpenID4VP, without making the caller build a
+/// `SessionTranscript`.
+///
+/// Every candidate the parameters support is tried, because two profiles are live and
+/// they encode the same session inputs differently: OpenID4VP 1.0 (Appendix B.2.6.1),
+/// its Digital Credentials API variant (B.2.6.2), and the older ISO/IEC 18013-7 Annex B
+/// shape with a wallet nonce. This is a question about encoding rather than trust — the
+/// holder still has to have signed one of them with the device key the issuer bound
+/// into the MSO — and the result reports which one matched as `sessionProfile`.
+///
+/// # Safety
+///
+/// Every non-null string must be a valid NUL-terminated UTF-8 C string, and every slice
+/// valid for the duration of the call. `e_reader_key`, if not null, must point to 32
+/// bytes.
+#[no_mangle]
+pub unsafe extern "C" fn identity_mobile_verify_mdl_openid4vp(
+    device_response: Bytes,
+    anchors: *const Bytes,
+    anchor_count: usize,
+    params: OpenId4VpParams,
+    e_reader_key: Bytes,
+) -> *mut c_char {
+    let response = unsafe { device_response.as_slice() };
+    let anchors = unsafe { collect(anchors, anchor_count) };
+
+    let key = unsafe { e_reader_key.as_slice() };
+    let key = match key.len() {
+        0 => None,
+        32 => Some(<[u8; 32]>::try_from(key).expect("checked above")),
+        other => {
+            return json::<VerifiedIdentity>(Err(IdentityError::Unreadable(format!(
+                "the reader's ephemeral key must be 32 bytes, got {other}"
+            ))))
+        }
+    };
+
+    let (client_id, response_uri, nonce, mdoc_nonce, origin) = unsafe {
+        (
+            text(params.client_id),
+            text(params.response_uri),
+            text(params.nonce),
+            text(params.mdoc_generated_nonce),
+            text(params.origin),
+        )
+    };
+
+    let thumbprint = unsafe { params.jwk_thumbprint.as_slice() };
+    let thumbprint = (!thumbprint.is_empty()).then_some(thumbprint);
+
+    let Some(nonce) = nonce.as_deref() else {
+        return json::<VerifiedIdentity>(Err(IdentityError::Unreadable(
+            "a nonce is required to build an OpenID4VP session transcript".to_string(),
+        )));
+    };
+
+    let mut session = crate::mdl::Session::candidates(key);
+
+    if let Some(origin) = origin.as_deref() {
+        session = match session.openid4vp_dcapi(origin, nonce, thumbprint) {
+            Ok(session) => session,
+            Err(e) => return json::<VerifiedIdentity>(Err(e)),
+        };
+    }
+
+    if let (Some(client_id), Some(response_uri)) = (client_id.as_deref(), response_uri.as_deref()) {
+        session = match session.openid4vp_1_0(client_id, nonce, thumbprint, response_uri) {
+            Ok(session) => session,
+            Err(e) => return json::<VerifiedIdentity>(Err(e)),
+        };
+
+        // Only when the wallet supplied its nonce: without one there is no ISO/IEC
+        // 18013-7 transcript to build, and guessing a value would produce a device
+        // authentication failure with no useful explanation.
+        if let Some(mdoc_nonce) = mdoc_nonce.as_deref() {
+            session =
+                match session.openid4vp_iso_18013_7(client_id, response_uri, nonce, mdoc_nonce) {
+                    Ok(session) => session,
+                    Err(e) => return json::<VerifiedIdentity>(Err(e)),
+                };
+        }
+    }
+
+    if session.candidates.is_empty() {
+        return json::<VerifiedIdentity>(Err(IdentityError::Unreadable(
+            "no OpenID4VP profile could be built: supply either an origin, or a client_id \
+             and response_uri"
+                .to_string(),
+        )));
+    }
+
+    json(crate::mdl::verify_mdl(response, &anchors, Some(&session)))
+}
+
 /// Verify passport files that were read elsewhere.
 ///
 /// Pass a null `dg2` or `dg15` for groups that were not read; the result reports the
@@ -548,10 +668,12 @@ fn source(identity: &VerifiedIdentity) -> String {
         Some(MobileDrivingLicence {
             doc_type,
             issuing_authority,
+            session_profile,
         }) => format!(
-            r#"{{"kind":"mdl","docType":{},"issuingAuthority":{}}}"#,
+            r#"{{"kind":"mdl","docType":{},"issuingAuthority":{},"sessionProfile":{}}}"#,
             quote(doc_type),
-            optional(issuing_authority)
+            optional(issuing_authority),
+            optional(session_profile)
         ),
         None => "null".to_string(),
     }

@@ -70,6 +70,7 @@ void main() {
           'kind': 'mdl',
           'docType': 'org.iso.18013.5.1.mDL',
           'issuingAuthority': 'NY DMV',
+          'sessionProfile': 'openid4vp-1.0',
         },
         'authenticity': {
           'dataAuthentic': true,
@@ -85,11 +86,42 @@ void main() {
 
     expect(identity.documentKind, DocumentKind.mdl);
     expect(identity.issuingAuthority, 'NY DMV');
+    // Which of the offered transcripts the holder actually signed. Reported by name
+    // rather than by index, because this is what a deployment reads back to learn what
+    // its wallets emit.
+    expect(identity.sessionProfile, 'openid4vp-1.0');
     // The mDL's reason for existing: the answer with no date of birth attached.
     expect(identity.ageOver(21), isTrue);
     expect(identity.ageOver(25), isFalse);
     expect(identity.ageOver(65), isNull);
     expect(identity.dateOfBirth, isNull);
+  });
+
+  test('an mDL verified without a session reports no profile', () {
+    final payload = jsonEncode({
+      'identity': {
+        'source': {
+          'kind': 'mdl',
+          'docType': 'org.iso.18013.5.1.mDL',
+          'issuingAuthority': 'NY DMV',
+          'sessionProfile': null,
+        },
+        'authenticity': {
+          'dataAuthentic': true,
+          'issuerTrusted': true,
+          'holderBound': null,
+          'notExpired': true,
+          'warnings': <String>[],
+        },
+      },
+    });
+
+    final identity = VerifiedIdentity.parseResult(payload);
+
+    // No session was offered, so nothing was matched. That has to read as absent rather
+    // than as a profile name nobody chose.
+    expect(identity.sessionProfile, isNull);
+    expect(identity.authenticity.holderBound, isNull);
   });
 
   group('holderBound is three-valued, and has to stay that way', () {

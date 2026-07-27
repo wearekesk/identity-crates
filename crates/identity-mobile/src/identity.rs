@@ -21,6 +21,13 @@ pub enum DocumentSource {
         doc_type: String,
         /// The issuing authority as named in the credential, e.g. `"NY DMV"`.
         issuing_authority: Option<String>,
+        /// Which session transcript the holder actually signed, when more than one was
+        /// offered — `openid4vp-1.0`, `openid4vp-dcapi`, `iso-18013-7`, `cbor`.
+        ///
+        /// `None` when no session was supplied, and device authentication therefore did
+        /// not happen at all. Worth logging: it tells you what your wallets emit, and
+        /// so which profiles you can stop offering.
+        session_profile: Option<String>,
     },
 }
 

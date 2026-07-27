@@ -33,6 +33,37 @@ final identity = IdentityMobile.verifyMdl(deviceResponse, iacaAnchors: anchors);
 `deviceResponse` is the **decrypted** CBOR your proximity or OpenID4VP layer produced.
 This package does no session establishment.
 
+That call does issuer authentication only — `holderBound` comes back null and a captured
+response replays forever. To bind the response to your session, hand over the OpenID4VP
+request parameters instead of building a transcript yourself:
+
+```dart
+final identity = await IdentityMobile.verifyMdlOpenId4VpAsync(
+  deviceResponse,
+  nonce: nonce,                 // yours, from the request — not the wallet's
+  clientId: clientId,
+  responseUri: responseUri,
+  mdocGeneratedNonce: walletNonce,   // only if the wallet supplied one
+  iacaAnchors: anchors,
+);
+
+print(identity.sessionProfile);      // openid4vp-1.0 | iso-18013-7 | openid4vp-dcapi
+```
+
+Two profiles are live and they encode the same session inputs differently: OpenID4VP 1.0
+(Appendix B.2.6.1), its Digital Credentials API variant (B.2.6.2), and the older ISO/IEC
+18013-7 Annex B shape with a wallet nonce. Every candidate your parameters support is
+tried, and `sessionProfile` reports which one the holder signed.
+
+Trying several is a question about encoding, not about trust. You supplied every input to
+the transcript, and the holder still has to have signed one of them with the device key
+the issuer bound into the MSO. What it costs is one signature check per candidate — so
+log `sessionProfile`, and once you know what your wallets emit, stop offering the rest.
+
+For the DC API, pass `origin` rather than `clientId`/`responseUri`. Pass `jwkThumbprint`
+only when the response was encrypted: an absent thumbprint and an empty one produce
+different transcripts, and the spec means the former.
+
 ## Already have the passport files?
 
 If your app reads the chip itself, skip the reader:
