@@ -7,7 +7,8 @@
 use std::ffi::{CStr, CString};
 
 use identity_mobile::ffi::{
-    identity_mobile_string_free, identity_mobile_verify_mdl, identity_mobile_verify_passport, Bytes,
+    identity_mobile_read_passport, identity_mobile_string_free, identity_mobile_verify_mdl,
+    identity_mobile_verify_passport, Bytes,
 };
 
 static DG1: &[u8] = include_bytes!("fixtures/dg1.bin");
@@ -198,27 +199,46 @@ fn a_wrong_sized_reader_key_is_rejected_by_name() {
 /// A transport failure is reported by a negative code. Casting that to a length before
 /// checking the sign wraps it to something enormous, which is how it briefly came back
 /// as "you reported 18446744073709551615 bytes".
+///
+/// This goes through the C entry point with a real `TransceiveFn`, because the bug was
+/// in the code that interprets that callback's return value — a test that returns a
+/// Rust `Err` instead would exercise a different path and prove nothing about it.
 #[test]
 fn a_negative_transceive_code_is_a_transport_failure_not_an_overflow() {
-    use identity_mobile::passport::{self, ApduChannel, MrzKey, PassportOptions};
-
-    struct Refusing;
-
-    impl ApduChannel for Refusing {
-        fn transceive(&mut self, _apdu: &[u8]) -> Result<Vec<u8>, String> {
-            Err("tag lost".to_string())
-        }
+    extern "C" fn refuse(
+        _context: *mut std::ffi::c_void,
+        _apdu: *const u8,
+        _apdu_len: usize,
+        _response: *mut u8,
+        _capacity: usize,
+    ) -> std::ffi::c_int {
+        -1
     }
 
-    let key = MrzKey::new("123456789", "1988-03-14", "2030-01-01").unwrap();
-    let result =
-        passport::read_passport(Box::new(Refusing), &key, &[], &PassportOptions::default());
+    let number = CString::new("123456789").unwrap();
+    let birth = CString::new("1988-03-14").unwrap();
+    let expiry = CString::new("2030-01-01").unwrap();
 
-    let message = result.unwrap_err().to_string();
+    let value = take(unsafe {
+        identity_mobile_read_passport(
+            number.as_ptr(),
+            birth.as_ptr(),
+            expiry.as_ptr(),
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            refuse,
+            std::ptr::null_mut(),
+        )
+    });
+
+    let message = value["error"]["message"].as_str().expect("a message");
     assert!(
         !message.contains("byte buffer"),
-        "a lost tag must not be described as an oversized response: {message}"
+        "a refused exchange must not be described as an oversized response: {message}"
     );
+    assert_eq!(value["error"]["kind"], "nfc");
 }
 
 /// Freeing twice would be a double free; freeing null must simply do nothing, because
