@@ -1,0 +1,35 @@
+name: identity_mobile
+description: >-
+  Verify ePassport chips (ICAO 9303) and mobile driving licences (ISO/IEC 18013-5)
+  from Flutter. Both documents return the same result.
+version: 0.0.1
+publish_to: none
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # `NativeCallable.isolateLocal`, which the NFC bridge needs, landed in Dart 3.1.
+  ffi: ^2.1.0
+  # Drives the chip. Its `transceive` returns a Future, which is exactly why the Rust
+  # side exposes an asynchronous exchange bridge rather than a blocking callback.
+  flutter_nfc_kit: ^3.5.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  plugin:
+    platforms:
+      # `ffiPlugin` rather than a method channel: everything crosses through
+      # `dart:ffi`, so there is no Dart-to-platform message passing to register. The
+      # native side exists only to carry the prebuilt library into the app bundle.
+      android:
+        ffiPlugin: true
+      ios:
+        ffiPlugin: true

@@ -54,12 +54,18 @@
 //! cost is that CRL revocation needs an HTTP client from you; see
 //! [`mdl_verify::revocation`], re-exported below.
 
-#![forbid(unsafe_code)]
+// Not `forbid`: `ffi` is the C ABI the Flutter plugin calls through, and a C ABI
+// cannot be written in safe Rust. Every other module is safe, and `ffi` is the only
+// place allowed to opt out — so the unsafe surface is exactly "trusting the pointers
+// the host passed", and nothing else.
+#![deny(unsafe_code)]
 #![warn(missing_debug_implementations)]
 
+mod bridge;
 mod error;
 mod identity;
 
+pub mod ffi;
 pub mod mdl;
 pub mod passport;
 

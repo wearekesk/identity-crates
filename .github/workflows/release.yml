@@ -184,6 +184,8 @@ jobs:
             -library target/aarch64-apple-ios/release/libidentity_mobile.a \
             -library libidentity_mobile-sim.a \
             -output identity_mobile.xcframework
+      # Drops beside the plugin's Package.swift, which declares it as a binary target.
+      # SwiftPM, not CocoaPods: see crates/identity-mobile/flutter/identity_mobile.
       - name: Upload XCFramework
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The chip read needs NFC; the CRL fetch, if the app enables it, needs the
+         internet. Both are declared here so an app picking up the plugin does not
+         have to discover them by failing. -->
+    <uses-permission android:name="android.permission.NFC" />
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+</manifest>

@@ -1,3 +1,23 @@
 /target
 **/*.rs.bk
 .claude/
+
+# Flutter / Dart build state, scoped to the plugin rather than matching any directory
+# called `build` anywhere in the tree. `.dart_tool` and the lockfile are per-machine;
+# for a plugin (as opposed to an application) pubspec.lock is deliberately not
+# committed, since consumers resolve against their own constraints.
+crates/identity-mobile/flutter/**/.dart_tool/
+crates/identity-mobile/flutter/**/build/
+crates/identity-mobile/flutter/**/.flutter-plugins
+crates/identity-mobile/flutter/**/.flutter-plugins-dependencies
+crates/identity-mobile/flutter/**/.packages
+crates/identity-mobile/flutter/**/pubspec.lock
+
+# SwiftPM build state for the iOS package.
+crates/identity-mobile/flutter/**/.build/
+crates/identity-mobile/flutter/**/.swiftpm/
+crates/identity-mobile/flutter/**/Package.resolved
+
+# Android build output from cargo-ndk, dropped in place for the plugin to package.
+crates/identity-mobile/flutter/**/jniLibs/
+crates/identity-mobile/flutter/**/*.xcframework/
