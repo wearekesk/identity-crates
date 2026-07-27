@@ -133,10 +133,159 @@ fn every_handover_input_is_bound() {
     }
 }
 
+/// Byte-for-byte against the worked example in OpenID4VP 1.0 Appendix B.2.6.2.
+///
+/// The strongest check available: the spec publishes the `SessionTranscript` for a
+/// given origin, nonce and thumbprint, so this asserts the exact encoding rather than
+/// merely a self-consistent one. If our CBOR differs from the spec's by a byte, every
+/// real presentation would fail device authentication and this is where it shows up.
+#[test]
+fn the_dcapi_transcript_matches_the_specs_worked_example() {
+    let thumbprint =
+        hex::decode("4283ec927ae0f208daaa2d026a814f2b22dca52cf85ffa8f3f8626c6bd669047").unwrap();
+
+    let transcript = SessionTranscript::openid4vp_dcapi(
+        "https://example.com",
+        "exc7gBkxjx1rdc9udRrveKvSsJIq80avlXeLHhGwqtA",
+        Some(&thumbprint),
+    )
+    .expect("builds");
+
+    // [null, null, ["OpenID4VPDCAPIHandover", h'fbece366…761a']]
+    let expected = hex::decode(
+        "83f6f682764f70656e4944345650444341504948616e646f766572\
+         5820fbece366f4212f9762c74cfdbf83b8c69e371d5d68cea09cb4c48ca6daab761a",
+    )
+    .unwrap();
+
+    assert_eq!(transcript.as_bytes(), expected.as_slice());
+}
+
+/// `dc_api` rather than `dc_api.jwt`: the spec requires a CBOR null in the thumbprint
+/// position, and an empty byte string is a different encoding — which would verify
+/// against nothing.
+#[test]
+fn an_absent_thumbprint_is_null_and_not_an_empty_string() {
+    let absent = SessionTranscript::openid4vp_dcapi("https://example.com", "n", None).unwrap();
+    let empty = SessionTranscript::openid4vp_dcapi("https://example.com", "n", Some(&[])).unwrap();
+
+    assert_ne!(
+        absent, empty,
+        "null and an empty byte string must not collapse to the same transcript"
+    );
+}
+
+/// The OpenID4VP 1.0 redirect profile — Appendix B.2.6.1.
+#[test]
+fn the_openid4vp_1_0_handover_is_built_from_its_inputs() {
+    let built = SessionTranscript::openid4vp_1_0(
+        "x509_san_dns:verifier.example",
+        "verifier-nonce",
+        None,
+        "https://verifier.example/response",
+    )
+    .expect("builds");
+
+    // ["OpenID4VPHandover", sha-256(CBOR([clientId, nonce, null, responseUri]))]
+    let expected = {
+        use sha2::{Digest, Sha256};
+        let info = ciborium::Value::Array(vec![
+            ciborium::Value::Text("x509_san_dns:verifier.example".to_string()),
+            ciborium::Value::Text("verifier-nonce".to_string()),
+            ciborium::Value::Null,
+            ciborium::Value::Text("https://verifier.example/response".to_string()),
+        ]);
+        let mut encoded = Vec::new();
+        ciborium::into_writer(&info, &mut encoded).unwrap();
+
+        SessionTranscript::from_parts(
+            None,
+            None,
+            ciborium::Value::Array(vec![
+                ciborium::Value::Text("OpenID4VPHandover".to_string()),
+                ciborium::Value::Bytes(Sha256::digest(&encoded).to_vec()),
+            ]),
+        )
+        .unwrap()
+    };
+
+    assert_eq!(built, expected);
+
+    // All four inputs are bound.
+    for other in [
+        SessionTranscript::openid4vp_1_0(
+            "other",
+            "verifier-nonce",
+            None,
+            "https://verifier.example/response",
+        ),
+        SessionTranscript::openid4vp_1_0(
+            "x509_san_dns:verifier.example",
+            "other",
+            None,
+            "https://verifier.example/response",
+        ),
+        SessionTranscript::openid4vp_1_0(
+            "x509_san_dns:verifier.example",
+            "verifier-nonce",
+            Some(&[1; 32]),
+            "https://verifier.example/response",
+        ),
+        SessionTranscript::openid4vp_1_0(
+            "x509_san_dns:verifier.example",
+            "verifier-nonce",
+            None,
+            "https://other.example/response",
+        ),
+    ] {
+        assert_ne!(built, other.unwrap());
+    }
+}
+
+/// The 1.0 redirect shape and the 18013-7 draft shape are different transcripts for
+/// the same session — which is the whole reason candidates exist.
+#[test]
+fn a_presentation_verifies_against_the_openid4vp_1_0_candidate() {
+    let signed = SessionTranscript::openid4vp_1_0(
+        "verifier.example",
+        "the-nonce",
+        None,
+        "https://verifier.example/response",
+    )
+    .expect("builds");
+
+    let response = ResponseBuilder::default()
+        .transcript(signed.clone())
+        .build();
+
+    let candidates = [
+        // What a backend on the older draft would have built for the same session.
+        SessionTranscript::openid4vp_iso_18013_7(
+            "verifier.example",
+            "https://verifier.example/response",
+            "the-nonce",
+            "wallet-nonce",
+        )
+        .unwrap(),
+        signed,
+    ];
+
+    let (_, matched) = mdl_verify::verify_presentation_any(
+        &response,
+        &[iaca_anchor()],
+        &candidates,
+        None,
+        &options(),
+    )
+    .expect("the 1.0 candidate matches");
+
+    assert_eq!(matched, 1);
+}
+
 #[test]
 fn the_dcapi_handover_is_built_from_its_inputs() {
     let built =
-        SessionTranscript::openid4vp_dcapi("https://verifier.example", "nonce", &[0xAB; 32])
+        SessionTranscript::openid4vp_dcapi("https://verifier.example", "nonce", Some(&[0xAB; 32]))
             .expect("builds");
 
     // The preimage the DC API profile specifies: SHA-256 over CBOR
@@ -157,10 +306,11 @@ fn the_dcapi_handover_is_built_from_its_inputs() {
 
     // All three inputs are bound, not just the origin.
     for other in [
-        SessionTranscript::openid4vp_dcapi("https://other.example", "nonce", &[0xAB; 32]).unwrap(),
-        SessionTranscript::openid4vp_dcapi("https://verifier.example", "other", &[0xAB; 32])
+        SessionTranscript::openid4vp_dcapi("https://other.example", "nonce", Some(&[0xAB; 32]))
             .unwrap(),
-        SessionTranscript::openid4vp_dcapi("https://verifier.example", "nonce", &[0xCD; 32])
+        SessionTranscript::openid4vp_dcapi("https://verifier.example", "other", Some(&[0xAB; 32]))
+            .unwrap(),
+        SessionTranscript::openid4vp_dcapi("https://verifier.example", "nonce", Some(&[0xCD; 32]))
             .unwrap(),
     ] {
         assert_ne!(built, other);
@@ -189,8 +339,12 @@ fn a_presentation_verifies_against_the_annex_b_candidate() {
 
     let candidates = [
         // A plausible-but-wrong shape first, as a real deployment would have.
-        SessionTranscript::openid4vp_dcapi("https://verifier.example", "verifier-nonce", &[0; 32])
-            .expect("builds"),
+        SessionTranscript::openid4vp_dcapi(
+            "https://verifier.example",
+            "verifier-nonce",
+            Some(&[0; 32]),
+        )
+        .expect("builds"),
         signed,
     ];
 
@@ -211,8 +365,9 @@ fn a_presentation_verifies_against_the_annex_b_candidate() {
 /// candidate.
 #[test]
 fn a_presentation_verifies_against_the_dcapi_candidate() {
-    let signed = SessionTranscript::openid4vp_dcapi("https://verifier.example", "nonce", &[7; 32])
-        .expect("builds");
+    let signed =
+        SessionTranscript::openid4vp_dcapi("https://verifier.example", "nonce", Some(&[7; 32]))
+            .expect("builds");
 
     let response = ResponseBuilder::default()
         .transcript(signed.clone())

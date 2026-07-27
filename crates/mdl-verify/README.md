@@ -48,18 +48,33 @@ For the online flows, build it from the values you already have:
 ```rust
 use mdl_verify::{verify_presentation_any, SessionTranscript};
 
-// ISO 18013-7 Annex B — the response_uri flow.
+// OpenID4VP 1.0, redirect flow — response_uri or redirect_uri (Appendix B.2.6.1).
+let transcript = SessionTranscript::openid4vp_1_0(
+    client_id, nonce, jwk_thumbprint, response_uri,
+)?;
+
+// OpenID4VP 1.0 over the W3C Digital Credentials API (Appendix B.2.6.2).
+let transcript = SessionTranscript::openid4vp_dcapi(origin, nonce, jwk_thumbprint)?;
+
+// ISO 18013-7 Annex B — the older draft, identifiable by the wallet-supplied nonce.
 let transcript = SessionTranscript::openid4vp_iso_18013_7(
     client_id, response_uri, verifier_nonce, mdoc_generated_nonce,
 )?;
-
-// OpenID4VP 1.0 over the W3C Digital Credentials API — the browser path.
-let transcript = SessionTranscript::openid4vp_dcapi(origin, nonce, jwk_thumbprint)?;
 ```
 
-Both do the hashing, which is worth having in one place: it is SHA-256 over a CBOR
+All three do the hashing, which is worth having in one place: it is SHA-256 over a CBOR
 array — not a concatenation, not JSON — and getting it wrong produces a device
-authentication failure indistinguishable from a real one.
+authentication failure indistinguishable from a real one. The DC API constructor is
+checked byte-for-byte against the worked example in the specification.
+
+`jwk_thumbprint` is an `Option`. Pass `None` when the response is not encrypted — the
+spec requires a CBOR `null` there, and an empty byte string is a different encoding
+that verifies against nothing.
+
+**Which profile is which** matters more than it looks. OpenID4VP 1.0's handover is
+`[clientId, nonce, jwkThumbprint, responseUri]` and has no wallet nonce at all; the
+18013-7 draft hashes the `mdoc_generated_nonce` into two separate digests. If your
+backend collects an `mdocGeneratedNonce` from the wallet, that is the draft profile.
 
 ### When you do not know which profile the wallet is on
 
