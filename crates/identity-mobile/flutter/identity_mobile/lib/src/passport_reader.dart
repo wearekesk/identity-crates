@@ -8,6 +8,15 @@ import 'package:flutter_nfc_kit/flutter_nfc_kit.dart';
 import 'bindings.dart';
 import 'models.dart';
 
+/// How long one APDU may take before the exchange is called lost.
+///
+/// Stated rather than left to `flutter_nfc_kit`'s default, because the failure path
+/// below depends on it: the Rust bridge waits 30 s for an answer, so this has to expire
+/// far enough inside that window for a moved phone to surface as an error while the
+/// holder is still holding it. A single exchange is milliseconds of chip time; anything
+/// approaching five seconds is a tag that has gone away.
+const Duration _apduTimeout = Duration(seconds: 5);
+
 /// The key printed on the document, which unlocks the chip.
 ///
 /// Nothing here is secret — it is all on the page — but the chip will not talk without
@@ -136,7 +145,10 @@ class PassportReader {
     Uint8List apdu,
   ) async {
     try {
-      final response = await FlutterNfcKit.transceive<Uint8List>(apdu);
+      final response = await FlutterNfcKit.transceive<Uint8List>(
+        apdu,
+        timeout: _apduTimeout,
+      );
       final buffer = calloc<Uint8>(response.length);
       try {
         buffer.asTypedList(response.length).setAll(0, response);

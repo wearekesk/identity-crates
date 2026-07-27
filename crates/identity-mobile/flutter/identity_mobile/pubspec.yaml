@@ -12,7 +12,9 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # `NativeCallable.isolateLocal`, which the NFC bridge needs, landed in Dart 3.1.
+  # The NFC bridge needs `NativeCallable.listener`: the Rust worker thread posts each
+  # APDU to this isolate, which is only legal across threads with the listener
+  # constructor. It landed in Dart 3.1.
   ffi: ^2.1.0
   # Drives the chip. Its `transceive` returns a Future, which is exactly why the Rust
   # side exposes an asynchronous exchange bridge rather than a blocking callback.
