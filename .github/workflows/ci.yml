@@ -89,3 +89,8 @@ jobs:
         run: |
           rustup target add aarch64-linux-android
           cargo check -p mdl-verify --no-default-features --target aarch64-linux-android --verbose
+      # `identity-mobile` is the artifact the phone apps actually link, so the target
+      # that matters most is the one it builds for. It depends on `mdl-verify` without
+      # the bundled HTTP client precisely so this needs no NDK.
+      - name: Check identity-mobile for Android (no NDK)
+        run: cargo check -p identity-mobile --target aarch64-linux-android --verbose

@@ -13,7 +13,8 @@ offline e-KYC, and Income-Tax PAN.
 | [`aamva`](crates/aamva) | `crates/aamva` | AAMVA DL/ID — PDF417 barcode scan + payload parser (US / Canadian driver's licenses). |
 | [`aadhaar-offline-kyc`](crates/aadhaar-offline-kyc) | `crates/aadhaar-offline-kyc` | Aadhaar offline e-KYC (India UIDAI) — Secure QR v2 + Paperless Offline e-KYC (ZIP/XML) with signature verification; Verhoeff number validation. |
 | [`incometax-pan-qr`](crates/incometax-pan-qr) | `crates/incometax-pan-qr` | Indian Income-Tax PAN structural validation + entity-type classification. |
-| [`mdl-verify`](crates/mdl-verify) | `crates/mdl-verify` | ISO/IEC 18013-5 mobile driving licence (mDL / mdoc) — issuer data authentication (MSO signature, element digests, IACA chain) and device authentication. Unpublished: see the crate README. |
+| [`mdl-verify`](crates/mdl-verify) | `crates/mdl-verify` | ISO/IEC 18013-5 mobile driving licence (mDL / mdoc) — issuer data authentication (MSO signature, element digests, IACA chain), device authentication, CRL revocation and VICAL trust anchors. Unpublished: see the crate README. |
+| [`identity-mobile`](crates/identity-mobile) | `crates/identity-mobile` | One verification API over `dmrtd` and `mdl-verify`: passport chips and mDLs return the same result. Shaped for Android, iOS and Flutter. Unpublished. |
 
 ## Build
 
