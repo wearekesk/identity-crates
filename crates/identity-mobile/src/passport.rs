@@ -204,9 +204,18 @@ pub fn read_passport(
     // established. A chip without it cannot do PACE at all.
     let card_access = passport.read_ef_card_access().ok();
 
-    // That read is a probe: older documents simply do not have the file, and failing
-    // it is normal. Clearing the flag here stops a probe failure making every later
-    // wrong-key rejection look like a lost tag.
+    // A chip that stopped responding has not told us it lacks EF.CardAccess. Separating
+    // the two matters: one is worth retrying, and the other sends the caller down the
+    // BAC path to argue with a chip that is no longer listening.
+    if card_access.is_none() && transport_failed.get() {
+        return Err(IdentityError::Nfc(
+            "the chip stopped responding while probing for EF.CardAccess".to_string(),
+        ));
+    }
+
+    // Short of that the read is a probe: older documents simply do not have the file,
+    // and failing it is normal. Clearing the flag here stops a probe failure making
+    // every later wrong-key rejection look like a lost tag.
     transport_failed.set(false);
 
     match (options.session, card_access) {
@@ -286,7 +295,20 @@ pub fn read_passport(
     // disagree with the first.
     let dg15_file = if options.active_authentication {
         transport_failed.set(false);
-        passport.read_ef_dg15().ok()
+        match passport.read_ef_dg15() {
+            Ok(dg15) => Some(dg15),
+            // A chip that stopped responding has not said the document lacks DG15.
+            // Recording that as "active authentication not attempted" would file a
+            // retryable fault under a permanent-looking one, and the holder would be
+            // told their passport does not support a check it does support.
+            Err(_) if transport_failed.get() => {
+                return Err(IdentityError::Nfc(
+                    "the chip stopped responding while reading DG15".to_string(),
+                ))
+            }
+            // Genuinely absent: the document does not support active authentication.
+            Err(_) => None,
+        }
     } else {
         None
     };
@@ -317,8 +339,15 @@ pub fn read_passport(
             transport_failed.set(false);
 
             let mut challenge = [0u8; 8];
-            getrandom::fill(&mut challenge)
-                .map_err(|e| IdentityError::Nfc(format!("no source of randomness: {e}")))?;
+            // Not an NFC error, though it sits on the NFC path: the tag is fine and
+            // repositioning the phone will not help. `Nfc` is the retry-and-tell-the-
+            // holder-to-hold-still kind, and this challenge is the security boundary of
+            // the whole check — a reader with no randomness should stop, not loop.
+            getrandom::fill(&mut challenge).map_err(|e| {
+                IdentityError::Unreadable(format!(
+                    "no source of randomness for the active authentication challenge: {e}"
+                ))
+            })?;
 
             let response = match passport.active_authenticate(&challenge) {
                 Ok(response) => Some(response),

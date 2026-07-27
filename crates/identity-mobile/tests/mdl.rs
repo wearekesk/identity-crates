@@ -263,6 +263,42 @@ fn an_mdl_comes_back_in_the_same_shape_as_a_passport() {
     );
 }
 
+/// `VerifiedIdentity` promises `YYYY-MM-DD`, and Dart parses it as such — but the mdoc
+/// element may be a `tdate` (an RFC 3339 timestamp) rather than a `full-date`, and the
+/// upstream accessor lets plain text through untouched.
+#[test]
+fn a_timestamp_is_narrowed_to_a_date_and_nonsense_is_dropped() {
+    let mut elements = elements();
+    // A tdate, which carries the same date in its first ten characters.
+    elements.insert(
+        "expiry_date".to_string(),
+        ciborium::Value::Text("2030-01-01T00:00:00Z".to_string()),
+    );
+    // Not a date in any reading.
+    elements.insert(
+        "birth_date".to_string(),
+        ciborium::Value::Text("sometime in 1988".to_string()),
+    );
+
+    let identity = mdl::verify_mdl(&device_response(elements), &[iaca_der()], None)
+        .expect("the credential still verifies; only the date mapping is at issue");
+
+    assert_eq!(identity.date_of_expiry.as_deref(), Some("2030-01-01"));
+    assert_eq!(
+        identity.date_of_birth, None,
+        "a value that is not a date must not be handed over as one"
+    );
+    assert!(
+        identity
+            .authenticity
+            .warnings
+            .iter()
+            .any(|w| w.contains("birth_date")),
+        "dropping it silently would leave the caller with no way to know: {:?}",
+        identity.authenticity.warnings
+    );
+}
+
 /// The thing a passport cannot do: answer the age question without giving up the date.
 #[test]
 fn age_attestations_survive_the_mapping() {
@@ -413,6 +449,38 @@ fn an_absent_thumbprint_is_not_a_present_one() {
         without.candidates[0].transcript.as_bytes(),
         "a present thumbprint must not encode the same as an absent one"
     );
+}
+
+/// A wrong-length thumbprint does not fail where it is passed — it builds a well-formed
+/// handover nobody signed, and surfaces a layer later as device authentication. Rejected
+/// in the builders and not only at the FFI edge, so a direct Rust caller gets the same
+/// answer as one coming through Dart.
+#[test]
+fn a_thumbprint_that_is_not_a_sha256_digest_is_refused() {
+    for length in [1usize, 16, 31, 33, 64] {
+        let wrong = vec![0x11u8; length];
+
+        let dcapi = mdl::Session::candidates(None)
+            .openid4vp_dcapi("verifier.example", "nonce-1", Some(&wrong))
+            .expect_err("a non-32-byte thumbprint cannot be a SHA-256 digest");
+        assert!(
+            matches!(dcapi, IdentityError::Unreadable(_)),
+            "{length}: {dcapi:?}"
+        );
+
+        let redirect = mdl::Session::candidates(None)
+            .openid4vp_1_0(
+                "client",
+                "nonce-1",
+                Some(&wrong),
+                "https://verifier.example/r",
+            )
+            .expect_err("the redirect builder has to agree with the DC API one");
+        assert!(
+            matches!(redirect, IdentityError::Unreadable(_)),
+            "{length}: {redirect:?}"
+        );
+    }
 }
 
 /// A session with nothing in it is a caller mistake, and has to read as one.

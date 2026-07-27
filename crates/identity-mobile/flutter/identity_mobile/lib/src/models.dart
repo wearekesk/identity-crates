@@ -245,12 +245,34 @@ class VerifiedIdentity {
   static List<int> _intList(Object? value) =>
       (value as List<dynamic>? ?? const []).map((v) => v as int).toList(growable: false);
 
+  /// The portrait crosses the boundary as hex, and has to come back as exactly the
+  /// bytes the issuer signed.
+  ///
+  /// An odd length used to lose the trailing nibble to integer division, and a
+  /// non-hex character threw from inside a getter. Neither is a shape the native side
+  /// can produce, so both mean the payload is not what this code thinks it is —
+  /// surfaced as a typed error rather than as quietly different bytes, which for a
+  /// photograph someone is compared against is not a small difference.
   static Uint8List? _decodeHex(String? value) {
     if (value == null) return null;
 
+    if (value.length.isOdd) {
+      throw IdentityException(
+        IdentityErrorKind.unknown,
+        'the portrait hex had an odd length (${value.length})',
+      );
+    }
+
     final bytes = Uint8List(value.length ~/ 2);
     for (var i = 0; i < bytes.length; i++) {
-      bytes[i] = int.parse(value.substring(i * 2, i * 2 + 2), radix: 16);
+      final byte = int.tryParse(value.substring(i * 2, i * 2 + 2), radix: 16);
+      if (byte == null) {
+        throw IdentityException(
+          IdentityErrorKind.unknown,
+          'the portrait hex was not hexadecimal at byte $i',
+        );
+      }
+      bytes[i] = byte;
     }
     return bytes;
   }

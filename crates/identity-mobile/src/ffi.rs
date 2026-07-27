@@ -177,25 +177,20 @@ pub unsafe extern "C" fn identity_mobile_verify_mdl_openid4vp(
         )
     };
 
-    // A thumbprint is a SHA-256 digest or it is nothing. Checked here rather than left
-    // to build a transcript nobody signed: a wrong-length value produces a valid-looking
-    // handover that fails device authentication, which is indistinguishable from a
-    // replayed response and sends the reader looking in the wrong place entirely.
+    // Empty means absent, which the spec encodes as a CBOR `null`. Any other length is
+    // rejected by the builders themselves, so a direct Rust caller gets the same answer
+    // as this one.
     let thumbprint = unsafe { params.jwk_thumbprint.as_slice() };
-    let thumbprint = match thumbprint.len() {
-        0 => None,
-        32 => Some(thumbprint),
-        other => {
-            return json::<VerifiedIdentity>(Err(IdentityError::Unreadable(format!(
-                "the response-encryption key thumbprint must be a 32-byte SHA-256 value, \
-                 got {other} bytes"
-            ))))
-        }
-    };
+    let thumbprint = (!thumbprint.is_empty()).then_some(thumbprint);
 
-    let Some(nonce) = nonce.as_deref() else {
+    // An empty nonce is a caller mistake that does not look like one. It builds a
+    // perfectly valid transcript binding the session to nothing, and every presentation
+    // ever signed against an empty nonce would verify against it — while still reporting
+    // holder_bound. A nonce that is not there at all is the same mistake, said quietly.
+    let nonce = nonce.as_deref().filter(|nonce| !nonce.is_empty());
+    let Some(nonce) = nonce else {
         return json::<VerifiedIdentity>(Err(IdentityError::Unreadable(
-            "a nonce is required to build an OpenID4VP session transcript".to_string(),
+            "a non-empty nonce is required to build an OpenID4VP session transcript".to_string(),
         )));
     };
 

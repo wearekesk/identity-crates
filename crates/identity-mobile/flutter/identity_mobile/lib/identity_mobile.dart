@@ -40,8 +40,21 @@ class _Arena {
 
   /// Copy a string into native memory. `null` stays `nullptr`, which the Rust side
   /// reads as "not supplied" — distinct from an empty string, which is a value.
-  Pointer<Utf8> text(String? value) {
+  ///
+  /// A NUL inside the string is refused rather than encoded. C strings end at the first
+  /// NUL, so the native side would read a silently shortened value and bind the
+  /// transcript to something the caller never supplied — the kind of mismatch that
+  /// surfaces as an unexplained device authentication failure.
+  Pointer<Utf8> text(String? value, String name) {
     if (value == null) return nullptr;
+
+    if (value.contains('\u0000')) {
+      throw ArgumentError.value(
+        value,
+        name,
+        'must not contain a NUL, which would truncate it at the FFI boundary',
+      );
+    }
 
     final ptr = value.toNativeUtf8(allocator: calloc);
     _allocations.add(ptr);
@@ -92,6 +105,19 @@ abstract final class IdentityMobile {
     Uint8List? sessionTranscript,
     Uint8List? eReaderKey,
   }) {
+    // An empty list reaches the ABI as a null pointer, which the native side reads as
+    // "no transcript" — so passing one would quietly drop device authentication and
+    // return an issuer-only result, exactly the outcome the caller was trying to avoid
+    // by supplying a transcript at all. Refused rather than downgraded.
+    if (sessionTranscript != null && sessionTranscript.isEmpty) {
+      throw ArgumentError.value(
+        sessionTranscript,
+        'sessionTranscript',
+        'an empty transcript would silently skip device authentication — pass null to '
+            'do that deliberately',
+      );
+    }
+
     final bindings = IdentityBindings.instance;
     final arena = _Arena();
     final (anchors, anchorBuffers) = allocateAnchors(iacaAnchors);
@@ -148,6 +174,17 @@ abstract final class IdentityMobile {
     Uint8List? jwkThumbprint,
     Uint8List? eReaderKey,
   }) {
+    // The nonce is what binds the response to this session. An empty one builds a
+    // perfectly valid transcript that binds it to nothing, so any presentation ever
+    // signed against an empty nonce would verify — and be reported as holder-bound.
+    if (nonce.isEmpty) {
+      throw ArgumentError.value(
+        nonce,
+        'nonce',
+        'must not be empty: an empty nonce binds the response to nothing',
+      );
+    }
+
     // The ABI carries bytes as a pointer and a length, and an empty list arrives as a
     // null pointer — indistinguishable from one that was never supplied. Since this API
     // makes a point of absent and empty being different transcripts, an empty list here
@@ -170,11 +207,11 @@ abstract final class IdentityMobile {
       // struct is passed by value, so Rust reads this memory during the call.
       final params = arena.openId4VpParams();
       params.ref
-        ..clientId = arena.text(clientId)
-        ..responseUri = arena.text(responseUri)
-        ..nonce = arena.text(nonce)
-        ..mdocGeneratedNonce = arena.text(mdocGeneratedNonce)
-        ..origin = arena.text(origin)
+        ..clientId = arena.text(clientId, 'clientId')
+        ..responseUri = arena.text(responseUri, 'responseUri')
+        ..nonce = arena.text(nonce, 'nonce')
+        ..mdocGeneratedNonce = arena.text(mdocGeneratedNonce, 'mdocGeneratedNonce')
+        ..origin = arena.text(origin, 'origin')
         ..jwkThumbprint =
             arena.slice(arena.bytes(jwkThumbprint), jwkThumbprint?.length ?? 0);
 

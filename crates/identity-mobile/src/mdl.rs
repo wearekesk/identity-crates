@@ -182,7 +182,7 @@ impl Session {
             transcript: SessionTranscript::openid4vp_1_0(
                 client_id,
                 nonce,
-                jwk_thumbprint,
+                checked_thumbprint(jwk_thumbprint)?,
                 response_uri,
             )
             .map_err(map_error)?,
@@ -202,8 +202,12 @@ impl Session {
     ) -> Result<Self, IdentityError> {
         self.candidates.push(Candidate {
             label: "openid4vp-dcapi".to_string(),
-            transcript: SessionTranscript::openid4vp_dcapi(origin, nonce, jwk_thumbprint)
-                .map_err(map_error)?,
+            transcript: SessionTranscript::openid4vp_dcapi(
+                origin,
+                nonce,
+                checked_thumbprint(jwk_thumbprint)?,
+            )
+            .map_err(map_error)?,
         });
         Ok(self)
     }
@@ -235,6 +239,57 @@ impl Session {
     }
 }
 
+/// A thumbprint is a SHA-256 digest or it is nothing.
+///
+/// Checked in the builders and not only at the FFI edge: a wrong-length value does not
+/// fail here, it builds a well-formed handover nobody signed, and the failure arrives a
+/// layer later as device authentication — which points the reader at the wallet when the
+/// fault is in its own request.
+fn checked_thumbprint(value: Option<&[u8]>) -> Result<Option<&[u8]>, IdentityError> {
+    match value {
+        Some(thumbprint) if thumbprint.len() != 32 => Err(IdentityError::Unreadable(format!(
+            "the response-encryption key thumbprint must be a 32-byte SHA-256 value, got {} bytes",
+            thumbprint.len()
+        ))),
+        other => Ok(other),
+    }
+}
+
+/// `YYYY-MM-DD`, or nothing and a warning.
+///
+/// [`VerifiedIdentity`] promises that shape and a Dart caller parses it as such, but the
+/// mdoc element can be a `full-date` *or* a `tdate` — an RFC 3339 timestamp — and
+/// `as_date` also lets plain text through. A timestamp carries the same date in its
+/// first ten characters, so it is narrowed; anything else is dropped rather than passed
+/// off as a date, with a warning so the gap is visible instead of silent.
+fn iso_date(raw: Option<&str>, field: &str, warnings: &mut Vec<String>) -> Option<String> {
+    let raw = raw?;
+
+    let candidate = match raw.find('T') {
+        Some(10) => &raw[..10],
+        _ => raw,
+    };
+
+    if is_iso_date(candidate) {
+        return Some(candidate.to_string());
+    }
+
+    warnings.push(format!(
+        "{field} was not a YYYY-MM-DD date and was dropped: {raw:?}"
+    ));
+    None
+}
+
+fn is_iso_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 10
+        && bytes[4] == b'-'
+        && bytes[7] == b'-'
+        && [0, 1, 2, 3, 5, 6, 8, 9]
+            .iter()
+            .all(|i| bytes[*i].is_ascii_digit())
+}
+
 fn identity(document: &MdlDocument, session_profile: Option<String>) -> VerifiedIdentity {
     let mut warnings = document.trust_errors.clone();
     warnings.extend(document.revocation_errors.iter().cloned());
@@ -242,8 +297,8 @@ fn identity(document: &MdlDocument, session_profile: Option<String>) -> Verified
     VerifiedIdentity {
         family_name: document.family_name().map(str::to_owned),
         given_name: document.given_name().map(str::to_owned),
-        date_of_birth: document.birth_date().map(str::to_owned),
-        date_of_expiry: document.expiry_date().map(str::to_owned),
+        date_of_birth: iso_date(document.birth_date(), "birth_date", &mut warnings),
+        date_of_expiry: iso_date(document.expiry_date(), "expiry_date", &mut warnings),
         document_number: document.document_number().map(str::to_owned),
         nationality: document.issuing_country().map(str::to_owned),
         sex: document

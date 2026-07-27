@@ -158,29 +158,6 @@ typedef VerifyPassport = Pointer<Utf8> Function(
     Pointer<NativeBytes> anchors,
     int anchorCount);
 
-typedef ReadPassportNative = Pointer<Utf8> Function(
-  Pointer<Utf8> documentNumber,
-  Pointer<Utf8> dateOfBirth,
-  Pointer<Utf8> dateOfExpiry,
-  Pointer<NativeBytes> anchors,
-  Size anchorCount,
-  Bool readPortrait,
-  Bool activeAuthentication,
-  Pointer<NativeFunction<TransceiveNative>> transceive,
-  Pointer<Void> context,
-);
-typedef ReadPassport = Pointer<Utf8> Function(
-  Pointer<Utf8> documentNumber,
-  Pointer<Utf8> dateOfBirth,
-  Pointer<Utf8> dateOfExpiry,
-  Pointer<NativeBytes> anchors,
-  int anchorCount,
-  bool readPortrait,
-  bool activeAuthentication,
-  Pointer<NativeFunction<TransceiveNative>> transceive,
-  Pointer<Void> context,
-);
-
 typedef StringFreeNative = Void Function(Pointer<Utf8> value);
 typedef StringFree = void Function(Pointer<Utf8> value);
 
@@ -194,8 +171,6 @@ class IdentityBindings {
                 'identity_mobile_verify_mdl_openid4vp'),
         verifyPassport = library.lookupFunction<VerifyPassportNative, VerifyPassport>(
             'identity_mobile_verify_passport'),
-        readPassport = library.lookupFunction<ReadPassportNative, ReadPassport>(
-            'identity_mobile_read_passport'),
         readPassportAsync =
             library.lookupFunction<ReadPassportAsyncNative, ReadPassportAsync>(
                 'identity_mobile_read_passport_async'),
@@ -211,7 +186,6 @@ class IdentityBindings {
   final VerifyMdl verifyMdl;
   final VerifyMdlOpenId4Vp verifyMdlOpenId4Vp;
   final VerifyPassport verifyPassport;
-  final ReadPassport readPassport;
   final ReadPassportAsync readPassportAsync;
   final SupplyApdu supplyApdu;
   final FreeApdu freeApdu;
@@ -220,16 +194,20 @@ class IdentityBindings {
   static IdentityBindings get instance => _instance ??= IdentityBindings._(_open());
 
   static DynamicLibrary _open() {
-    // Android and iOS are the supported platforms. macOS and Linux resolve the same
-    // way as their mobile counterparts, which costs nothing and makes a desktop test
-    // harness possible; Windows is not supported and says so rather than failing at
-    // link time.
+    // Android and iOS are the supported platforms. Desktop resolves by name so a test
+    // harness is possible against a locally built library; Windows is not supported and
+    // says so rather than failing at link time.
     //
-    // On iOS the static library is linked into the application binary, so the symbols
-    // are already in the process — there is no separate library to open. On Android
-    // the .so ships in jniLibs and is loaded by name.
-    if (Platform.isIOS || Platform.isMacOS) {
+    // Only iOS searches the process: there the static library is linked into the
+    // application binary, so the symbols are already loaded and there is nothing to
+    // open. macOS gets its own dylib branch rather than sharing that one — nothing
+    // links a macOS artifact, so searching the process would fail at the first symbol
+    // lookup with an error that says nothing about the missing build.
+    if (Platform.isIOS) {
       return DynamicLibrary.process();
+    }
+    if (Platform.isMacOS) {
+      return DynamicLibrary.open('libidentity_mobile.dylib');
     }
     if (Platform.isAndroid || Platform.isLinux) {
       return DynamicLibrary.open('libidentity_mobile.so');

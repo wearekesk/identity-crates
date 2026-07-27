@@ -116,6 +116,61 @@ void main() {
     );
   });
 
+  /// The nonce is the whole of the session binding. An empty one builds a valid
+  /// transcript that binds the response to nothing at all, and every presentation ever
+  /// signed against an empty nonce would verify against it — reported as holder-bound.
+  test('an empty nonce is refused', () {
+    expect(
+      () => IdentityMobile.verifyMdlOpenId4Vp(
+        Uint8List.fromList([0x00]),
+        nonce: '',
+        origin: 'verifier.example',
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
+  });
+
+  /// An empty list reaches the ABI as a null pointer, so this would silently become an
+  /// issuer-only verification — dropping the very check the caller passed a transcript
+  /// to get.
+  test('an empty session transcript is refused rather than downgraded', () {
+    expect(
+      () => IdentityMobile.verifyMdl(
+        Uint8List.fromList([0x00]),
+        sessionTranscript: Uint8List(0),
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
+  });
+
+  group('a malformed portrait is an error, not different bytes', () {
+    String payloadWithPortrait(String hex) => jsonEncode({
+          'identity': {
+            'portrait': hex,
+            'authenticity': {
+              'dataAuthentic': true,
+              'issuerTrusted': true,
+              'notExpired': true,
+              'warnings': <String>[],
+            },
+          },
+        });
+
+    test('an odd length does not lose its last nibble', () {
+      expect(
+        () => VerifiedIdentity.parseResult(payloadWithPortrait('ffd8ff0')),
+        throwsA(isA<IdentityException>()),
+      );
+    });
+
+    test('a non-hex character does not decode', () {
+      expect(
+        () => VerifiedIdentity.parseResult(payloadWithPortrait('ffd8zz')),
+        throwsA(isA<IdentityException>()),
+      );
+    });
+  });
+
   test('an mDL verified without a session reports no profile', () {
     final payload = jsonEncode({
       'identity': {
