@@ -219,14 +219,33 @@ impl<C: SmCipher> SecureMessaging for MrtdSM<C> {
     }
 
     fn unprotect(&mut self, rapdu: &ResponseApdu) -> Result<ResponseApdu, SmError> {
-        // Pass through degenerate SM errors / empty bodies unchanged.
-        if rapdu.status == StatusWord::SM_DATA_MISSING
-            || rapdu.status == StatusWord::SM_DATA_INVALID
-            || rapdu.data.as_ref().map_or(true, |d| d.is_empty())
-        {
+        // A protected exchange is answered with DO'99' and DO'8E' even when the command
+        // returns no data, so a bare status word carries no MAC and has been
+        // authenticated by nobody.
+        if rapdu.data.as_ref().is_none_or(|d| d.is_empty()) {
+            // Which makes an unprotected *success* the dangerous shape: anyone able to
+            // modify the channel can strip the secure-messaging wrapper from a response
+            // whose command returns no data — SELECT, MSE:Set AT — and have the reader
+            // treat it as having succeeded. "Nothing to check" is not "checked and
+            // fine".
+            if rapdu.status == StatusWord::SUCCESS {
+                return Err(SmError(
+                    "Unprotected success on a secure-messaging session: no DO'8E' to verify".into(),
+                ));
+            }
+
+            // An unprotected *error*, by contrast, is how the chip says secure messaging
+            // itself failed (6987/6988) or that it rejected the command before applying
+            // SM at all. It cannot be authenticated and is not being trusted — it is
+            // handed up as the status it is, so the caller keeps a diagnosis rather than
+            // an opaque SM failure. The SSC deliberately does not advance: the session
+            // cannot continue from here either way.
             return Ok(rapdu.clone());
         }
 
+        // A body is present, so it is verified whatever the status claims — including
+        // when the status says secure messaging failed. A status word sitting outside
+        // the MAC is not evidence of anything.
         self.ssc.increment();
 
         let data_do = Self::parse_data_do(rapdu)?;
@@ -308,12 +327,52 @@ mod tests {
         assert_eq!(out.status, StatusWord::SM_DATA_MISSING);
     }
 
+    /// The bypass this guard used to allow.
+    ///
+    /// A protected command that returns no data still answers with DO'99' and DO'8E'.
+    /// Anyone able to modify the channel could strip that wrapper, return a bare 9000,
+    /// and have the reader record the command as having succeeded without a MAC ever
+    /// being checked.
     #[test]
-    fn unprotect_passthrough_on_empty_body() {
+    fn unprotect_rejects_an_unprotected_success() {
         let mut sm = build_sm();
         let rapdu = ResponseApdu::new(StatusWord::SUCCESS, None);
-        let out = sm.unprotect(&rapdu).unwrap();
-        assert_eq!(out.status, StatusWord::SUCCESS);
+
+        let err = sm.unprotect(&rapdu).unwrap_err();
+
+        assert!(err.0.contains("Unprotected success"), "{}", err.0);
+    }
+
+    /// Rejecting it is only half the job: a session that carried on from here would do
+    /// so with a counter the chip does not share, and every later MAC would fail for a
+    /// reason that has nothing to do with the real fault.
+    #[test]
+    fn a_rejected_response_does_not_advance_the_ssc() {
+        let mut sm = build_sm();
+        let before = sm.ssc().to_bytes();
+
+        let _ = sm.unprotect(&ResponseApdu::new(StatusWord::SUCCESS, None));
+        assert_eq!(sm.ssc().to_bytes(), before, "rejected success");
+
+        let _ = sm.unprotect(&ResponseApdu::new(StatusWord::SM_DATA_MISSING, None));
+        assert_eq!(sm.ssc().to_bytes(), before, "passed-through error");
+    }
+
+    /// An error status outside the MAC is not evidence that the body inside it is
+    /// unworthy of checking — so a status-bearing response that carries one is verified
+    /// like any other rather than waved through on the strength of its status word.
+    #[test]
+    fn an_sm_error_carrying_a_body_is_still_verified() {
+        let mut sm = build_sm();
+        let mut body = sm::do99(0x9000);
+        body.extend_from_slice(&sm::do8e(&[0u8; 8]));
+
+        let rapdu = ResponseApdu::new(StatusWord::SM_DATA_MISSING, Some(body));
+
+        assert!(
+            sm.unprotect(&rapdu).is_err(),
+            "a bogus MAC must fail even when the status claims SM already failed"
+        );
     }
 
     #[test]
