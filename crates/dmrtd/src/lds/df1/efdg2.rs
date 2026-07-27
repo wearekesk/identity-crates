@@ -88,7 +88,7 @@ impl EfDG2 {
         if bict.value.is_empty() {
             return Err(EfParseError::new("DG2 BICT value is empty"));
         }
-        let bit_count = bict.value[0] & 0xFF;
+        let bit_count = bict.value[0];
 
         let mut out = Self {
             encoded,

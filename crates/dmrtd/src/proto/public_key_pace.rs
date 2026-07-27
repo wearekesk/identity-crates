@@ -80,7 +80,7 @@ impl PublicKeyPace {
     /// most card implementations. The input must have even length; each half is
     /// the fixed coordinate width.
     pub fn ecdh_from_hex(xy: &[u8]) -> Option<Self> {
-        if xy.is_empty() || xy.len() % 2 != 0 {
+        if xy.is_empty() || !xy.len().is_multiple_of(2) {
             return None;
         }
         let half = xy.len() / 2;

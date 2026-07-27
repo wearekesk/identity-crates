@@ -38,6 +38,27 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
 
+  # Runs on `stable` rather than a pinned version, so a toolchain bump that introduces
+  # new lints fails here rather than accumulating unnoticed — which is how this became a
+  # 74-diagnostic cleanup instead of a one-line fix. Anything deliberate is `#[allow]`ed
+  # at the site with the reason, so a failure here means something new.
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Rust (stable + clippy)
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
+        with:
+          toolchain: stable
+          components: clippy
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
   build-test:
     name: build & test
     runs-on: ubuntu-latest

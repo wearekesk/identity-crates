@@ -102,6 +102,9 @@ pub enum PaceSessionError {
 /// MODP groups). Both expose the same set of operations the session needs,
 /// exchanging [`PublicKeyPace`] values and raw KDF seed bytes so the state
 /// machine stays agreement-agnostic.
+// One per session, as with [`ECDHPace`] — the size difference is paid once and never
+// multiplied, so boxing would buy nothing and cost an allocation.
+#[allow(clippy::large_enum_variant)]
 enum PaceEngine {
     Ecdh(ECDHPace),
     Dh(DHPace),
@@ -364,6 +367,8 @@ impl<K: AccessKey> PaceSession<K> {
     }
 
     /// Advances the state machine and returns the next action.
+    // See `BacSession::next`: a fallible protocol step, not an iterator.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<PaceAction, PaceSessionError> {
         match std::mem::replace(&mut self.state, State::Start) {
             State::Start => {

@@ -610,6 +610,12 @@ impl_curve_ops!(
     b"26959946667150639794667015087019625940457807714424391721682722368061"
 );
 
+// The P-521 engine is much larger than the P-224 one, so every variant carries the
+// padding of the largest. Boxing is not worth it here: exactly one of these exists per
+// PACE session, so the padding is never multiplied, while the indirection would land on
+// the key-agreement path — and `Box<NistP521Engine>` is a breaking change to a public
+// enum for callers who match on it.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum ECDHPace {
     NistP256(NistP256Engine),

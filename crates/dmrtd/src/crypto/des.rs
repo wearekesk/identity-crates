@@ -139,7 +139,7 @@ impl DesedeCipher {
         } else {
             data
         };
-        if input.len() % DES_BLOCK_SIZE != 0 {
+        if !input.len().is_multiple_of(DES_BLOCK_SIZE) {
             return Err(DesError::InvalidDataLength(input.len()));
         }
         Ok(cbc_encrypt_3des(&self.triple_key.0, &self.iv, input))
@@ -154,7 +154,7 @@ impl DesedeCipher {
     /// When `padded_data` is `true`, also returns [`DesError::Iso9797`] if the
     /// decrypted plaintext is not valid ISO/IEC 9797-1 Method 2 padding.
     pub fn decrypt(&self, edata: &[u8], padded_data: bool) -> Result<Vec<u8>, DesError> {
-        if edata.len() % DES_BLOCK_SIZE != 0 {
+        if !edata.len().is_multiple_of(DES_BLOCK_SIZE) {
             return Err(DesError::InvalidDataLength(edata.len()));
         }
         let plain = cbc_decrypt_3des(&self.triple_key.0, &self.iv, edata);

@@ -30,7 +30,7 @@ impl BitUnpacker {
     /// check, drains whole bytes via the `>> 8` loop, then accumulates the final
     /// partial byte.
     pub fn bit_unpack(&mut self, v: u32, v1: u32) -> Result<(), PanQrError> {
-        if v1 > 0x20 || v1 < 1 {
+        if !(1..=0x20).contains(&v1) {
             return Err(PanQrError::InvalidBitCount(v1 as i64));
         }
 

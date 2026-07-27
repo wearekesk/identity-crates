@@ -86,8 +86,8 @@ impl Ssc {
     ///
     /// # Arguments
     /// - `ssc`      – Initial value as a big-endian byte slice.  Leading zero
-    ///                bytes are permitted (they are stripped when interpreting
-    ///                the value, but the result must still fit in `bit_size` bits).
+    ///   bytes are permitted (they are stripped when interpreting the value, but
+    ///   the result must still fit in `bit_size` bits).
     /// - `bit_size` – Counter width in bits.  Must be a multiple of 8.
     ///
     /// # Errors
@@ -109,7 +109,7 @@ impl Ssc {
     /// assert!(Ssc::new(&[0x01, 0x00], 8).is_err()); // 0x100 > 8-bit max
     /// ```
     pub fn new(ssc: &[u8], bit_size: usize) -> Result<Self, SscError> {
-        if bit_size % 8 != 0 {
+        if !bit_size.is_multiple_of(8) {
             return Err(SscError::BitSizeNotMultipleOf8(bit_size));
         }
         if bit_size > 128 {
@@ -150,7 +150,7 @@ impl Ssc {
         // absurd `bit_size` would trigger a huge `vec![0u8; bit_size / 8]`
         // allocation before [`Ssc::new`] ever gets a chance to reject it.
         assert!(
-            bit_size % 8 == 0,
+            bit_size.is_multiple_of(8),
             "zeroed SSC: bit_size must be a multiple of 8"
         );
         assert!(

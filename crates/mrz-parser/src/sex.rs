@@ -5,6 +5,7 @@ use strum::{Display, EnumString};
 /// MRZ-character mapping and a sensible default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, Display)]
 #[strum(ascii_case_insensitive)]
+#[derive(Default)]
 pub enum Sex {
     #[strum(to_string = "M", serialize = "male")]
     Male,
@@ -18,13 +19,8 @@ pub enum Sex {
         serialize = "X",
         serialize = "<"
     )]
+    #[default]
     Unspecified,
-}
-
-impl Default for Sex {
-    fn default() -> Self {
-        Sex::Unspecified
-    }
 }
 
 impl Sex {

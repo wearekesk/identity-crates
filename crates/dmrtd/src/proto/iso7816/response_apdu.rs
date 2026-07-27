@@ -423,7 +423,7 @@ impl ResponseApdu {
 
     /// Serialises this APDU as `data_bytes || [SW1, SW2]`.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out: Vec<u8> = self.data.as_ref().map(|d| d.clone()).unwrap_or_default();
+        let mut out: Vec<u8> = self.data.clone().unwrap_or_default();
         out.extend_from_slice(&self.status.to_bytes());
         out
     }

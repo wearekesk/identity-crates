@@ -184,7 +184,7 @@ fn pad_right(s: &str, min_len: usize, fill: char) -> String {
         s.to_string()
     } else {
         let mut out = s.to_string();
-        out.extend(std::iter::repeat(fill).take(min_len - s.len()));
+        out.extend(std::iter::repeat_n(fill, min_len - s.len()));
         out
     }
 }

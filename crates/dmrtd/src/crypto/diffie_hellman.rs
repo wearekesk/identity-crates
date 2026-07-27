@@ -295,7 +295,7 @@ impl DHpkcs3Engine {
         }
 
         let length = spec.length;
-        if length == 0 || length % 8 != 0 {
+        if length == 0 || !length.is_multiple_of(8) {
             return Err(DhPkcs3EngineError(format!(
                 "Invalid bitLength value - {length}"
             )));

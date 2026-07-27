@@ -120,6 +120,11 @@ impl BacSession {
     }
 
     /// Advances the state machine and returns the next action.
+    // Not `Iterator::next`, and deliberately so: this is fallible, it drives an APDU
+    // exchange with the chip rather than yielding from a sequence, and it ends by
+    // returning `Done` rather than `None`. Renaming it would also break a published
+    // API to avoid a resemblance that the return type already rules out.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<BacAction, BacError> {
         match &self.state {
             State::Start => {
@@ -160,12 +165,11 @@ impl BacSession {
             State::Completed(sm_slot) => {
                 // We placed the SM here when we parsed the EXTERNAL
                 // AUTHENTICATE response; hand it over now.
-                let sm = sm_slot
+                sm_slot
                     .as_ref()
                     .is_some()
-                    .then(|| ())
+                    .then_some(())
                     .ok_or_else(|| BacError("BAC session already consumed".into()))?;
-                let _ = sm;
                 let taken = match &mut self.state {
                     State::Completed(slot) => slot.take(),
                     _ => unreachable!(),
