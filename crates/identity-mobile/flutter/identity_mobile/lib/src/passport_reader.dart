@@ -96,7 +96,10 @@ class PassportReader {
 
     final callable = NativeCallable<PostApduNative>.listener(
       (Pointer<Void> _, int exchangeId, Pointer<Uint8> apdu, int apduLen) {
+        // Rust hands the buffer over rather than lending it, precisely because this
+        // callback runs later than the call that posted it — copy, then release.
         final bytes = Uint8List.fromList(apdu.asTypedList(apduLen));
+        bindings.freeApdu(apdu, apduLen);
         exchanges.sendPort.send([exchangeId, bytes]);
       },
     );

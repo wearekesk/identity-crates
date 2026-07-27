@@ -137,6 +137,22 @@ mod tests {
         assert!(waiter.join().unwrap().is_err());
     }
 
+    /// The case that makes the APDU buffer ownership transfer necessary: the waiter
+    /// gives up while the host is still on its way to reading it.
+    #[test]
+    fn a_timed_out_exchange_refuses_a_late_answer() {
+        let exchange = Exchange::open();
+        let id = exchange.id();
+
+        // Drop the waiter without answering, as a timeout does.
+        drop(exchange);
+
+        assert!(
+            !supply(id, Some(vec![0x90, 0x00])),
+            "a late answer must not be accepted into a slot nobody is waiting on"
+        );
+    }
+
     #[test]
     fn answering_an_unknown_exchange_is_refused_rather_than_ignored() {
         assert!(!supply(u64::MAX, Some(vec![])));

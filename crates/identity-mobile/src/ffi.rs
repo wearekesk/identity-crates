@@ -198,12 +198,14 @@ pub unsafe extern "C" fn identity_mobile_read_passport(
 /// Called on the worker thread that is running the read. The host must not block here
 /// — post the exchange to wherever its NFC lives and return. The answer comes back
 /// through [`identity_mobile_supply_apdu`].
-pub type PostApduFn = extern "C" fn(
-    context: *mut std::ffi::c_void,
-    exchange_id: u64,
-    apdu: *const u8,
-    apdu_len: usize,
-);
+///
+/// **The host takes ownership of `apdu`** and must release it with
+/// [`identity_mobile_free_apdu`] once it has copied the bytes. The buffer deliberately
+/// does not belong to the waiting call: if an exchange times out, that call unwinds
+/// while a busy host may still be on its way to reading the pointer, and a borrowed
+/// buffer would be gone by then.
+pub type PostApduFn =
+    extern "C" fn(context: *mut std::ffi::c_void, exchange_id: u64, apdu: *mut u8, apdu_len: usize);
 
 /// Read a passport, exchanging APDUs asynchronously.
 ///
@@ -304,8 +306,34 @@ struct AsyncChannel {
 impl ApduChannel for AsyncChannel {
     fn transceive(&mut self, apdu: &[u8]) -> Result<Vec<u8>, String> {
         let exchange = Exchange::open();
-        (self.post)(self.context, exchange.id(), apdu.as_ptr(), apdu.len());
+
+        // Hand the bytes over rather than lending them. `apdu` is borrowed for the
+        // duration of this call, and this call ends when the exchange is answered *or
+        // times out* — so a host that was slow to reach the callback could otherwise
+        // read a buffer that no longer exists.
+        let mut owned = apdu.to_vec();
+        owned.shrink_to_fit();
+        let (ptr, len) = (owned.as_mut_ptr(), owned.len());
+        std::mem::forget(owned);
+
+        (self.post)(self.context, exchange.id(), ptr, len);
         exchange.wait()
+    }
+}
+
+/// Release an APDU buffer handed to [`PostApduFn`].
+///
+/// Call this once per posted exchange, after copying the bytes. Skipping it leaks the
+/// buffer; calling it twice, or with a pointer from anywhere else, is undefined.
+///
+/// # Safety
+///
+/// `apdu` must be the pointer from a `PostApduFn` call, with the same `len`, and must
+/// not have been freed already.
+#[no_mangle]
+pub unsafe extern "C" fn identity_mobile_free_apdu(apdu: *mut u8, len: usize) {
+    if !apdu.is_null() && len > 0 {
+        drop(unsafe { Vec::from_raw_parts(apdu, len, len) });
     }
 }
 

@@ -72,6 +72,9 @@ typedef PostApduNative = Void Function(
   Size apduLen,
 );
 
+typedef FreeApduNative = Void Function(Pointer<Uint8> apdu, Size len);
+typedef FreeApdu = void Function(Pointer<Uint8> apdu, int len);
+
 typedef ReadPassportAsyncNative = Pointer<Utf8> Function(
   Pointer<Utf8> documentNumber,
   Pointer<Utf8> dateOfBirth,
@@ -160,6 +163,8 @@ class IdentityBindings {
                 'identity_mobile_read_passport_async'),
         supplyApdu = library
             .lookupFunction<SupplyApduNative, SupplyApdu>('identity_mobile_supply_apdu'),
+        freeApdu =
+            library.lookupFunction<FreeApduNative, FreeApdu>('identity_mobile_free_apdu'),
         stringFree = library
             .lookupFunction<StringFreeNative, StringFree>('identity_mobile_string_free');
 
@@ -170,6 +175,7 @@ class IdentityBindings {
   final ReadPassport readPassport;
   final ReadPassportAsync readPassportAsync;
   final SupplyApdu supplyApdu;
+  final FreeApdu freeApdu;
   final StringFree stringFree;
 
   static IdentityBindings get instance => _instance ??= IdentityBindings._(_open());
