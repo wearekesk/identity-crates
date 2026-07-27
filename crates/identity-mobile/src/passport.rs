@@ -190,6 +190,11 @@ pub fn read_passport(
     // established. A chip without it cannot do PACE at all.
     let card_access = passport.read_ef_card_access().ok();
 
+    // That read is a probe: older documents simply do not have the file, and failing
+    // it is normal. Clearing the flag here stops a probe failure making every later
+    // wrong-key rejection look like a lost tag.
+    transport_failed.set(false);
+
     match (options.session, card_access) {
         (Session::Pace, None) => {
             return Err(IdentityError::Unreadable(
@@ -220,6 +225,8 @@ pub fn read_passport(
             .map_err(|_| session_failed())?,
     }
 
+    // Past this point every read is mandatory, so any failure is fatal either way —
+    // but the message still tells the holder which kind of problem they have.
     let dg1 = passport
         .read_ef_dg1()
         .map_err(|e| IdentityError::Nfc(format!("could not read the MRZ (DG1): {e}")))?;
@@ -227,8 +234,15 @@ pub fn read_passport(
     let dg2 = if options.read_portrait {
         match passport.read_ef_dg2() {
             Ok(dg2) => Some(dg2.to_bytes().to_vec()),
-            // A missing or unreadable photograph is not a reason to fail an otherwise
-            // good read; it is reported as a warning further down.
+            // A document without a readable photograph is not a reason to fail an
+            // otherwise good read — it is reported as a warning further down. A chip
+            // that stopped answering is a different thing entirely, and must not be
+            // quietly downgraded to "no photograph".
+            Err(_) if transport_failed.get() => {
+                return Err(IdentityError::Nfc(
+                    "the chip stopped responding while reading the photograph".to_string(),
+                ))
+            }
             Err(_) => None,
         }
     } else {
@@ -248,9 +262,17 @@ pub fn read_passport(
 
         match passport.verify_active_authentication(&challenge) {
             Ok(()) => Some(true),
+            // A lost tag here would otherwise be recorded as "this chip may be a
+            // clone", which is a serious thing to say about a document that was
+            // merely moved.
+            Err(_) if transport_failed.get() => {
+                return Err(IdentityError::Nfc(
+                    "the chip stopped responding during active authentication".to_string(),
+                ))
+            }
             // A document without DG15 cannot do this at all, which is different from
-            // failing it. Both come back as `Err` here, so treat it as "not
-            // established" and let the warning say which.
+            // failing it. Both arrive as `Err`, so record "not established" and let
+            // the warning say which.
             Err(_) => Some(false),
         }
     } else {
@@ -302,11 +324,14 @@ pub fn verify_passport(
     let passive = passive::verify(&files.sod, &groups, &anchors)
         .map_err(|e| IdentityError::NotAuthentic(e.to_string()))?;
 
-    let (mut identity, document_code) = identity_from_files(files)?;
+    let (mut identity, document_code, issuing_state) = identity_from_files(files)?;
     identity.authenticity = authenticity(&passive, files, &identity);
     identity.source = Some(DocumentSource::Passport {
         document_code,
-        issuing_state: identity.nationality.clone().unwrap_or_default(),
+        // The MRZ's issuing state, not the holder's nationality. They usually match
+        // and are not the same field — a travel document issued to a non-national is
+        // exactly the case where assuming they are would be wrong.
+        issuing_state,
         verified_data_groups: passive.verified_groups.clone(),
         signed_data_groups: passive.sod_groups.clone(),
     });
@@ -314,7 +339,9 @@ pub fn verify_passport(
     Ok(identity)
 }
 
-fn identity_from_files(files: &PassportFiles) -> Result<(VerifiedIdentity, String), IdentityError> {
+fn identity_from_files(
+    files: &PassportFiles,
+) -> Result<(VerifiedIdentity, String, String), IdentityError> {
     let dg1 = EfDG1::from_bytes(files.dg1.clone())
         .map_err(|e| IdentityError::Unreadable(format!("EF.DG1 (the MRZ): {e}")))?;
     let mrz = dg1.mrz();
@@ -342,6 +369,7 @@ fn identity_from_files(files: &PassportFiles) -> Result<(VerifiedIdentity, Strin
             authenticity: Authenticity::default(),
         },
         mrz.document_code.clone(),
+        mrz.country.clone(),
     ))
 }
 

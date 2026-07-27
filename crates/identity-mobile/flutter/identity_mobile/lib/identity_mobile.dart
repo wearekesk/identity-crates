@@ -24,15 +24,22 @@ abstract final class IdentityMobile {
   /// [deviceResponse] is the **decrypted** CBOR `DeviceResponse` your proximity or
   /// OpenID4VP layer produced; [iacaAnchors] are DER-encoded IACA certificates.
   ///
-  /// Without a session transcript this is issuer authentication only:
-  /// [Authenticity.holderBound] comes back null, and a captured response replays.
+  /// Pass [sessionTranscript] when you have one. Without it this is issuer
+  /// authentication only: [Authenticity.holderBound] comes back null and a captured
+  /// response replays forever. [eReaderKey] is the reader's 32-byte ephemeral private
+  /// key, required when the holder authenticated with `DeviceMac` — omit it and you
+  /// get an error rather than a wrong answer.
   static VerifiedIdentity verifyMdl(
     Uint8List deviceResponse, {
     List<Uint8List> iacaAnchors = const [],
+    Uint8List? sessionTranscript,
+    Uint8List? eReaderKey,
   }) {
     final bindings = IdentityBindings.instance;
 
     final response = calloc<Uint8>(deviceResponse.length);
+    final transcript = _copy(sessionTranscript);
+    final readerKey = _copy(eReaderKey);
     final (anchors, buffers) = allocateAnchors(iacaAnchors);
 
     try {
@@ -42,13 +49,26 @@ abstract final class IdentityMobile {
         _bytes(response, deviceResponse.length),
         anchors,
         iacaAnchors.length,
+        _bytes(transcript, sessionTranscript?.length ?? 0),
+        _bytes(readerKey, eReaderKey?.length ?? 0),
       );
 
       return VerifiedIdentity.parseResult(bindings.consumeString(result));
     } finally {
       calloc.free(response);
+      if (transcript != nullptr) calloc.free(transcript);
+      if (readerKey != nullptr) calloc.free(readerKey);
       freeAnchors(anchors, buffers);
     }
+  }
+
+  /// Copy an optional byte list into native memory, or null for absent.
+  static Pointer<Uint8> _copy(Uint8List? bytes) {
+    if (bytes == null || bytes.isEmpty) return nullptr;
+
+    final buffer = calloc<Uint8>(bytes.length);
+    buffer.asTypedList(bytes.length).setAll(0, bytes);
+    return buffer;
   }
 
   /// Verify passport files read by something other than [PassportReader].

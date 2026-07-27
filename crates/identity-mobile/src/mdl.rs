@@ -4,7 +4,9 @@
 //! passport come back as the same [`VerifiedIdentity`], so an app that accepts both
 //! has one code path rather than two.
 
-use mdl_verify::{IacaAnchor, MdlDocument, MdlError, SessionTranscript, VerifyOptions};
+use mdl_verify::{
+    IacaAnchor, MdlDocument, MdlError, SessionTranscript, VerifyOptions, ISO_NAMESPACE,
+};
 
 use crate::identity::{Authenticity, DocumentSource, VerifiedIdentity};
 use crate::IdentityError;
@@ -44,17 +46,29 @@ pub fn verify_mdl(
     }
     .map_err(map_error)?;
 
-    let document = verification
-        .mdl()
-        .or_else(|| verification.documents.first())
-        .ok_or_else(|| IdentityError::Unreadable("the response carried no documents".into()))?;
+    // Only an actual mDL. Falling back to "whatever document came first" would let a
+    // photo ID be returned as a driving licence, which is precisely the confusion the
+    // docType check inside `mdl-verify` exists to prevent.
+    let document = verification.mdl().ok_or_else(|| {
+        IdentityError::Unreadable(format!(
+            "the response carried no mDL (found: {})",
+            match verification.documents.len() {
+                0 => "nothing".to_string(),
+                _ => verification
+                    .documents
+                    .iter()
+                    .map(|d| d.doc_type.clone())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            }
+        ))
+    })?;
 
     Ok(identity(document))
 }
 
 /// The session an mDL was presented in, which is what makes device authentication
 /// possible.
-#[derive(Debug)]
 pub struct Session {
     /// The `SessionTranscript` your session layer built.
     pub transcript: SessionTranscript,
@@ -62,6 +76,21 @@ pub struct Session {
     /// authenticated with `DeviceMac` — without it the MAC key cannot be derived, and
     /// you get an error rather than a wrong answer.
     pub e_reader_key: Option<[u8; 32]>,
+}
+
+// Written by hand, not derived: `e_reader_key` is the reader's ephemeral private key,
+// and a derived `Debug` would put every byte of it into any log line that formats a
+// `Session`.
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("transcript", &self.transcript)
+            .field(
+                "e_reader_key",
+                &self.e_reader_key.map(|_| "<redacted>").unwrap_or("None"),
+            )
+            .finish()
+    }
 }
 
 impl Session {
@@ -92,17 +121,19 @@ fn identity(document: &MdlDocument) -> VerifiedIdentity {
             .iso("sex")
             .and_then(|v| v.as_int())
             .map(|code| match code {
-                // ISO/IEC 5218, which the mDL uses and the MRZ does not.
+                // ISO/IEC 5218, which the mDL uses and the MRZ does not. The MRZ
+                // spells the unknown cases as `<`, so they normalise to empty here
+                // rather than arriving as a bare number the caller has to decode.
                 1 => "M".to_string(),
                 2 => "F".to_string(),
+                0 | 9 => String::new(),
                 other => other.to_string(),
             }),
         portrait: document.portrait().map(<[u8]>::to_vec),
-        // The whole point of an mDL for an age check: the answer without the date.
-        age_attestations: (13..=25)
-            .chain([60, 62, 65, 68])
-            .filter_map(|years| document.age_over(years).map(|answer| (years, answer)))
-            .collect(),
+        // Read from what was disclosed rather than from a list of ages we thought to
+        // ask about: `age_over_NN` is open-ended, and an issuer attesting age_over_30
+        // should not have it silently dropped.
+        age_attestations: age_attestations(document),
         source: Some(DocumentSource::MobileDrivingLicence {
             doc_type: document.doc_type.clone(),
             issuing_authority: document.issuing_authority().map(str::to_owned),
@@ -117,6 +148,24 @@ fn identity(document: &MdlDocument) -> VerifiedIdentity {
             warnings,
         },
     }
+}
+
+/// Every `age_over_NN` the document disclosed.
+fn age_attestations(document: &MdlDocument) -> Vec<(u8, bool)> {
+    let Some(namespace) = document.namespaces.get(ISO_NAMESPACE) else {
+        return Vec::new();
+    };
+
+    let mut attestations: Vec<(u8, bool)> = namespace
+        .iter()
+        .filter_map(|(identifier, value)| {
+            let years = identifier.strip_prefix("age_over_")?.parse().ok()?;
+            Some((years, value.as_bool()?))
+        })
+        .collect();
+
+    attestations.sort_unstable();
+    attestations
 }
 
 fn map_error(error: MdlError) -> IdentityError {

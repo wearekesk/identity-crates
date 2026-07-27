@@ -60,7 +60,7 @@ fn a_verified_passport_crosses_the_boundary_intact() {
     assert_eq!(identity["familyName"], "SHARMA");
     assert_eq!(identity["givenName"], "PRIYA");
     assert_eq!(identity["dateOfBirth"], "1988-03-14");
-    assert_eq!(identity["nationality"], "GBR");
+    assert_eq!(identity["nationality"], "FRA");
 
     assert_eq!(identity["authenticity"]["dataAuthentic"], true);
     assert_eq!(identity["authenticity"]["issuerTrusted"], true);
@@ -68,6 +68,8 @@ fn a_verified_passport_crosses_the_boundary_intact() {
     assert!(identity["authenticity"]["holderBound"].is_null());
 
     assert_eq!(identity["source"]["kind"], "passport");
+    // The issuing state, which the fixture deliberately sets apart from the holder's
+    // nationality above.
     assert_eq!(identity["source"]["issuingState"], "GBR");
     assert_eq!(
         identity["source"]["verifiedDataGroups"],
@@ -148,9 +150,39 @@ fn no_anchors_is_a_valid_call() {
 #[test]
 fn garbage_reaches_the_host_as_an_error_not_a_crash() {
     let junk = b"not an mdoc";
-    let value = take(unsafe { identity_mobile_verify_mdl(bytes(junk), std::ptr::null(), 0) });
+    let value = take(unsafe {
+        identity_mobile_verify_mdl(bytes(junk), std::ptr::null(), 0, NOTHING, NOTHING)
+    });
 
     assert_eq!(value["error"]["kind"], "unreadable");
+}
+
+/// A reader key that is not 32 bytes is a caller mistake, and has to be named as one
+/// rather than producing a puzzling verification failure later.
+#[test]
+fn a_wrong_sized_reader_key_is_rejected_by_name() {
+    let transcript = [0x83, 0xf6, 0xf6, 0x80];
+    let short_key = [0u8; 8];
+
+    let value = take(unsafe {
+        identity_mobile_verify_mdl(
+            bytes(b"irrelevant"),
+            std::ptr::null(),
+            0,
+            bytes(&transcript),
+            bytes(&short_key),
+        )
+    });
+
+    assert_eq!(value["error"]["kind"], "unreadable");
+    assert!(
+        value["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("32 bytes"),
+        "{}",
+        value["error"]["message"]
+    );
 }
 
 /// Freeing twice would be a double free; freeing null must simply do nothing, because

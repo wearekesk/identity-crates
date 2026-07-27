@@ -31,7 +31,7 @@ fn a_genuine_passport_verifies_and_yields_the_holder() {
     assert_eq!(identity.date_of_birth.as_deref(), Some("1988-03-14"));
     assert_eq!(identity.date_of_expiry.as_deref(), Some("2030-01-01"));
     assert_eq!(identity.document_number.as_deref(), Some("123456789"));
-    assert_eq!(identity.nationality.as_deref(), Some("GBR"));
+    assert_eq!(identity.nationality.as_deref(), Some("FRA"));
     assert_eq!(identity.display_name().as_deref(), Some("PRIYA SHARMA"));
 
     assert!(identity.authenticity.data_authentic);
@@ -178,7 +178,10 @@ fn a_document_source_names_the_document_type() {
     };
 
     assert_eq!(document_code, "P");
+    // The state that issued the document, which is not the holder's nationality —
+    // the fixture sets them differently so conflating the two fails here.
     assert_eq!(issuing_state, "GBR");
+    assert_eq!(identity.nationality.as_deref(), Some("FRA"));
 }
 
 #[test]

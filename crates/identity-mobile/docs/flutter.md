@@ -34,20 +34,46 @@ impl ApduChannel for PlatformNfc {
     }
 }
 
+/// Keep the failure *kind*, not just its text.
+///
+/// Flattening to `String` would throw away the distinction the whole error type exists
+/// for: `nfc` means retry, `access` means the key is wrong, `notAuthentic` means stop.
+/// Dart cannot make that decision from a sentence.
+pub enum ScanError {
+    Nfc(String),
+    Access,
+    Unreadable(String),
+    NotAuthentic(String),
+    Anchor(String),
+    UnsupportedAlgorithm(String),
+}
+
+impl From<IdentityError> for ScanError {
+    fn from(error: IdentityError) -> Self {
+        match error {
+            IdentityError::Nfc(why) => ScanError::Nfc(why),
+            IdentityError::Access => ScanError::Access,
+            IdentityError::Unreadable(why) => ScanError::Unreadable(why),
+            IdentityError::NotAuthentic(why) => ScanError::NotAuthentic(why),
+            IdentityError::Anchor(why) => ScanError::Anchor(why),
+            IdentityError::UnsupportedAlgorithm(what) => ScanError::UnsupportedAlgorithm(what),
+        }
+    }
+}
+
 pub fn read_passport(
     document_number: String,
     date_of_birth: String,
     date_of_expiry: String,
     csca_anchors: Vec<Vec<u8>>,
-) -> Result<ScanResult, String> {
-    let key = MrzKey::new(document_number, &date_of_birth, &date_of_expiry)
-        .map_err(|e| e.to_string())?;
+) -> Result<ScanResult, ScanError> {
+    let key = MrzKey::new(document_number, &date_of_birth, &date_of_expiry)?;
 
     let channel = PlatformNfc { exchange: platform_exchange() };
 
     passport::read_passport(Box::new(channel), &key, &csca_anchors, &PassportOptions::default())
         .map(ScanResult::from)
-        .map_err(|e| e.to_string())
+        .map_err(ScanError::from)
 }
 ```
 
@@ -71,7 +97,7 @@ reports are a moved phone.
 ```dart
 try {
   final result = await readPassport(...);
-} on IdentityError catch (e) {
+} on ScanError catch (e) {
   // Nfc     → "Hold the phone still on the passport" and retry automatically.
   // Access  → "Check the document number, date of birth and expiry" — the document
   //           is probably fine, the key is wrong. Do not retry the same values.
@@ -82,6 +108,10 @@ try {
 That distinction is why the Rust side separates them: retrying a wrong key forever, or
 telling someone their genuine passport is fake because they moved their hand, are both
 avoidable.
+
+If you are using the plugin in `flutter/identity_mobile` rather than writing your own
+wrapper, this is already done: errors arrive as `IdentityException` with an
+`IdentityErrorKind`, and `kind.isRetryable` answers the retry question directly.
 
 ## What to expose over FFI
 

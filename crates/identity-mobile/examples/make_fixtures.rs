@@ -56,8 +56,11 @@ fn build_dg1() -> Vec<u8> {
         check_digit(expiry),
         check_digit(&optional),
     );
+    // Nationality deliberately differs from the issuing state (GBR, in line 1). They
+    // match on most documents, which is exactly why a fixture where they match cannot
+    // catch code that confuses the two.
     let line2 = format!(
-        "{document_number}{}GBR{birth}{}F{expiry}{}{optional}{}{}",
+        "{document_number}{}FRA{birth}{}F{expiry}{}{optional}{}{}",
         check_digit(document_number),
         check_digit(birth),
         check_digit(expiry),

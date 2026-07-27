@@ -75,7 +75,10 @@ mod x509_cert_shim {
                 .iter()
                 .position(|c| *c == byte)
                 .expect("valid base64 in a PEM fixture") as u32;
-            buffer = (buffer << 6) | value;
+            // Masked to the bits still owed. Without it the accumulator relies on
+            // shift-out to discard consumed bits, which is correct but reads like a
+            // bug and would become one the moment the type changed.
+            buffer = ((buffer << 6) | value) & 0xFFFF;
             bits += 6;
             if bits >= 8 {
                 bits -= 8;
@@ -125,6 +128,8 @@ fn elements() -> BTreeMap<String, ciborium::Value> {
     );
     elements.insert("age_over_21".to_string(), ciborium::Value::Bool(true));
     elements.insert("age_over_18".to_string(), ciborium::Value::Bool(true));
+    // Not one of the ages a hard-coded list would have thought to ask about.
+    elements.insert("age_over_30".to_string(), ciborium::Value::Bool(true));
     elements.insert("sex".to_string(), ciborium::Value::Integer(2.into()));
     elements.insert(
         "portrait".to_string(),
@@ -135,6 +140,13 @@ fn elements() -> BTreeMap<String, ciborium::Value> {
 
 /// Issue and encode a `DeviceResponse` the way a wallet would present one.
 fn device_response(elements: BTreeMap<String, ciborium::Value>) -> Vec<u8> {
+    device_response_with_doc_type(elements, "org.iso.18013.5.1.mDL")
+}
+
+fn device_response_with_doc_type(
+    elements: BTreeMap<String, ciborium::Value>,
+    doc_type: &str,
+) -> Vec<u8> {
     let at = signed_at();
     let odt = |t: chrono::DateTime<Utc>| {
         time::OffsetDateTime::from_unix_timestamp(t.timestamp()).unwrap()
@@ -147,7 +159,7 @@ fn device_response(elements: BTreeMap<String, ciborium::Value>) -> Vec<u8> {
     namespaces.insert("org.iso.18013.5.1".to_string(), elements);
 
     let mdoc = Mdoc::builder()
-        .doc_type("org.iso.18013.5.1.mDL".to_string())
+        .doc_type(doc_type.to_string())
         .namespaces(namespaces)
         .validity_info(ValidityInfo {
             signed: odt(at - chrono::Duration::days(1)),
@@ -190,7 +202,7 @@ fn device_response(elements: BTreeMap<String, ciborium::Value>) -> Vec<u8> {
     let response = DeviceResponse {
         version: "1.0".to_string(),
         documents: Some(NonEmptyVec::new(Document {
-            doc_type: "org.iso.18013.5.1.mDL".to_string(),
+            doc_type: doc_type.to_string(),
             issuer_signed: IssuerSigned {
                 namespaces: Some(mdoc.namespaces),
                 issuer_auth: mdoc.issuer_auth,
@@ -263,6 +275,50 @@ fn age_attestations_survive_the_mapping() {
         identity.date_of_birth, None,
         "the date of birth was never disclosed, and must not be invented"
     );
+}
+
+/// Attestations come from what the issuer actually disclosed, not from a list of ages
+/// this crate happened to enumerate.
+#[test]
+fn any_disclosed_age_attestation_survives() {
+    let identity =
+        mdl::verify_mdl(&device_response(elements()), &[iaca_der()], None).expect("verifies");
+
+    assert_eq!(identity.age_over(21), Some(true));
+    assert_eq!(identity.age_over(30), Some(true));
+    assert_eq!(identity.age_over(99), None);
+}
+
+/// A response carrying some other document must not be handed back as a driving
+/// licence just because it was the only thing present.
+#[test]
+fn a_non_mdl_document_is_not_returned_as_an_mdl() {
+    let response = device_response_with_doc_type(elements(), "org.iso.23220.photoid.1");
+
+    let result = mdl::verify_mdl(&response, &[iaca_der()], None);
+
+    assert!(
+        matches!(result, Err(IdentityError::Unreadable(_))),
+        "{result:?}"
+    );
+    let message = result.unwrap_err().to_string();
+    assert!(message.contains("photoid"), "{message}");
+}
+
+/// The reader's private key must not reach a log line.
+#[test]
+fn a_session_does_not_print_the_reader_key() {
+    let session = mdl::Session::from_cbor(&[0x83, 0xf6, 0xf6, 0x80], Some([0xAB; 32]))
+        .expect("a well-formed transcript");
+
+    let rendered = format!("{session:?}");
+
+    assert!(rendered.contains("redacted"), "{rendered}");
+    assert!(
+        !rendered.contains("171"),
+        "the key bytes leaked: {rendered}"
+    );
+    assert!(!rendered.to_lowercase().contains("ab, ab"), "{rendered}");
 }
 
 /// Without a session transcript there is no proof of presence, and the result has to

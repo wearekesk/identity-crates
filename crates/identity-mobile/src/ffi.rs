@@ -60,20 +60,48 @@ pub type TransceiveFn = extern "C" fn(
 /// Verify an mDL presentation. Returns owned JSON; free it with
 /// [`identity_mobile_string_free`].
 ///
+/// Pass the session transcript when you have one — a null `session_transcript` means
+/// issuer authentication only, `holderBound` comes back null, and a captured response
+/// replays forever. `e_reader_key` is the reader's 32-byte ephemeral private key,
+/// required when the holder authenticated with `DeviceMac`.
+///
 /// # Safety
 ///
-/// `device_response` and every entry in `anchors[0..anchor_count]` must be valid
-/// slices for the duration of the call.
+/// Every slice must be valid for the duration of the call, and `e_reader_key`, if not
+/// null, must point to 32 bytes.
 #[no_mangle]
 pub unsafe extern "C" fn identity_mobile_verify_mdl(
     device_response: Bytes,
     anchors: *const Bytes,
     anchor_count: usize,
+    session_transcript: Bytes,
+    e_reader_key: Bytes,
 ) -> *mut c_char {
     let response = unsafe { device_response.as_slice() };
     let anchors = unsafe { collect(anchors, anchor_count) };
+    let transcript = unsafe { session_transcript.as_slice() };
 
-    json(crate::mdl::verify_mdl(response, &anchors, None))
+    if transcript.is_empty() {
+        return json(crate::mdl::verify_mdl(response, &anchors, None));
+    }
+
+    let key = unsafe { e_reader_key.as_slice() };
+    let key = match key.len() {
+        0 => None,
+        32 => Some(<[u8; 32]>::try_from(key).expect("checked above")),
+        other => {
+            return json::<VerifiedIdentity>(Err(IdentityError::Unreadable(format!(
+                "the reader's ephemeral key must be 32 bytes, got {other}"
+            ))))
+        }
+    };
+
+    let session = match crate::mdl::Session::from_cbor(transcript, key) {
+        Ok(session) => session,
+        Err(e) => return json::<VerifiedIdentity>(Err(e)),
+    };
+
+    json(crate::mdl::verify_mdl(response, &anchors, Some(&session)))
 }
 
 /// Verify passport files that were read elsewhere.
@@ -314,6 +342,13 @@ impl ApduChannel for HostChannel {
         );
 
         match written {
+            // `truncate` past the end is a no-op, so an over-long length would leave
+            // 64 KiB of zeroes standing in for the chip's answer and corrupt the
+            // session in a way that is very hard to trace back to here.
+            len if len as usize > response.len() => Err(format!(
+                "the host reported {len} bytes for a {} byte buffer",
+                response.len()
+            )),
             len if len >= 0 => {
                 response.truncate(len as usize);
                 Ok(response)

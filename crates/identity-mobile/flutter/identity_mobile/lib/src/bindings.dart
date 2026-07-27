@@ -101,9 +101,19 @@ typedef SupplyApdu = bool Function(
     int exchangeId, Pointer<Uint8> response, int responseLen, bool ok);
 
 typedef VerifyMdlNative = Pointer<Utf8> Function(
-    NativeBytes deviceResponse, Pointer<NativeBytes> anchors, Size anchorCount);
+  NativeBytes deviceResponse,
+  Pointer<NativeBytes> anchors,
+  Size anchorCount,
+  NativeBytes sessionTranscript,
+  NativeBytes eReaderKey,
+);
 typedef VerifyMdl = Pointer<Utf8> Function(
-    NativeBytes deviceResponse, Pointer<NativeBytes> anchors, int anchorCount);
+  NativeBytes deviceResponse,
+  Pointer<NativeBytes> anchors,
+  int anchorCount,
+  NativeBytes sessionTranscript,
+  NativeBytes eReaderKey,
+);
 
 typedef VerifyPassportNative = Pointer<Utf8> Function(NativeBytes sod, NativeBytes dg1,
     NativeBytes dg2, Pointer<NativeBytes> anchors, Size anchorCount);
