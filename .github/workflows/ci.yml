@@ -88,29 +88,24 @@ jobs:
   # it depends on both — and it does so with the bundled HTTP client off, which is what
   # keeps `ring` out of the graph and the Android build free of an NDK. If that ever
   # stops being true, this job is where it shows up.
-  mobile:
-    name: mobile targets
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # No NDK is installed here on purpose: needing one would mean something in
-          # the dependency graph started compiling C.
-          - target: aarch64-linux-android
-            os: ubuntu-latest
-          - target: aarch64-apple-ios
-            os: macos-latest
-    runs-on: ${{ matrix.os }}
+  # Android only. iOS needs a macOS runner, which bills at a multiplier, and
+  # release.yml's `ffi-ios` job already cross-compiles the same crate for all three
+  # iOS slices — paying for it on every pull request as well buys very little.
+  android:
+    name: android target
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-      - name: Install Rust (stable + ${{ matrix.target }})
+      - name: Install Rust (stable + aarch64-linux-android)
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537 # master
         with:
           toolchain: stable
-          targets: ${{ matrix.target }}
+          targets: aarch64-linux-android
       - name: Cache cargo
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      # No NDK is installed on purpose: needing one would mean something in the
+      # dependency graph started compiling C.
       - name: Check
-        run: cargo check -p identity-mobile --target ${{ matrix.target }} --verbose
+        run: cargo check -p identity-mobile --target aarch64-linux-android --verbose
