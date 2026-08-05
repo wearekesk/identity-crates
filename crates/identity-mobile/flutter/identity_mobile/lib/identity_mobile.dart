@@ -14,7 +14,14 @@ import 'src/bindings.dart';
 import 'src/models.dart';
 
 export 'src/models.dart'
-    show Authenticity, DocumentKind, IdentityErrorKind, IdentityException, VerifiedIdentity;
+    show
+        Authenticity,
+        DocumentKind,
+        IdentityErrorKind,
+        IdentityException,
+        PassportDataGroups,
+        PassportRead,
+        VerifiedIdentity;
 export 'src/passport_reader.dart' show DBAKey, PassportReader;
 
 /// Native allocations that live exactly as long as one call.
@@ -238,6 +245,11 @@ abstract final class IdentityMobile {
   /// Pass a null [dg2] when the photograph was not read. The result then reports the
   /// gap — `signedDataGroups` will list a group that `verifiedDataGroups` does not —
   /// rather than implying the photograph was covered.
+  ///
+  /// This is also the far end of `PassportReader(retainDataGroups: true)`: the fields
+  /// of [PassportDataGroups] go straight into these parameters, so a server handed those
+  /// bytes runs exactly the check the reading device ran, rather than taking its word
+  /// for the verdict.
   static VerifiedIdentity verifyPassportFiles({
     required Uint8List sod,
     required Uint8List dg1,

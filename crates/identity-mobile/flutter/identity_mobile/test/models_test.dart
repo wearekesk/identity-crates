@@ -282,4 +282,74 @@ void main() {
     expect(identity.authenticity.warnings, hasLength(1));
     expect(identity.authenticity.warnings.first, contains('not read'));
   });
+
+  group('retained data groups', () {
+    /// A reader payload with the envelope `identity_mobile_read_passport_async` emits.
+    String readPayload(Object? dataGroups) {
+      final json = jsonDecode(_passportPayload()) as Map<String, dynamic>;
+      json['dataGroups'] = dataGroups;
+      return jsonEncode(json);
+    }
+
+    test('the bytes survive the call, beside the identity', () {
+      final result = PassportRead.parseResult(readPayload({
+        'sod': '3082aa',
+        'dg1': '615b',
+        'dg2': 'ffd8ffe0',
+        'dg15': null,
+      }));
+
+      // The verdict is unchanged by asking for the bytes.
+      expect(result.identity.displayName, 'PRIYA SHARMA');
+      expect(result.identity.authenticity.isTrustworthy, isTrue);
+
+      final groups = result.dataGroups!;
+      expect(groups.sod, [0x30, 0x82, 0xAA]);
+      expect(groups.dg1, [0x61, 0x5B]);
+      expect(groups.dg2, [0xFF, 0xD8, 0xFF, 0xE0]);
+      // Absent because the document does not carry one — not because it was empty.
+      expect(groups.dg15, isNull);
+    });
+
+    /// The default, and the one that matters: nothing retained reads as nothing
+    /// retained, rather than as an empty set of files.
+    test('a read that did not ask for them reports none', () {
+      final result = PassportRead.parseResult(readPayload(null));
+
+      expect(result.dataGroups, isNull);
+      expect(result.identity.familyName, 'SHARMA');
+    });
+
+    /// A read cannot succeed without EF.SOD and EF.DG1, so a payload missing either is a
+    /// broken contract rather than a partial read — and must not arrive as empty bytes
+    /// that something downstream would try to verify.
+    test('data groups without EF.SOD are refused', () {
+      expect(
+        () => PassportRead.parseResult(readPayload({'dg1': '615b'})),
+        throwsA(isA<IdentityException>()),
+      );
+    });
+
+    test('a malformed EF.SOD hex names the file it could not decode', () {
+      expect(
+        () => PassportRead.parseResult(readPayload({'sod': '308', 'dg1': '615b'})),
+        throwsA(isA<IdentityException>()
+            .having((e) => e.message, 'message', contains('EF.SOD'))),
+      );
+    });
+
+    /// Errors have to reach this path too — a failed read must not look like a read with
+    /// nothing retained.
+    test('an error still arrives typed', () {
+      final payload = jsonEncode({
+        'error': {'kind': 'nfc', 'message': 'the chip stopped responding'},
+      });
+
+      expect(
+        () => PassportRead.parseResult(payload),
+        throwsA(isA<IdentityException>()
+            .having((e) => e.kind, 'kind', IdentityErrorKind.nfc)),
+      );
+    });
+  });
 }

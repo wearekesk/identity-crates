@@ -11,18 +11,49 @@ Dart binding and the NFC plumbing.
 ```dart
 final reader = PassportReader(cscaAnchors: anchors);
 
-final identity = await reader.read(
+final result = await reader.read(
   DBAKey('123456789', DateTime(1988, 3, 14), DateTime(2030, 1, 1)),
 );
 
-if (identity.authenticity.isPresentAndTrustworthy) {
-  print(identity.displayName);
+if (result.identity.authenticity.isPresentAndTrustworthy) {
+  print(result.identity.displayName);
 }
 ```
 
 `flutter_nfc_kit` polls for the tag; the protocol runs in Rust. See
 [How the NFC bridge works](#how-the-nfc-bridge-works) if you want to know why that
 combination needs any thought at all.
+
+### When your server is the authority
+
+`read` returns a `PassportRead`: the verdict as `identity`, and — only if you ask for it
+— the chip's elementary files as `dataGroups`.
+
+```dart
+final reader = PassportReader(cscaAnchors: anchors, retainDataGroups: true);
+final result = await reader.read(key);
+
+final groups = result.dataGroups!;   // non-null exactly when retainDataGroups is set
+await api.verifyPassport(sod: groups.sod, dg1: groups.dg1, dg2: groups.dg2);
+```
+
+Plenty of deployments will not accept a client's verdict however good the local check is
+— a phone grading its own document is worth less than a server proving it. These are the
+bytes such a server needs to check the signature chain and the hashes itself, and they
+go straight into `IdentityMobile.verifyPassportFiles` at the far end, so it runs exactly
+the check this device ran. Without this you would have to read the chip a second time
+with a separate Dart eMRTD stack to obtain bytes the plugin already had.
+
+`sod` and `dg1` are always present; `dg2` and `dg15` are null when they were not read.
+
+**Off by default**, because DG1 is the MRZ and DG2 is a facial image, and keeping either
+in your process is a decision to make rather than one to inherit. They are ordinary
+`Uint8List`s copied out of the native result before it was freed — you own them, the
+garbage collector reclaims them, and there is nothing to release by hand.
+
+The cost is on the way out of Rust: the bytes cross as hex, so a retained DG2 roughly
+doubles into a few hundred kilobytes of JSON. Leave it off when nothing is going to
+consume them.
 
 ## Verifying an mDL
 
@@ -68,7 +99,8 @@ different transcripts, and the spec means the former.
 
 ## Already have the passport files?
 
-If your app reads the chip itself, skip the reader:
+If your app reads the chip itself — or you are the server receiving `dataGroups` from
+one that did — skip the reader:
 
 ```dart
 final identity = IdentityMobile.verifyPassportFiles(
@@ -113,7 +145,7 @@ package does not do it for you.
 
 ```dart
 try {
-  final identity = await reader.read(key);
+  final result = await reader.read(key);
 } on IdentityException catch (e) {
   switch (e.kind) {
     case IdentityErrorKind.nfc:

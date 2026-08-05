@@ -95,6 +95,7 @@ typedef ReadPassportAsyncNative = Pointer<Utf8> Function(
   Size anchorCount,
   Bool readPortrait,
   Bool activeAuthentication,
+  Bool retainDataGroups,
   Pointer<NativeFunction<PostApduNative>> post,
   Pointer<Void> context,
 );
@@ -106,6 +107,7 @@ typedef ReadPassportAsync = Pointer<Utf8> Function(
   int anchorCount,
   bool readPortrait,
   bool activeAuthentication,
+  bool retainDataGroups,
   Pointer<NativeFunction<PostApduNative>> post,
   Pointer<Void> context,
 );

@@ -72,7 +72,9 @@ pub fn read_passport(
     let channel = PlatformNfc { exchange: platform_exchange() };
 
     passport::read_passport(Box::new(channel), &key, &csca_anchors, &PassportOptions::default())
-        .map(ScanResult::from)
+        // `PassportRead` also carries the elementary files, when
+        // `PassportOptions::retain_files` asked for them. This one did not.
+        .map(|read| ScanResult::from(read.identity))
         .map_err(ScanError::from)
 }
 ```
