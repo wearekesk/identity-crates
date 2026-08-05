@@ -205,6 +205,9 @@ class IdentityBindings {
   /// Keep in step with `IDENTITY_MOBILE_ABI_VERSION` in `ffi.rs`; the two are bumped in
   /// the same commit. Old entry points are not kept alive, so this number is what makes
   /// breaking them safe.
+  ///
+  /// A Rust test parses this line out of this file and fails if the two have drifted, so
+  /// the declaration has to stay recognisable: `expectedAbiVersion = <n>;`.
   static const int expectedAbiVersion = 2;
 
   final VerifyMdl verifyMdl;

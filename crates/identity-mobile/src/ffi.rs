@@ -37,7 +37,9 @@ use crate::IdentityError;
 ///
 /// So the host checks this first and refuses a library it was not built against. Bump it
 /// in the same commit as any signature change, and change
-/// `IdentityBindings.expectedAbiVersion` in `bindings.dart` to match.
+/// `IdentityBindings.expectedAbiVersion` in `bindings.dart` to match — a test reads that
+/// declaration out of the Dart source and fails if the two have drifted, so this is a
+/// checked pairing rather than a remembered one.
 ///
 /// - **1** — the original surface.
 /// - **2** — `retain_data_groups` added to both passport read entry points.
@@ -813,19 +815,39 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        identity_mobile_abi_version, Json, PassportFiles, PassportRead, VerifiedIdentity,
-        IDENTITY_MOBILE_ABI_VERSION,
-    };
+    use super::{Json, PassportFiles, PassportRead, VerifiedIdentity, IDENTITY_MOBILE_ABI_VERSION};
 
-    /// Pinned so that changing the ABI is a deliberate edit rather than a side effect,
-    /// and so the number has one obvious partner to change with it:
-    /// `IdentityBindings.expectedAbiVersion` in `bindings.dart`. Old entry points are not
-    /// kept alive, which is what makes the pairing load-bearing.
+    /// The ABI version is one number kept in two files, and the two are useless apart:
+    /// old entry points are not kept alive, so a bump here that `bindings.dart` does not
+    /// follow produces a host that refuses to load — or, if it were missed in the other
+    /// direction, one that calls a signature which has moved.
+    ///
+    /// So it is read out of the Dart source rather than restated here. A literal in this
+    /// test would pass just as happily when only Rust and the literal were bumped, which
+    /// is the mistake most likely to actually happen — the two files are edited hours
+    /// apart, by whoever is deep in one side of the boundary.
+    ///
+    /// `include_str!` resolves at compile time, so moving or renaming `bindings.dart`
+    /// fails the build here rather than quietly leaving this unchecked.
     #[test]
-    fn the_abi_version_is_what_the_dart_side_expects() {
-        assert_eq!(IDENTITY_MOBILE_ABI_VERSION, 2);
-        assert_eq!(identity_mobile_abi_version(), IDENTITY_MOBILE_ABI_VERSION);
+    fn the_dart_binding_expects_the_abi_this_library_exports() {
+        const BINDINGS: &str = include_str!("../flutter/identity_mobile/lib/src/bindings.dart");
+        const DECLARATION: &str = "static const int expectedAbiVersion = ";
+
+        let declared = BINDINGS
+            .split_once(DECLARATION)
+            .and_then(|(_, rest)| rest.split_once(';'))
+            .map(|(value, _)| value.trim())
+            .unwrap_or_else(|| {
+                panic!("`{DECLARATION}<n>;` is not in bindings.dart — was it renamed?")
+            });
+
+        assert_eq!(
+            declared.parse::<u32>().ok(),
+            Some(IDENTITY_MOBILE_ABI_VERSION),
+            "bindings.dart is built against ABI {declared}, this library exports \
+             {IDENTITY_MOBILE_ABI_VERSION} — they are bumped together or not at all"
+        );
     }
 
     fn read(files: Option<PassportFiles>) -> String {

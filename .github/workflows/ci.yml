@@ -135,10 +135,14 @@ jobs:
           cache: true
       - name: Resolve dependencies
         run: flutter pub get
-      # Errors and warnings are fatal by default; infos are not. Left at the default
-      # rather than `--fatal-infos`, because this job has never run — tightening the bar
-      # in the same commit that introduces it would mean guessing at what it will say.
-      # Worth revisiting once it has a baseline.
+      # `flutter analyze` treats infos as fatal as well as warnings — both flags default
+      # to true, which is where it differs from `dart analyze`. So this is the strict bar,
+      # and it is the bar the package already meets: the first run of this job reported
+      # "No issues found!" with nothing suppressed.
+      #
+      # Left that way deliberately. `--no-fatal-infos` would loosen a bar the code clears
+      # today, and most of what `flutter_lints` has to say arrives at info level — which
+      # is exactly the material that accumulates when nothing fails on it.
       - name: Analyze
         run: flutter analyze
       - name: Test
