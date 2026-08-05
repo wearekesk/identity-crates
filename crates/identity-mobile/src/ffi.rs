@@ -815,7 +815,10 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Json, PassportFiles, PassportRead, VerifiedIdentity, IDENTITY_MOBILE_ABI_VERSION};
+    use super::{
+        identity_mobile_abi_version, Json, PassportFiles, PassportRead, VerifiedIdentity,
+        IDENTITY_MOBILE_ABI_VERSION,
+    };
 
     /// The ABI version is one number kept in two files, and the two are useless apart:
     /// old entry points are not kept alive, so a bump here that `bindings.dart` does not
@@ -829,6 +832,14 @@ mod tests {
     ///
     /// `include_str!` resolves at compile time, so moving or renaming `bindings.dart`
     /// fails the build here rather than quietly leaving this unchecked.
+    ///
+    /// The handshake is a chain of two links, and both are checked. Dart never reads the
+    /// constant — it calls [`identity_mobile_abi_version`] and compares what comes back,
+    /// so the exported function is the thing that has to be right. Comparing the Dart
+    /// declaration against the *export* rather than against the constant covers the whole
+    /// chain in one assertion; the constant is then checked against the export separately,
+    /// because it is the number the docs and the version list refer to, and a divergence
+    /// there is its own bug worth naming.
     #[test]
     fn the_dart_binding_expects_the_abi_this_library_exports() {
         const BINDINGS: &str = include_str!("../flutter/identity_mobile/lib/src/bindings.dart");
@@ -842,11 +853,19 @@ mod tests {
                 panic!("`{DECLARATION}<n>;` is not in bindings.dart — was it renamed?")
             });
 
+        let exported = identity_mobile_abi_version();
+
+        assert_eq!(
+            exported, IDENTITY_MOBILE_ABI_VERSION,
+            "the exported symbol reports ABI {exported} while this library is \
+             {IDENTITY_MOBILE_ABI_VERSION} — the export is what a host is told"
+        );
+
         assert_eq!(
             declared.parse::<u32>().ok(),
-            Some(IDENTITY_MOBILE_ABI_VERSION),
+            Some(exported),
             "bindings.dart is built against ABI {declared}, this library exports \
-             {IDENTITY_MOBILE_ABI_VERSION} — they are bumped together or not at all"
+             {exported} — they are bumped together or not at all"
         );
     }
 
