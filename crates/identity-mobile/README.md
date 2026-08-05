@@ -13,7 +13,8 @@ use identity_mobile::{mdl, passport, VerifiedIdentity};
 let identity: VerifiedIdentity = mdl::verify_mdl(device_response, &[iaca_der], None)?;
 
 // From a passport chip:
-let identity: VerifiedIdentity = passport::read_passport(channel, &key, &[csca_der], &opts)?;
+let identity: VerifiedIdentity =
+    passport::read_passport(channel, &key, &[csca_der], &opts)?.identity;
 
 if identity.authenticity.is_trustworthy() {
     println!("{}", identity.display_name().unwrap_or_default());
@@ -62,6 +63,48 @@ work.
 Passive authentication vouches for the data groups it was given and no others. If you
 skip DG2 to make the read faster, the result says so: `verified_data_groups` lists what
 was checked, `signed_data_groups` what the chip signs, and a warning names the gap.
+
+### When the server is the authority
+
+`read_passport` returns a `PassportRead`: the verdict as `identity`, and — only if you
+set `PassportOptions::retain_files` — the elementary files as `files`.
+
+```rust
+let opts = PassportOptions { retain_files: true, ..Default::default() };
+let read = passport::read_passport(channel, &key, &[csca_der], &opts)?;
+
+if let Some(files) = read.files {
+    // Every group that was read, DG15 included: passive authentication vouches for
+    // what it is given, so anything held back here is a group the server cannot cover.
+    upload(&files.sod, &files.dg1, files.dg2.as_deref(), files.dg15.as_deref())?;
+}
+```
+
+That is for the common arrangement where the device reads the chip but a server does the
+authoritative verification. A phone grading its own document is worth less than a server
+proving it, so plenty of deployments will not accept the client's verdict however good
+the local check is. `PassportFiles` is exactly what `verify_passport` takes, so the far
+end repeats the passive-authentication and chain-trust half of what this end did —
+without a second full APDU exchange for bytes the read already had in hand.
+
+The one thing it cannot repeat is active authentication. That is a live challenge to the
+chip, and a chip that has gone back into someone's pocket cannot answer it — so the
+server's result reports `holder_bound: None` no matter what the device saw. Stored bytes
+prove the data is what the issuer signed; they cannot prove the document is not a copy.
+If holder binding matters to your decision, it has to be carried from the read that
+established it, and trusted on the same terms as any other client claim.
+
+Off by default, and deliberately: DG1 is the MRZ and DG2 is a facial image, and keeping
+the raw files alive is a decision to make rather than one to inherit. With it off those
+bytes do not outlive the call. `PassportFiles` also prints its sizes rather than its
+contents, so a stray `{:?}` is not a way to get a facial image into a log aggregator.
+
+It is not a privacy switch for the read as a whole: `read.identity` carries what was
+parsed out of the files either way, including the decoded photograph in `portrait`
+whenever DG2 was read. `read_portrait: false` is the flag for that.
+
+The bytes are plain `Vec<u8>`, owned outright — nothing to free, and yours to drop
+whenever you like.
 
 ### NFC comes from the platform
 

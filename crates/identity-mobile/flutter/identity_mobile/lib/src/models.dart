@@ -200,7 +200,7 @@ class VerifiedIdentity {
       documentNumber: json['documentNumber'] as String?,
       nationality: json['nationality'] as String?,
       sex: json['sex'] as String?,
-      portrait: _decodeHex(json['portrait'] as String?),
+      portrait: _decodeHex(json['portrait'] as String?, 'portrait'),
       issuingAuthority: source?['issuingAuthority'] as String?,
       sessionProfile: source?['sessionProfile'] as String?,
       ageAttestations: {
@@ -220,60 +220,171 @@ class VerifiedIdentity {
   }
 
   /// Parse what the native layer returned, raising the typed error if it failed.
-  static VerifiedIdentity parseResult(String payload) {
-    final json = jsonDecode(payload) as Map<String, dynamic>;
-
-    final error = json['error'] as Map<String, dynamic>?;
-    if (error != null) {
-      throw IdentityException(
-        IdentityErrorKind.parse(error['kind'] as String?),
-        error['message'] as String? ?? 'verification failed',
-      );
-    }
-
-    final identity = json['identity'] as Map<String, dynamic>?;
-    if (identity == null) {
-      throw const IdentityException(
-        IdentityErrorKind.unknown,
-        'the native library returned neither an identity nor an error',
-      );
-    }
-
-    return VerifiedIdentity.fromJson(identity);
-  }
+  static VerifiedIdentity parseResult(String payload) =>
+      VerifiedIdentity.fromJson(_envelope(payload)['identity'] as Map<String, dynamic>);
 
   static List<int> _intList(Object? value) =>
       (value as List<dynamic>? ?? const []).map((v) => v as int).toList(growable: false);
+}
 
-  /// The portrait crosses the boundary as hex, and has to come back as exactly the
-  /// bytes the issuer signed.
-  ///
-  /// An odd length used to lose the trailing nibble to integer division, and a
-  /// non-hex character threw from inside a getter. Neither is a shape the native side
-  /// can produce, so both mean the payload is not what this code thinks it is —
-  /// surfaced as a typed error rather than as quietly different bytes, which for a
-  /// photograph someone is compared against is not a small difference.
-  static Uint8List? _decodeHex(String? value) {
-    if (value == null) return null;
+/// The elementary files a read produced, when `PassportReader.retainDataGroups` asked
+/// for them.
+///
+/// This is the input side of `IdentityMobile.verifyPassportFiles`, deliberately: the
+/// case these exist for is a device that reads the chip and a server that does the
+/// authoritative verification, and the server should be able to run exactly the check
+/// this device ran. Send these bytes rather than the verdict — a phone grading its own
+/// document is worth less than a server proving it.
+///
+/// **Lifetime.** These are ordinary Dart [Uint8List]s, copied out of the native result
+/// before it was freed. You own them, the garbage collector reclaims them when you drop
+/// the last reference, and nothing native is still pointing at them. There is nothing to
+/// release by hand.
+///
+/// They are also the holder's MRZ and photograph. Retention is opt-in for that reason;
+/// what happens to them after this point is yours to decide.
+class PassportDataGroups {
+  const PassportDataGroups({
+    required this.sod,
+    required this.dg1,
+    this.dg2,
+    this.dg15,
+  });
 
-    if (value.length.isOdd) {
-      throw IdentityException(
+  /// EF.SOD — the issuer's signature over the data group hashes. Never absent: a read
+  /// that could not obtain it fails rather than returning.
+  final Uint8List sod;
+
+  /// EF.DG1 — the MRZ, and therefore the identity. Never absent, for the same reason.
+  final Uint8List dg1;
+
+  /// EF.DG2 — the photograph. `null` when `readPortrait` was false or the chip had none.
+  final Uint8List? dg2;
+
+  /// EF.DG15 — the active-authentication public key. `null` when the document does not
+  /// carry one, or the read did not ask for it.
+  final Uint8List? dg15;
+
+  factory PassportDataGroups.fromJson(Map<String, dynamic> json) {
+    final sod = _decodeHex(json['sod'] as String?, 'EF.SOD');
+    final dg1 = _decodeHex(json['dg1'] as String?, 'EF.DG1');
+
+    // A read cannot succeed without these two, so their absence means the payload is not
+    // what this code thinks it is — which is a broken contract, not a partial read.
+    if (sod == null || dg1 == null) {
+      throw const IdentityException(
         IdentityErrorKind.unknown,
-        'the portrait hex had an odd length (${value.length})',
+        'the native library retained data groups without EF.SOD or EF.DG1',
       );
     }
 
-    final bytes = Uint8List(value.length ~/ 2);
-    for (var i = 0; i < bytes.length; i++) {
-      final byte = int.tryParse(value.substring(i * 2, i * 2 + 2), radix: 16);
-      if (byte == null) {
-        throw IdentityException(
-          IdentityErrorKind.unknown,
-          'the portrait hex was not hexadecimal at byte $i',
-        );
-      }
-      bytes[i] = byte;
-    }
-    return bytes;
+    return PassportDataGroups(
+      sod: sod,
+      dg1: dg1,
+      dg2: _decodeHex(json['dg2'] as String?, 'EF.DG2'),
+      dg15: _decodeHex(json['dg15'] as String?, 'EF.DG15'),
+    );
   }
+}
+
+/// What a read produced: the verdict, and — only if asked for — the bytes behind it.
+class PassportRead {
+  const PassportRead({required this.identity, this.dataGroups});
+
+  /// The verified identity. This is what most callers want, and all they need.
+  final VerifiedIdentity identity;
+
+  /// The elementary files, when `PassportReader.retainDataGroups` was set. `null`
+  /// otherwise — nothing was kept, as opposed to nothing being there.
+  final PassportDataGroups? dataGroups;
+
+  /// Parse what the native layer returned, raising the typed error if it failed.
+  static PassportRead parseResult(String payload) {
+    final json = _envelope(payload);
+    final groups = json['dataGroups'] as Map<String, dynamic>?;
+
+    return PassportRead(
+      identity: VerifiedIdentity.fromJson(json['identity'] as Map<String, dynamic>),
+      dataGroups: groups == null ? null : PassportDataGroups.fromJson(groups),
+    );
+  }
+}
+
+/// Decode a native result, raising the typed error if it carried one.
+///
+/// Errors arrive as `{"error": {...}}` rather than a null pointer, so a refusal to
+/// verify never looks like a crash — and is never mistaken for a result.
+Map<String, dynamic> _envelope(String payload) {
+  final json = jsonDecode(payload) as Map<String, dynamic>;
+
+  final error = json['error'] as Map<String, dynamic>?;
+  if (error != null) {
+    throw IdentityException(
+      IdentityErrorKind.parse(error['kind'] as String?),
+      error['message'] as String? ?? 'verification failed',
+    );
+  }
+
+  if (json['identity'] is! Map<String, dynamic>) {
+    throw const IdentityException(
+      IdentityErrorKind.unknown,
+      'the native library returned neither an identity nor an error',
+    );
+  }
+
+  return json;
+}
+
+/// Bytes cross the boundary as hex, and have to come back as exactly what the issuer
+/// signed.
+///
+/// An odd length used to lose the trailing nibble to integer division, and a non-hex
+/// character threw from inside a getter. Neither is a shape the native side can produce,
+/// so both mean the payload is not what this code thinks it is — surfaced as a typed
+/// error rather than as quietly different bytes, which for a photograph someone is
+/// compared against, or a security object about to be re-verified, is not a small
+/// difference.
+///
+/// The digits are decoded by hand rather than through `int.parse`, which accepts a
+/// leading sign: `'+1'` parsed as `0x01`, and `'-1'` as `-1`, which then *wrapped to
+/// `0xFF`* on its way into a [Uint8List]. Both are silently different bytes from the ones
+/// that arrived — the one outcome this function exists to prevent. Two nibbles, each
+/// either a hex digit or an error, has nothing to get wrong.
+///
+/// Doing it per code unit also avoids allocating a two-character `String` for every byte,
+/// which for a retained DG2 is tens of thousands of them.
+Uint8List? _decodeHex(String? value, String what) {
+  if (value == null) return null;
+
+  if (value.length.isOdd) {
+    throw IdentityException(
+      IdentityErrorKind.unknown,
+      'the $what hex had an odd length (${value.length})',
+    );
+  }
+
+  final bytes = Uint8List(value.length ~/ 2);
+  for (var i = 0; i < bytes.length; i++) {
+    final high = _nibble(value.codeUnitAt(i * 2));
+    final low = _nibble(value.codeUnitAt(i * 2 + 1));
+
+    if (high == null || low == null) {
+      throw IdentityException(
+        IdentityErrorKind.unknown,
+        'the $what hex was not hexadecimal at byte $i',
+      );
+    }
+
+    bytes[i] = (high << 4) | low;
+  }
+  return bytes;
+}
+
+/// One hex digit, or `null` for anything else — including the `+` and `-` that
+/// `int.parse` would have accepted.
+int? _nibble(int codeUnit) {
+  if (codeUnit >= 0x30 && codeUnit <= 0x39) return codeUnit - 0x30; // 0-9
+  if (codeUnit >= 0x61 && codeUnit <= 0x66) return codeUnit - 0x61 + 10; // a-f
+  if (codeUnit >= 0x41 && codeUnit <= 0x46) return codeUnit - 0x41 + 10; // A-F
+  return null;
 }

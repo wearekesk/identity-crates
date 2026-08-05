@@ -41,9 +41,11 @@ class DBAKey {
 ///
 /// ```dart
 /// final reader = PassportReader(cscaAnchors: anchors);
-/// final identity = await reader.read(
+/// final result = await reader.read(
 ///   DBAKey('123456789', DateTime(1988, 3, 14), DateTime(2030, 1, 1)),
 /// );
+///
+/// print(result.identity.displayName);
 /// ```
 ///
 /// The whole read happens inside one NFC session. `flutter_nfc_kit` polls for the tag,
@@ -54,6 +56,7 @@ class PassportReader {
     this.cscaAnchors = const [],
     this.readPortrait = true,
     this.activeAuthentication = true,
+    this.retainDataGroups = false,
     this.iosAlertMessage = 'Hold your phone near the passport',
   });
 
@@ -72,12 +75,33 @@ class PassportReader {
   /// documents carrying DG15.
   final bool activeAuthentication;
 
+  /// Keep the elementary files the read produced, in [PassportRead.dataGroups].
+  ///
+  /// Off by default. DG1 is the MRZ and DG2 is a facial image, and holding the raw files
+  /// is a decision to make rather than one to inherit; with this false those bytes do not
+  /// outlive the native call.
+  ///
+  /// It is not a privacy switch for the read as a whole: [PassportRead.identity] always
+  /// carries what was parsed out of the files, [VerifiedIdentity.portrait] included
+  /// whenever DG2 was read. To skip the photograph, clear [readPortrait] instead.
+  ///
+  /// Turn it on when a server, not this phone, is the authority — it can then check the
+  /// signature chain and the hashes itself instead of believing a client's verdict. The
+  /// files come back in the shape `IdentityMobile.verifyPassportFiles` takes, so the far
+  /// end repeats the passive-authentication and chain checks without a second read of
+  /// the chip. It cannot repeat active authentication: that is a live challenge to a chip
+  /// that has since gone away, so the server's `holderBound` is always null.
+  ///
+  /// The cost is on the wire out of Rust: the bytes cross as hex, so a retained DG2
+  /// roughly doubles into a few hundred kilobytes of JSON.
+  final bool retainDataGroups;
+
   final String iosAlertMessage;
 
   /// Poll for a passport, read it, and verify it.
   ///
   /// Throws [IdentityException]; check `kind` before deciding whether to retry.
-  Future<VerifiedIdentity> read(DBAKey key) async {
+  Future<PassportRead> read(DBAKey key) async {
     await FlutterNfcKit.poll(
       iosAlertMessage: iosAlertMessage,
       readIso14443A: true,
@@ -95,7 +119,7 @@ class PassportReader {
     }
   }
 
-  Future<VerifiedIdentity> _readInSession(DBAKey key) async {
+  Future<PassportRead> _readInSession(DBAKey key) async {
     final bindings = IdentityBindings.instance;
 
     // Exchanges arrive here from the worker isolate. `NativeCallable.listener` is what
@@ -127,10 +151,11 @@ class PassportReader {
             anchors: cscaAnchors,
             readPortrait: readPortrait,
             activeAuthentication: activeAuthentication,
+            retainDataGroups: retainDataGroups,
             post: callable.nativeFunction.address,
           ));
 
-      return VerifiedIdentity.parseResult(payload);
+      return PassportRead.parseResult(payload);
     } finally {
       await subscription.cancel();
       exchanges.close();
@@ -169,6 +194,7 @@ class PassportReader {
     required List<Uint8List> anchors,
     required bool readPortrait,
     required bool activeAuthentication,
+    required bool retainDataGroups,
     required int post,
   }) {
     final bindings = IdentityBindings.instance;
@@ -187,6 +213,7 @@ class PassportReader {
         anchors.length,
         readPortrait,
         activeAuthentication,
+        retainDataGroups,
         Pointer<NativeFunction<PostApduNative>>.fromAddress(post),
         nullptr,
       );

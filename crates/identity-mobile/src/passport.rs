@@ -11,6 +11,7 @@
 //! security-relevant code is testable without a chip.
 
 use std::cell::Cell;
+use std::fmt;
 use std::rc::Rc;
 
 use chrono::NaiveDate;
@@ -123,6 +124,23 @@ pub struct PassportOptions {
     /// Costs an extra round trip and only works on documents carrying DG15. Worth it
     /// for an in-person check; pointless if you are verifying files read elsewhere.
     pub active_authentication: bool,
+    /// Keep the elementary files the read produced, in [`PassportRead::files`].
+    ///
+    /// Off by default, and deliberately so: DG1 is the MRZ and DG2 is a facial image,
+    /// and holding the raw files is a decision a caller should make rather than inherit.
+    /// With this `false` those bytes live no longer than the call.
+    ///
+    /// It is not, however, a privacy switch for the read as a whole. The identity always
+    /// carries what was parsed out of the files, including the decoded photograph in
+    /// [`VerifiedIdentity::portrait`] whenever DG2 was read — to skip that, clear
+    /// [`read_portrait`](Self::read_portrait) instead. What this flag governs is whether
+    /// the signed bytes themselves survive, for someone else to verify.
+    ///
+    /// Turn it on when something other than this device is the authority — a server
+    /// that wants to check the signature chain and the hashes itself rather than
+    /// believe a client's verdict. The files come back in the shape
+    /// [`verify_passport`] takes, so the far end runs exactly the check this one did.
+    pub retain_files: bool,
 }
 
 impl Default for PassportOptions {
@@ -131,14 +149,21 @@ impl Default for PassportOptions {
             session: Session::Auto,
             read_portrait: true,
             active_authentication: true,
+            retain_files: false,
         }
     }
 }
 
 /// The files read off a chip.
 ///
-/// Hand these to [`verify_passport`] if your NFC stack already read them.
-#[derive(Debug, Clone, Default)]
+/// Hand these to [`verify_passport`] if your NFC stack already read them, or ask
+/// [`read_passport`] for them with [`PassportOptions::retain_files`] when a server
+/// rather than this device is the authority.
+///
+/// The bytes are owned outright — plain `Vec<u8>`, borrowed from nothing — so they live
+/// exactly as long as the value does and may be moved, sent between threads or dropped
+/// whenever the caller likes.
+#[derive(Clone, Default)]
 pub struct PassportFiles {
     /// EF.SOD — the issuer's signature over the data group hashes. Without it nothing
     /// can be verified.
@@ -155,6 +180,53 @@ pub struct PassportFiles {
     pub dg15: Option<Vec<u8>>,
 }
 
+/// Lengths rather than contents.
+///
+/// A derived `Debug` would put the whole MRZ and the holder's photograph into any log
+/// line that formatted one of these — which is the same data the reader declines to
+/// retain by default, arriving somewhere nobody chose to put it. What is worth seeing
+/// in a diagnostic is which files were read and how big they were.
+impl fmt::Debug for PassportFiles {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        struct Size(usize);
+
+        impl fmt::Debug for Size {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "<{} bytes>", self.0)
+            }
+        }
+
+        let size = |bytes: &Option<Vec<u8>>| bytes.as_ref().map(|b| Size(b.len()));
+
+        f.debug_struct("PassportFiles")
+            .field("sod", &Size(self.sod.len()))
+            .field("dg1", &Size(self.dg1.len()))
+            .field("dg2", &size(&self.dg2))
+            .field("dg15", &size(&self.dg15))
+            .finish()
+    }
+}
+
+/// What a read produced.
+///
+/// [`identity`](Self::identity) is the verdict, and is all most callers want. The files
+/// are there only when [`PassportOptions::retain_files`] asked for them, for the
+/// architecture where the phone reads the chip and a server does the authoritative
+/// verification: that server wants the EF bytes so it can check the signature chain and
+/// the hashes itself, rather than believe a client that graded its own document.
+///
+/// Reading twice to get them would mean a second full APDU exchange for bytes this
+/// crate already had in hand.
+#[derive(Debug, Clone)]
+pub struct PassportRead {
+    /// The verified identity, exactly as before.
+    pub identity: VerifiedIdentity,
+    /// The elementary files the read produced, or `None` when they were not asked for.
+    ///
+    /// Owned by you the moment this returns; see [`PassportFiles`].
+    pub files: Option<PassportFiles>,
+}
+
 // Note what is *not* here: a field saying active authentication succeeded.
 //
 // It used to be one, and that was wrong. Holder binding is a property this crate
@@ -169,12 +241,16 @@ pub struct PassportFiles {
 /// `anchors` are DER-encoded CSCA certificates from a masterlist. With none supplied
 /// the read still happens and the data is still checked against EF.SOD, but
 /// `issuer_trusted` comes back `false` — genuine-looking is not the same as genuine.
+///
+/// The files read are returned alongside the verdict when
+/// [`PassportOptions::retain_files`] is set, and dropped at the end of this call when it
+/// is not.
 pub fn read_passport(
     channel: Box<dyn ApduChannel>,
     key: &MrzKey,
     anchors: &[Vec<u8>],
     options: &PassportOptions,
-) -> Result<VerifiedIdentity, IdentityError> {
+) -> Result<PassportRead, IdentityError> {
     let transport_failed = Rc::new(Cell::new(false));
     let mut passport = Passport::new(Channel {
         inner: channel,
@@ -385,7 +461,20 @@ pub fn read_passport(
 
     // Only now, with the data groups verified against EF.SOD, is an active
     // authentication result worth anything.
-    verify_files(&files, anchors, active_authentication)
+    let identity = verify_files(&files, anchors, active_authentication)?;
+
+    Ok(PassportRead {
+        identity,
+        // `files` goes out of scope here when it was not asked for: no cache, no second
+        // owner, so the raw elementary files outlive this call only when a caller said
+        // they should.
+        //
+        // That is a claim about the *files*, and not about the read as a whole. The
+        // identity still carries what was parsed out of them — the MRZ fields, and the
+        // decoded JPEG in `portrait` whenever DG2 was read. Turning this flag off is not
+        // a way to keep biometrics out of the result; `read_portrait` is.
+        files: options.retain_files.then_some(files),
+    })
 }
 
 /// Verify files already read off a chip, and map them to an identity.
@@ -580,7 +669,32 @@ fn holder_binding(active_authentication: Option<bool>, dg15_authenticated: bool)
 
 #[cfg(test)]
 mod tests {
-    use super::holder_binding;
+    use super::{holder_binding, PassportFiles, PassportOptions};
+
+    /// Retaining has to be something a caller asks for, not something they discover.
+    #[test]
+    fn files_are_not_retained_by_default() {
+        assert!(!PassportOptions::default().retain_files);
+    }
+
+    /// A `{:?}` on these must not be a way to get the MRZ and a facial image into a log
+    /// aggregator.
+    #[test]
+    fn debug_reports_sizes_rather_than_contents() {
+        let files = PassportFiles {
+            sod: vec![1, 2, 3],
+            dg1: b"P<GBRSHARMA<<PRIYA".to_vec(),
+            dg2: Some(vec![0xFF, 0xD8, 0xFF]),
+            dg15: None,
+        };
+
+        let rendered = format!("{files:?}");
+
+        assert!(rendered.contains("<18 bytes>"), "{rendered}");
+        assert!(rendered.contains("dg15: None"), "{rendered}");
+        assert!(!rendered.contains("SHARMA"), "{rendered}");
+        assert!(!rendered.contains("255"), "{rendered}");
+    }
 
     #[test]
     fn a_success_needs_an_authenticated_dg15() {

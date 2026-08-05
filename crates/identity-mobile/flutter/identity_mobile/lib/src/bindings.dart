@@ -95,6 +95,7 @@ typedef ReadPassportAsyncNative = Pointer<Utf8> Function(
   Size anchorCount,
   Bool readPortrait,
   Bool activeAuthentication,
+  Bool retainDataGroups,
   Pointer<NativeFunction<PostApduNative>> post,
   Pointer<Void> context,
 );
@@ -106,6 +107,7 @@ typedef ReadPassportAsync = Pointer<Utf8> Function(
   int anchorCount,
   bool readPortrait,
   bool activeAuthentication,
+  bool retainDataGroups,
   Pointer<NativeFunction<PostApduNative>> post,
   Pointer<Void> context,
 );
@@ -173,6 +175,9 @@ typedef VerifyPassport = Pointer<Utf8> Function(
 typedef StringFreeNative = Void Function(Pointer<Utf8> value);
 typedef StringFree = void Function(Pointer<Utf8> value);
 
+typedef AbiVersionNative = Uint32 Function();
+typedef AbiVersion = int Function();
+
 /// The Rust library, resolved once.
 class IdentityBindings {
   IdentityBindings._(DynamicLibrary library)
@@ -195,6 +200,16 @@ class IdentityBindings {
 
   static IdentityBindings? _instance;
 
+  /// The native ABI this Dart code is written against.
+  ///
+  /// Keep in step with `IDENTITY_MOBILE_ABI_VERSION` in `ffi.rs`; the two are bumped in
+  /// the same commit. Old entry points are not kept alive, so this number is what makes
+  /// breaking them safe.
+  ///
+  /// A Rust test parses this line out of this file and fails if the two have drifted, so
+  /// the declaration has to stay recognisable: `expectedAbiVersion = <n>;`.
+  static const int expectedAbiVersion = 2;
+
   final VerifyMdl verifyMdl;
   final VerifyMdlOpenId4Vp verifyMdlOpenId4Vp;
   final VerifyPassport verifyPassport;
@@ -203,7 +218,47 @@ class IdentityBindings {
   final FreeApdu freeApdu;
   final StringFree stringFree;
 
-  static IdentityBindings get instance => _instance ??= IdentityBindings._(_open());
+  static IdentityBindings get instance => _instance ??= _load();
+
+  /// Open the library, and refuse one this package was not built against.
+  ///
+  /// The check has to come before any other symbol is bound. These names resolve by
+  /// string at runtime, and the native artifact is built by a separate job and dropped
+  /// into this package by hand — so a stale `.so` beside a newer Dart package is a state
+  /// someone can reach, and every name in it would still resolve. The call would then go
+  /// through with arguments in the wrong slots: `readPassportAsync` would hand its
+  /// callback pointer to a parameter that is now a `bool`, and Rust would read a function
+  /// pointer out of whatever followed. That is undefined behaviour on a device, at the
+  /// moment someone holds a passport to it.
+  ///
+  /// A version mismatch is a build problem, and it should read as one here rather than as
+  /// a crash later.
+  static IdentityBindings _load() {
+    final library = _open();
+
+    final int version;
+    try {
+      version =
+          library.lookupFunction<AbiVersionNative, AbiVersion>('identity_mobile_abi_version')();
+    } on ArgumentError {
+      // No such symbol: the library predates the versioned ABI entirely, which is at
+      // least as stale as any mismatch this could report.
+      throw StateError(
+        'the identity_mobile native library is too old for this package: it does not '
+        'export identity_mobile_abi_version. Rebuild it from the matching revision.',
+      );
+    }
+
+    if (version != expectedAbiVersion) {
+      throw StateError(
+        'the identity_mobile native library exports ABI $version, but this package is '
+        'built against ABI $expectedAbiVersion. Rebuild the native artifact from the '
+        'matching revision — the two ship together.',
+      );
+    }
+
+    return IdentityBindings._(library);
+  }
 
   static DynamicLibrary _open() {
     // Android and iOS are the supported platforms. Desktop resolves by name so a test

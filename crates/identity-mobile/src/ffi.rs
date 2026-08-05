@@ -19,8 +19,40 @@ use std::ffi::{c_char, c_int, CStr, CString};
 
 use crate::bridge::{self, Exchange};
 use crate::identity::VerifiedIdentity;
-use crate::passport::{ApduChannel, MrzKey, PassportFiles, PassportOptions, Session};
+use crate::passport::{ApduChannel, MrzKey, PassportFiles, PassportOptions, PassportRead, Session};
 use crate::IdentityError;
+
+/// The shape of this ABI, bumped whenever an exported signature changes.
+///
+/// This library does not keep old entry points alive. At `0.0.0`, with one in-tree
+/// consumer, versioned duplicates would be weight carried for nobody — the Dart package
+/// and the native artifact are built from the same tree and belong together.
+///
+/// What that costs is a failure mode worth closing. Dart resolves these symbols by name
+/// at runtime, and the release artifacts are built by one job and placed into the plugin
+/// by hand, so pairing a new Dart package with a stale `.so` is a state a person can
+/// reach. The names would still resolve, and the call would go through with the
+/// arguments landing in the wrong slots — a function pointer read out of a `bool`, which
+/// is undefined behaviour on a device rather than an error anyone can read.
+///
+/// So the host checks this first and refuses a library it was not built against. Bump it
+/// in the same commit as any signature change, and change
+/// `IdentityBindings.expectedAbiVersion` in `bindings.dart` to match — a test reads that
+/// declaration out of the Dart source and fails if the two have drifted, so this is a
+/// checked pairing rather than a remembered one.
+///
+/// - **1** — the original surface.
+/// - **2** — `retain_data_groups` added to both passport read entry points.
+pub const IDENTITY_MOBILE_ABI_VERSION: u32 = 2;
+
+/// Which ABI this library exports; see [`IDENTITY_MOBILE_ABI_VERSION`].
+///
+/// Call it before anything else. A library too old to have this symbol at all fails the
+/// lookup, which is the same answer arriving a different way.
+#[no_mangle]
+pub extern "C" fn identity_mobile_abi_version() -> u32 {
+    IDENTITY_MOBILE_ABI_VERSION
+}
 
 /// A borrowed byte slice, as C sees it.
 #[repr(C)]
@@ -273,6 +305,10 @@ pub unsafe extern "C" fn identity_mobile_verify_passport(
 /// `context` is passed back to `transceive` untouched — use it to carry whatever
 /// handle the platform needs.
 ///
+/// Set `retain_data_groups` to have the elementary files come back in the result as
+/// `dataGroups`; see [`identity_mobile_read_passport_async`] for what that costs and
+/// who owns them.
+///
 /// # Safety
 ///
 /// The three strings must be valid NUL-terminated UTF-8, the anchors valid for the
@@ -286,6 +322,7 @@ pub unsafe extern "C" fn identity_mobile_read_passport(
     anchor_count: usize,
     read_portrait: bool,
     active_authentication: bool,
+    retain_data_groups: bool,
     transceive: TransceiveFn,
     context: *mut std::ffi::c_void,
 ) -> *mut c_char {
@@ -317,6 +354,7 @@ pub unsafe extern "C" fn identity_mobile_read_passport(
         session: Session::Auto,
         read_portrait,
         active_authentication,
+        retain_files: retain_data_groups,
     };
 
     json(crate::passport::read_passport(
@@ -347,6 +385,23 @@ pub type PostApduFn =
 /// Flutter NFC package. **Call it on a worker thread** (`Isolate.run` in Dart): it
 /// blocks for the whole read, and the thread servicing `post` must stay free.
 ///
+/// # Retaining the data groups
+///
+/// With `retain_data_groups` set, the result carries a `dataGroups` object holding
+/// EF.SOD, EF.DG1 and — when they were read — EF.DG2 and EF.DG15, hex-encoded like the
+/// portrait. That is for the architecture where this device reads the chip and a server
+/// does the authoritative verification: the server wants the bytes so it can check the
+/// signature chain and the hashes itself rather than believe a client's verdict. The
+/// same bytes go straight back into [`identity_mobile_verify_passport`].
+///
+/// It is off by default because DG1 is the MRZ and DG2 is a facial image, and hex
+/// doubles them on the way across — a DG2 read turns a small result into a few hundred
+/// kilobytes of JSON. Ask for it when you have somewhere to send it.
+///
+/// Ownership does not change: the bytes are part of the one string this function
+/// returns, so they live until that string goes to [`identity_mobile_string_free`] and
+/// not one moment longer. Copy what you intend to keep.
+///
 /// # Safety
 ///
 /// As [`identity_mobile_read_passport`], and `post` must remain callable until this
@@ -360,6 +415,7 @@ pub unsafe extern "C" fn identity_mobile_read_passport_async(
     anchor_count: usize,
     read_portrait: bool,
     active_authentication: bool,
+    retain_data_groups: bool,
     post: PostApduFn,
     context: *mut std::ffi::c_void,
 ) -> *mut c_char {
@@ -386,6 +442,7 @@ pub unsafe extern "C" fn identity_mobile_read_passport_async(
         session: Session::Auto,
         read_portrait,
         active_authentication,
+        retain_files: retain_data_groups,
     };
 
     json(crate::passport::read_passport(
@@ -607,55 +664,94 @@ impl Json {
 
 impl From<VerifiedIdentity> for Json {
     fn from(identity: VerifiedIdentity) -> Self {
-        let authenticity = &identity.authenticity;
+        Self(format!(r#"{{"identity":{}}}"#, identity_object(&identity)))
+    }
+}
 
-        let ages = identity
-            .age_attestations
-            .iter()
-            .map(|(years, answer)| format!(r#"{{"years":{years},"answer":{answer}}}"#))
-            .collect::<Vec<_>>()
-            .join(",");
-
-        let warnings = authenticity
-            .warnings
-            .iter()
-            .map(|w| quote(w))
-            .collect::<Vec<_>>()
-            .join(",");
-
+impl From<PassportRead> for Json {
+    fn from(read: PassportRead) -> Self {
         Self(format!(
-            concat!(
-                r#"{{"identity":{{"#,
-                r#""familyName":{},"givenName":{},"dateOfBirth":{},"dateOfExpiry":{},"#,
-                r#""documentNumber":{},"nationality":{},"sex":{},"portrait":{},"#,
-                r#""ageAttestations":[{}],"source":{},"#,
-                r#""authenticity":{{"dataAuthentic":{},"issuerTrusted":{},"#,
-                r#""holderBound":{},"notExpired":{},"warnings":[{}]}}}}}}"#,
-            ),
-            optional(&identity.family_name),
-            optional(&identity.given_name),
-            optional(&identity.date_of_birth),
-            optional(&identity.date_of_expiry),
-            optional(&identity.document_number),
-            optional(&identity.nationality),
-            optional(&identity.sex),
-            // Base64 would need a dependency; hex costs a little size and no thinking.
-            match &identity.portrait {
-                Some(bytes) => quote(&hex(bytes)),
+            r#"{{"identity":{},"dataGroups":{}}}"#,
+            identity_object(&read.identity),
+            match &read.files {
+                Some(files) => data_groups(files),
+                // Distinct from an empty object: nothing was retained, as opposed to
+                // nothing being there to retain.
                 None => "null".to_string(),
-            },
-            ages,
-            source(&identity),
-            authenticity.data_authentic,
-            authenticity.issuer_trusted,
-            match authenticity.holder_bound {
-                Some(value) => value.to_string(),
-                None => "null".to_string(),
-            },
-            authenticity.not_expired,
-            warnings,
+            }
         ))
     }
+}
+
+/// The elementary files, hex-encoded as the portrait already is.
+///
+/// `sod` and `dg1` are always present — a read cannot succeed without them — while the
+/// optional groups are `null` when they were not read, which is the same distinction
+/// `verifiedDataGroups` draws and the shape `identity_mobile_verify_passport` takes back.
+fn data_groups(files: &PassportFiles) -> String {
+    let optional = |bytes: &Option<Vec<u8>>| match bytes {
+        Some(bytes) => quote(&hex(bytes)),
+        None => "null".to_string(),
+    };
+
+    format!(
+        r#"{{"sod":{},"dg1":{},"dg2":{},"dg15":{}}}"#,
+        quote(&hex(&files.sod)),
+        quote(&hex(&files.dg1)),
+        optional(&files.dg2),
+        optional(&files.dg15),
+    )
+}
+
+/// The identity itself, without the envelope — shared by the two results that carry one.
+fn identity_object(identity: &VerifiedIdentity) -> String {
+    let authenticity = &identity.authenticity;
+
+    let ages = identity
+        .age_attestations
+        .iter()
+        .map(|(years, answer)| format!(r#"{{"years":{years},"answer":{answer}}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let warnings = authenticity
+        .warnings
+        .iter()
+        .map(|w| quote(w))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    format!(
+        concat!(
+            r#"{{"familyName":{},"givenName":{},"dateOfBirth":{},"dateOfExpiry":{},"#,
+            r#""documentNumber":{},"nationality":{},"sex":{},"portrait":{},"#,
+            r#""ageAttestations":[{}],"source":{},"#,
+            r#""authenticity":{{"dataAuthentic":{},"issuerTrusted":{},"#,
+            r#""holderBound":{},"notExpired":{},"warnings":[{}]}}}}"#,
+        ),
+        optional(&identity.family_name),
+        optional(&identity.given_name),
+        optional(&identity.date_of_birth),
+        optional(&identity.date_of_expiry),
+        optional(&identity.document_number),
+        optional(&identity.nationality),
+        optional(&identity.sex),
+        // Base64 would need a dependency; hex costs a little size and no thinking.
+        match &identity.portrait {
+            Some(bytes) => quote(&hex(bytes)),
+            None => "null".to_string(),
+        },
+        ages,
+        source(identity),
+        authenticity.data_authentic,
+        authenticity.issuer_trusted,
+        match authenticity.holder_bound {
+            Some(value) => value.to_string(),
+            None => "null".to_string(),
+        },
+        authenticity.not_expired,
+        warnings,
+    )
 }
 
 fn source(identity: &VerifiedIdentity) -> String {
@@ -715,4 +811,116 @@ fn quote(value: &str) -> String {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        identity_mobile_abi_version, Json, PassportFiles, PassportRead, VerifiedIdentity,
+        IDENTITY_MOBILE_ABI_VERSION,
+    };
+
+    /// The ABI version is one number kept in two files, and the two are useless apart:
+    /// old entry points are not kept alive, so a bump here that `bindings.dart` does not
+    /// follow produces a host that refuses to load — or, if it were missed in the other
+    /// direction, one that calls a signature which has moved.
+    ///
+    /// So it is read out of the Dart source rather than restated here. A literal in this
+    /// test would pass just as happily when only Rust and the literal were bumped, which
+    /// is the mistake most likely to actually happen — the two files are edited hours
+    /// apart, by whoever is deep in one side of the boundary.
+    ///
+    /// `include_str!` resolves at compile time, so moving or renaming `bindings.dart`
+    /// fails the build here rather than quietly leaving this unchecked.
+    ///
+    /// The handshake is a chain of two links, and both are checked. Dart never reads the
+    /// constant — it calls [`identity_mobile_abi_version`] and compares what comes back,
+    /// so the exported function is the thing that has to be right. Comparing the Dart
+    /// declaration against the *export* rather than against the constant covers the whole
+    /// chain in one assertion; the constant is then checked against the export separately,
+    /// because it is the number the docs and the version list refer to, and a divergence
+    /// there is its own bug worth naming.
+    #[test]
+    fn the_dart_binding_expects_the_abi_this_library_exports() {
+        const BINDINGS: &str = include_str!("../flutter/identity_mobile/lib/src/bindings.dart");
+        const DECLARATION: &str = "static const int expectedAbiVersion = ";
+
+        let declared = BINDINGS
+            .split_once(DECLARATION)
+            .and_then(|(_, rest)| rest.split_once(';'))
+            .map(|(value, _)| value.trim())
+            .unwrap_or_else(|| {
+                panic!("`{DECLARATION}<n>;` is not in bindings.dart — was it renamed?")
+            });
+
+        let exported = identity_mobile_abi_version();
+
+        assert_eq!(
+            exported, IDENTITY_MOBILE_ABI_VERSION,
+            "the exported symbol reports ABI {exported} while this library is \
+             {IDENTITY_MOBILE_ABI_VERSION} — the export is what a host is told"
+        );
+
+        assert_eq!(
+            declared.parse::<u32>().ok(),
+            Some(exported),
+            "bindings.dart is built against ABI {declared}, this library exports \
+             {exported} — they are bumped together or not at all"
+        );
+    }
+
+    fn read(files: Option<PassportFiles>) -> String {
+        Json::from(PassportRead {
+            identity: VerifiedIdentity::default(),
+            files,
+        })
+        .render()
+    }
+
+    fn files() -> PassportFiles {
+        PassportFiles {
+            sod: vec![0x30, 0x82],
+            dg1: vec![0x61, 0x5B],
+            dg2: Some(vec![0xFF, 0xD8]),
+            dg15: None,
+        }
+    }
+
+    /// Both halves of the envelope, in the shape `models.dart` parses. The identity has
+    /// to stay exactly where it was — every existing caller reads `identity` and knows
+    /// nothing about data groups.
+    #[test]
+    fn a_retained_read_carries_the_files_beside_the_identity() {
+        let rendered = read(Some(files()));
+
+        assert!(
+            rendered.starts_with(r#"{"identity":{"familyName":null"#),
+            "{rendered}"
+        );
+        assert!(
+            rendered
+                .contains(r#""dataGroups":{"sod":"3082","dg1":"615b","dg2":"ffd8","dg15":null}"#),
+            "{rendered}"
+        );
+    }
+
+    /// The default, and the one that matters for privacy: no bytes, and a `null` that
+    /// says so rather than an empty object that reads as "read but empty".
+    #[test]
+    fn a_read_without_retention_carries_no_bytes() {
+        let rendered = read(None);
+
+        assert!(rendered.contains(r#""dataGroups":null"#), "{rendered}");
+        assert!(!rendered.contains(r#""sod""#), "{rendered}");
+    }
+
+    /// The other result type shares the identity body, so a change to one cannot quietly
+    /// diverge from the other.
+    #[test]
+    fn a_plain_identity_result_is_unchanged() {
+        let rendered = Json::from(VerifiedIdentity::default()).render();
+
+        assert!(rendered.starts_with(r#"{"identity":{"#), "{rendered}");
+        assert!(!rendered.contains("dataGroups"), "{rendered}");
+    }
 }
