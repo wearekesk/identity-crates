@@ -77,14 +77,20 @@ class PassportReader {
 
   /// Keep the elementary files the read produced, in [PassportRead.dataGroups].
   ///
-  /// Off by default. DG1 is the MRZ and DG2 is a facial image, and holding either in
-  /// your process is a decision to make rather than one to inherit; with this false the
-  /// bytes do not outlive the native call.
+  /// Off by default. DG1 is the MRZ and DG2 is a facial image, and holding the raw files
+  /// is a decision to make rather than one to inherit; with this false those bytes do not
+  /// outlive the native call.
+  ///
+  /// It is not a privacy switch for the read as a whole: [PassportRead.identity] always
+  /// carries what was parsed out of the files, [VerifiedIdentity.portrait] included
+  /// whenever DG2 was read. To skip the photograph, clear [readPortrait] instead.
   ///
   /// Turn it on when a server, not this phone, is the authority — it can then check the
   /// signature chain and the hashes itself instead of believing a client's verdict. The
   /// files come back in the shape `IdentityMobile.verifyPassportFiles` takes, so the far
-  /// end runs the same check this one did, without a second read of the chip.
+  /// end repeats the passive-authentication and chain checks without a second read of
+  /// the chip. It cannot repeat active authentication: that is a live challenge to a chip
+  /// that has since gone away, so the server's `holderBound` is always null.
   ///
   /// The cost is on the wire out of Rust: the bytes cross as hex, so a retained DG2
   /// roughly doubles into a few hundred kilobytes of JSON.

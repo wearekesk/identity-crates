@@ -109,3 +109,37 @@ jobs:
       # dependency graph started compiling C.
       - name: Check
         run: cargo check -p identity-mobile --target aarch64-linux-android --verbose
+
+  # The Dart half of `identity-mobile` is one side of a contract whose other side is
+  # Rust: what the ABI emits, and what `models.dart` makes of it. Nothing here compiles
+  # against the native library — the tests cover the JSON boundary, which is exactly
+  # where a mismatch would otherwise surface for the first time on a device with a
+  # passport held against it.
+  #
+  # `flutter test` rather than `dart test`: the package depends on the Flutter SDK
+  # through `flutter_test`, so the plain Dart runner cannot resolve it.
+  flutter:
+    name: flutter (analyze & test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/identity-mobile/flutter/identity_mobile
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install Flutter (stable)
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve dependencies
+        run: flutter pub get
+      # Errors and warnings are fatal by default; infos are not. Left at the default
+      # rather than `--fatal-infos`, because this job has never run — tightening the bar
+      # in the same commit that introduces it would mean guessing at what it will say.
+      # Worth revisiting once it has a baseline.
+      - name: Analyze
+        run: flutter analyze
+      - name: Test
+        run: flutter test

@@ -22,6 +22,36 @@ use crate::identity::VerifiedIdentity;
 use crate::passport::{ApduChannel, MrzKey, PassportFiles, PassportOptions, PassportRead, Session};
 use crate::IdentityError;
 
+/// The shape of this ABI, bumped whenever an exported signature changes.
+///
+/// This library does not keep old entry points alive. At `0.0.0`, with one in-tree
+/// consumer, versioned duplicates would be weight carried for nobody — the Dart package
+/// and the native artifact are built from the same tree and belong together.
+///
+/// What that costs is a failure mode worth closing. Dart resolves these symbols by name
+/// at runtime, and the release artifacts are built by one job and placed into the plugin
+/// by hand, so pairing a new Dart package with a stale `.so` is a state a person can
+/// reach. The names would still resolve, and the call would go through with the
+/// arguments landing in the wrong slots — a function pointer read out of a `bool`, which
+/// is undefined behaviour on a device rather than an error anyone can read.
+///
+/// So the host checks this first and refuses a library it was not built against. Bump it
+/// in the same commit as any signature change, and change
+/// `IdentityBindings.expectedAbiVersion` in `bindings.dart` to match.
+///
+/// - **1** — the original surface.
+/// - **2** — `retain_data_groups` added to both passport read entry points.
+pub const IDENTITY_MOBILE_ABI_VERSION: u32 = 2;
+
+/// Which ABI this library exports; see [`IDENTITY_MOBILE_ABI_VERSION`].
+///
+/// Call it before anything else. A library too old to have this symbol at all fails the
+/// lookup, which is the same answer arriving a different way.
+#[no_mangle]
+pub extern "C" fn identity_mobile_abi_version() -> u32 {
+    IDENTITY_MOBILE_ABI_VERSION
+}
+
 /// A borrowed byte slice, as C sees it.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -783,7 +813,20 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{Json, PassportFiles, PassportRead, VerifiedIdentity};
+    use super::{
+        identity_mobile_abi_version, Json, PassportFiles, PassportRead, VerifiedIdentity,
+        IDENTITY_MOBILE_ABI_VERSION,
+    };
+
+    /// Pinned so that changing the ABI is a deliberate edit rather than a side effect,
+    /// and so the number has one obvious partner to change with it:
+    /// `IdentityBindings.expectedAbiVersion` in `bindings.dart`. Old entry points are not
+    /// kept alive, which is what makes the pairing load-bearing.
+    #[test]
+    fn the_abi_version_is_what_the_dart_side_expects() {
+        assert_eq!(IDENTITY_MOBILE_ABI_VERSION, 2);
+        assert_eq!(identity_mobile_abi_version(), IDENTITY_MOBILE_ABI_VERSION);
+    }
 
     fn read(files: Option<PassportFiles>) -> String {
         Json::from(PassportRead {

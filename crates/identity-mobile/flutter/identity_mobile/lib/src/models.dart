@@ -344,6 +344,15 @@ Map<String, dynamic> _envelope(String payload) {
 /// error rather than as quietly different bytes, which for a photograph someone is
 /// compared against, or a security object about to be re-verified, is not a small
 /// difference.
+///
+/// The digits are decoded by hand rather than through `int.parse`, which accepts a
+/// leading sign: `'+1'` parsed as `0x01`, and `'-1'` as `-1`, which then *wrapped to
+/// `0xFF`* on its way into a [Uint8List]. Both are silently different bytes from the ones
+/// that arrived — the one outcome this function exists to prevent. Two nibbles, each
+/// either a hex digit or an error, has nothing to get wrong.
+///
+/// Doing it per code unit also avoids allocating a two-character `String` for every byte,
+/// which for a retained DG2 is tens of thousands of them.
 Uint8List? _decodeHex(String? value, String what) {
   if (value == null) return null;
 
@@ -356,14 +365,26 @@ Uint8List? _decodeHex(String? value, String what) {
 
   final bytes = Uint8List(value.length ~/ 2);
   for (var i = 0; i < bytes.length; i++) {
-    final byte = int.tryParse(value.substring(i * 2, i * 2 + 2), radix: 16);
-    if (byte == null) {
+    final high = _nibble(value.codeUnitAt(i * 2));
+    final low = _nibble(value.codeUnitAt(i * 2 + 1));
+
+    if (high == null || low == null) {
       throw IdentityException(
         IdentityErrorKind.unknown,
         'the $what hex was not hexadecimal at byte $i',
       );
     }
-    bytes[i] = byte;
+
+    bytes[i] = (high << 4) | low;
   }
   return bytes;
+}
+
+/// One hex digit, or `null` for anything else — including the `+` and `-` that
+/// `int.parse` would have accepted.
+int? _nibble(int codeUnit) {
+  if (codeUnit >= 0x30 && codeUnit <= 0x39) return codeUnit - 0x30; // 0-9
+  if (codeUnit >= 0x61 && codeUnit <= 0x66) return codeUnit - 0x61 + 10; // a-f
+  if (codeUnit >= 0x41 && codeUnit <= 0x46) return codeUnit - 0x41 + 10; // A-F
+  return null;
 }

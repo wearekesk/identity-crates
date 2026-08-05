@@ -127,8 +127,14 @@ pub struct PassportOptions {
     /// Keep the elementary files the read produced, in [`PassportRead::files`].
     ///
     /// Off by default, and deliberately so: DG1 is the MRZ and DG2 is a facial image,
-    /// and holding either in memory is a decision a caller should make rather than
-    /// inherit. With this `false` the bytes live no longer than the call.
+    /// and holding the raw files is a decision a caller should make rather than inherit.
+    /// With this `false` those bytes live no longer than the call.
+    ///
+    /// It is not, however, a privacy switch for the read as a whole. The identity always
+    /// carries what was parsed out of the files, including the decoded photograph in
+    /// [`VerifiedIdentity::portrait`] whenever DG2 was read — to skip that, clear
+    /// [`read_portrait`](Self::read_portrait) instead. What this flag governs is whether
+    /// the signed bytes themselves survive, for someone else to verify.
     ///
     /// Turn it on when something other than this device is the authority — a server
     /// that wants to check the signature chain and the hashes itself rather than
@@ -459,10 +465,14 @@ pub fn read_passport(
 
     Ok(PassportRead {
         identity,
-        // `files` goes out of scope here when it was not asked for, which is the whole
-        // of the "not retained by default" promise: there is no cache and no second
-        // owner, so the MRZ and the photograph outlive this call only when a caller
-        // said they should.
+        // `files` goes out of scope here when it was not asked for: no cache, no second
+        // owner, so the raw elementary files outlive this call only when a caller said
+        // they should.
+        //
+        // That is a claim about the *files*, and not about the read as a whole. The
+        // identity still carries what was parsed out of them — the MRZ fields, and the
+        // decoded JPEG in `portrait` whenever DG2 was read. Turning this flag off is not
+        // a way to keep biometrics out of the result; `read_portrait` is.
         files: options.retain_files.then_some(files),
     })
 }

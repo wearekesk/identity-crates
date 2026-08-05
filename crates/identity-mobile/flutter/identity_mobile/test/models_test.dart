@@ -169,6 +169,28 @@ void main() {
         throwsA(isA<IdentityException>()),
       );
     });
+
+    /// `int.parse` accepts a leading sign, so these used to decode rather than throw:
+    /// `'+1'` became `0x01`, and `'-1'` became `-1`, which wraps to `0xFF` on its way
+    /// into a Uint8List. Both are silently different bytes from the ones that arrived,
+    /// which for a security object about to be re-verified is the whole problem.
+    test('a signed pair is not a hex digit', () {
+      for (final signed in ['+1', '-1', 'ff+1', 'ff-1']) {
+        expect(
+          () => VerifiedIdentity.parseResult(payloadWithPortrait(signed)),
+          throwsA(isA<IdentityException>()),
+          reason: '"$signed" must not decode',
+        );
+      }
+    });
+
+    test('both hex cases decode to the same bytes', () {
+      final upper = VerifiedIdentity.parseResult(payloadWithPortrait('FFD8AB'));
+      final lower = VerifiedIdentity.parseResult(payloadWithPortrait('ffd8ab'));
+
+      expect(upper.portrait, [0xFF, 0xD8, 0xAB]);
+      expect(lower.portrait, upper.portrait);
+    });
   });
 
   test('an mDL verified without a session reports no profile', () {
