@@ -2,7 +2,7 @@ name: identity_mobile
 description: >-
   Verify ePassport chips (ICAO 9303) and mobile driving licences (ISO/IEC 18013-5)
   from Flutter. Both documents return the same result.
-version: 0.0.1
+version: 0.0.2
 publish_to: none
 
 environment:
