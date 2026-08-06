@@ -404,7 +404,7 @@ mod tests {
         // status not satisfied). Passport should surface it as an error.
         let tx = MockTransceiver {
             script: vec![
-                // SELECT DF1 by AID: 00 A4 04 00 <Lc> <AID>.
+                // SELECT DF1 by AID: 00 A4 04 0C <Lc> <AID>.
                 (vec![0x00, 0xA4, 0x04, 0x0C], ok_response(&[])),
                 (vec![0x00, 0xB0, 0x83, 0x00], vec![0x69, 0x82]),
             ],

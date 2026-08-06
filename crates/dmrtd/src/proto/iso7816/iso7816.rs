@@ -116,9 +116,12 @@ mod tests {
     }
 
     #[test]
-    fn select_file_p2_fci_fcp_fmd_differ() {
+    fn select_file_p2_response_options_differ() {
         assert_eq!(select_file_p2::RETURN_FCI, 0x00);
         assert_eq!(select_file_p2::RETURN_FCP, 0x04);
         assert_eq!(select_file_p2::RETURN_FMD, 0x08);
+        // The nibble matters: 0x0C is "no response data", and a passport
+        // answers 6A86 to a SELECT that asks for a template instead.
+        assert_eq!(select_file_p2::NO_RESPONSE_DATA, 0x0C);
     }
 }
