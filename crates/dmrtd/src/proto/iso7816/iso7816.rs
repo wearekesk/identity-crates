@@ -78,6 +78,12 @@ pub mod select_file_p2 {
     pub const RETURN_FCP: u8 = 0x04;
     /// Return FMD template.
     pub const RETURN_FMD: u8 = 0x08;
+    /// No response data.
+    ///
+    /// What ICAO 9303 Part 10/11 specifies for selecting the MF and the eMRTD
+    /// application. Many chips answer `6A86` (incorrect parameters P1-P2) to a
+    /// SELECT that asks for a template instead.
+    pub const NO_RESPONSE_DATA: u8 = 0x0C;
 }
 
 // ---------------------------------------------------------------------------

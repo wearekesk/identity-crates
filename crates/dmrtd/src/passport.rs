@@ -382,7 +382,7 @@ mod tests {
             Vec::new()
         };
         let mut script = vec![
-            (vec![0x00, 0xA4, 0x00, 0x00], ok_response(&[])), // SELECT MF
+            (vec![0x00, 0xA4, 0x00, 0x0C], ok_response(&[])), // SELECT MF
             (vec![0x00, 0xB0, 0x9C, 0x00], ok_response(&header_chunk)),
         ];
         if !tail.is_empty() {
@@ -405,7 +405,7 @@ mod tests {
         let tx = MockTransceiver {
             script: vec![
                 // SELECT DF1 by AID: 00 A4 04 00 <Lc> <AID>.
-                (vec![0x00, 0xA4, 0x04, 0x00], ok_response(&[])),
+                (vec![0x00, 0xA4, 0x04, 0x0C], ok_response(&[])),
                 (vec![0x00, 0xB0, 0x83, 0x00], vec![0x69, 0x82]),
             ],
             sent: vec![],
@@ -431,7 +431,7 @@ mod tests {
         let first = ef_com[..8].to_vec();
         let tail = ef_com[8..].to_vec();
         let script = vec![
-            (vec![0x00, 0xA4, 0x04, 0x00], ok_response(&[])), // SELECT DF1 by AID
+            (vec![0x00, 0xA4, 0x04, 0x0C], ok_response(&[])), // SELECT DF1 by AID
             (vec![0x00, 0xB0, 0x9E, 0x00], ok_response(&first)), // READ BINARY SFI=0x1E
             (vec![0x00, 0xB0], ok_response(&tail)),           // READ BINARY tail
             (vec![0x00, 0xB0, 0x81, 0x00], vec![0x69, 0x82]), // EF.DG1 missing
