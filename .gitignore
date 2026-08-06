@@ -18,6 +18,7 @@ crates/identity-mobile/flutter/**/.build/
 crates/identity-mobile/flutter/**/.swiftpm/
 crates/identity-mobile/flutter/**/Package.resolved
 
-# Android build output from cargo-ndk, dropped in place for the plugin to package.
-crates/identity-mobile/flutter/**/jniLibs/
-crates/identity-mobile/flutter/**/*.xcframework/
+# The plugin's native artifacts are committed by the Release workflow, so that
+# the plugin can be consumed as a git dependency. Ignoring them here as well
+# would leave them ignored-but-tracked, which shows every local rebuild as a
+# spurious modification.

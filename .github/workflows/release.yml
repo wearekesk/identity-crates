@@ -227,3 +227,69 @@ jobs:
           name: identity-mobile-android-jnilibs
           path: jniLibs
           if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Commit the built natives back into the plugin.
+  #
+  # Without this the .so files and the xcframework exist only as Actions
+  # artifacts, which expire and need auth to fetch — so a consumer cannot depend
+  # on this plugin by git ref and has to copy binaries in by hand. Committing
+  # them makes `git:` in a pubspec work.
+  #
+  # The trade is deliberate: these are large and git keeps every version, so the
+  # repository grows by roughly their combined size on each release. That is
+  # affordable because this workflow is dispatch-only — releases are chosen, not
+  # triggered by every push.
+  # ---------------------------------------------------------------------------
+  commit-natives:
+    name: commit natives
+    needs: [ffi-ios, ffi-android]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions:
+      # The only job here that writes. Everything else stays read-only.
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Needed to push; the other jobs deliberately drop credentials.
+          persist-credentials: true
+
+      - name: Download XCFramework
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: identity-mobile-ios-xcframework
+          path: >-
+            crates/identity-mobile/flutter/identity_mobile/ios/identity_mobile/identity_mobile.xcframework
+
+      - name: Download jniLibs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: identity-mobile-android-jnilibs
+          path: crates/identity-mobile/flutter/identity_mobile/android/src/main/jniLibs
+
+      - name: Commit
+        run: |
+          set -euo pipefail
+          plugin=crates/identity-mobile/flutter/identity_mobile
+          git add \
+            "$plugin/ios/identity_mobile/identity_mobile.xcframework" \
+            "$plugin/android/src/main/jniLibs"
+
+          # A rebuild of unchanged sources still produces byte-identical output
+          # often enough that an empty commit is the normal case, not an error.
+          if git diff --cached --quiet; then
+            echo "Natives unchanged; nothing to commit."
+            exit 0
+          fi
+
+          version=$(grep -m1 '^version' \
+            "$plugin/pubspec.yaml" | awk '{print $2}')
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # [skip ci] because ci.yml runs on push to main, and rebuilding the
+          # workspace to verify a binary drop it cannot inspect proves nothing.
+          git commit -m "chore(identity-mobile): native artifacts for ${version} [skip ci]" \
+                     -m "Built by the Release workflow from ${GITHUB_SHA}. Committed so the plugin is usable as a git dependency."
+          git push
