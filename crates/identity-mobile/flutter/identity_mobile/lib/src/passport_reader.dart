@@ -144,16 +144,28 @@ class PassportReader {
 
     try {
       // The read blocks for its whole duration, so it runs off the main isolate.
-      // Everything it needs is a plain integer or a byte list, which is what makes it
-      // sendable in the first place.
-      final payload = await Isolate.run(() => _runRead(
-            key: key,
-            anchors: cscaAnchors,
-            readPortrait: readPortrait,
-            activeAuthentication: activeAuthentication,
-            retainDataGroups: retainDataGroups,
-            post: callable.nativeFunction.address,
-          ));
+      //
+      // Spawned from [_spawnRead] rather than with an inline closure. A closure
+      // written here would capture *this* function's context, and Dart gives a
+      // function scope a single shared context object — so it would carry
+      // `exchanges` and `callable` whether or not it named them. A
+      // `NativeCallable.listener` owns a `ReceivePort`, which is unsendable, and
+      // `Isolate.run` rejects the whole message:
+      //
+      //   Illegal argument in isolate message: object is unsendable
+      //     - _ReceivePortImpl <- Closure: () => String
+      //
+      // Hoisting the address and the flags into locals does not help: they join
+      // the same context. The closure has to be built where the port is not in
+      // scope at all.
+      final payload = await _spawnRead(
+        key: key,
+        anchors: cscaAnchors,
+        readPortrait: readPortrait,
+        activeAuthentication: activeAuthentication,
+        retainDataGroups: retainDataGroups,
+        post: callable.nativeFunction.address,
+      );
 
       return PassportRead.parseResult(payload);
     } finally {
@@ -161,6 +173,30 @@ class PassportReader {
       exchanges.close();
       callable.close();
     }
+  }
+
+  /// Builds the worker closure in a scope that holds nothing unsendable.
+  ///
+  /// Every parameter is a plain value — ints, bools, a [DBAKey] of strings and
+  /// dates, and byte lists — so the context this closure captures is exactly
+  /// those and nothing more. That is the whole reason for the indirection; see
+  /// the note at the call site.
+  static Future<String> _spawnRead({
+    required DBAKey key,
+    required List<Uint8List> anchors,
+    required bool readPortrait,
+    required bool activeAuthentication,
+    required bool retainDataGroups,
+    required int post,
+  }) {
+    return Isolate.run(() => _runRead(
+          key: key,
+          anchors: anchors,
+          readPortrait: readPortrait,
+          activeAuthentication: activeAuthentication,
+          retainDataGroups: retainDataGroups,
+          post: post,
+        ));
   }
 
   /// Do one exchange with the chip and hand the answer back to Rust.

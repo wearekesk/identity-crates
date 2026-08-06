@@ -105,7 +105,7 @@ impl<T: Transceiver> MrtdApi<T> {
             cla::NO_SM,
             ins::SELECT_FILE,
             select_file_p1::BY_ID,
-            select_file_p2::RETURN_FCI,
+            select_file_p2::NO_RESPONSE_DATA,
             Some(vec![0x3F, 0x00]),
             0,
         )?;
@@ -119,7 +119,7 @@ impl<T: Transceiver> MrtdApi<T> {
             cla::NO_SM,
             ins::SELECT_FILE,
             select_file_p1::BY_DF_NAME,
-            select_file_p2::RETURN_FCI,
+            select_file_p2::NO_RESPONSE_DATA,
             Some(AID.clone()),
             0,
         )?;
