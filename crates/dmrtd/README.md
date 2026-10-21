@@ -23,6 +23,7 @@ Android (Dart FFI), a desktop reader, or tests alike.
 | `MrtdApi` (sync ICC orchestrator) + `Transceiver` trait | ✅ |
 | `Passport` — high-level BAC/PACE + file-read API | ✅ |
 | Additional PACE curves (Brainpool, NIST P-224/384/521) | ✅ |
+| Passive authentication — RSA PKCS#1 v1.5, ECDSA on NIST P-256/384/521 & Brainpool P-256/384/512 (named or explicit curve parameters) | ✅ |
 
 Reference vectors verified include ICAO 9303 Appendix A check digits + EF.COM +
 EF.DG1 TD1 sample, Appendix D.2 `K_seed`, Appendix D.3 BAC SSC + session keys

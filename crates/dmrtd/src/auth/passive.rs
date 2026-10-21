@@ -31,6 +31,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 use super::der;
+use super::ecdsa::Curve;
 use super::rsa::RsaPublicKey;
 use super::HashAlgo;
 
@@ -44,8 +45,6 @@ const OID_MESSAGE_DIGEST: &[u64] = &[1, 2, 840, 113549, 1, 9, 4];
 const OID_RSA: &[u64] = &[1, 2, 840, 113549, 1, 1, 1];
 /// id-ecPublicKey — 1.2.840.10045.2.1
 const OID_EC_PUBLIC_KEY: &[u64] = &[1, 2, 840, 10045, 2, 1];
-/// prime256v1 / NIST P-256 named curve — 1.2.840.10045.3.1.7
-const OID_EC_P256: &[u64] = &[1, 2, 840, 10045, 3, 1, 7];
 /// id-icao-mrtd-security-ldsSecurityObject — 2.23.136.1.1.1 (EF.SOD eContentType)
 const OID_LDS_SECURITY_OBJECT: &[u64] = &[2, 23, 136, 1, 1, 1];
 /// id-RSASSA-PSS — 1.2.840.113549.1.1.10
@@ -474,7 +473,9 @@ fn parse_sig_alg(alg: &[u8]) -> Result<(SigScheme, Option<HashAlgo>), PassiveAut
         return Ok((SigScheme::Rsa, Some(sig_alg_hash(alg)?)));
     }
     if arcs.starts_with(OID_ECDSA_SIG_PREFIX) {
-        require_params_absent(params)?; // ecdsa-with-SHA*: parameters absent (RFC 5758)
+        // ecdsa-with-SHA*: RFC 5758 says parameters absent, but many issuers' EF.SOD
+        // and certificates carry a NULL. It names nothing, so it changes nothing.
+        require_params_null_or_absent(params)?;
         return Ok((SigScheme::Ecdsa, Some(sig_alg_hash(alg)?)));
     }
     Err(PassiveAuthError::UnsupportedHash)
@@ -572,15 +573,6 @@ fn algo_hash(alg: &[u8]) -> Result<HashAlgo, PassiveAuthError> {
 /// AlgorithmIdentifier parameters: absent, or a single ASN.1 NULL. Nothing else.
 fn require_params_null_or_absent(params: &[u8]) -> Result<(), PassiveAuthError> {
     if params.is_empty() || params == [0x05, 0x00] {
-        Ok(())
-    } else {
-        Err(PassiveAuthError::UnsupportedHash)
-    }
-}
-
-/// AlgorithmIdentifier parameters that must be entirely absent (ECDSA, RFC 5758).
-fn require_params_absent(params: &[u8]) -> Result<(), PassiveAuthError> {
-    if params.is_empty() {
         Ok(())
     } else {
         Err(PassiveAuthError::UnsupportedHash)
@@ -727,7 +719,8 @@ impl LdsSecurityObject {
 #[derive(Debug, Clone)]
 enum PublicKey {
     Rsa(RsaPublicKey),
-    EcP256(Vec<u8>),
+    /// A curve [`Curve`] knows, with its SEC1 point.
+    Ec(&'static Curve, Vec<u8>),
 }
 
 impl PublicKey {
@@ -739,7 +732,7 @@ impl PublicKey {
                 k.verify_pss(hash, mgf_hash, salt_len, message, sig)
             }
             (PublicKey::Rsa(k), _) => k.verify_pkcs1v15(hash, message, sig),
-            (PublicKey::EcP256(point), _) => verify_ec_p256(point, hash, message, sig),
+            (PublicKey::Ec(curve, point), _) => curve.verify(point, hash, message, sig),
         }
     }
 }
@@ -749,22 +742,8 @@ fn scheme_matches_key(key: &PublicKey, scheme: SigScheme) -> bool {
     matches!(
         (key, scheme),
         (PublicKey::Rsa(_), SigScheme::Rsa | SigScheme::RsaPss { .. })
-            | (PublicKey::EcP256(_), SigScheme::Ecdsa)
+            | (PublicKey::Ec(..), SigScheme::Ecdsa)
     )
-}
-
-fn verify_ec_p256(point: &[u8], hash: HashAlgo, message: &[u8], sig: &[u8]) -> bool {
-    use p256::ecdsa::signature::hazmat::PrehashVerifier;
-    use p256::ecdsa::{Signature, VerifyingKey};
-
-    let Ok(key) = VerifyingKey::from_sec1_bytes(point) else {
-        return false;
-    };
-    // eMRTD ECDSA signatures are DER-encoded in the certificate / SignerInfo
-    let Ok(sig) = Signature::from_der(sig) else {
-        return false;
-    };
-    key.verify_prehash(&hash.digest(message), &sig).is_ok()
 }
 
 struct Certificate<'a> {
@@ -873,17 +852,19 @@ impl<'a> Certificate<'a> {
                 .map(PublicKey::Rsa)
                 .ok_or(PassiveAuthError::UnsupportedKey)
         } else if arcs == OID_EC_PUBLIC_KEY {
-            // The namedCurve parameter must actually say P-256 — otherwise a 33/65-byte
-            // point on a different (e.g. experimental) curve would be accepted as P-256
+            // The parameters must name a curve we know — by OID, or explicitly with
+            // values equal to its own (ICAO 9303 part 12 asks for explicit ones) —
+            // otherwise a point on some other curve would be taken for one of ours
             // purely by its length.
-            let (curve_oid, _) =
-                der::take(params, der::OID).ok_or(PassiveAuthError::UnsupportedKey)?;
-            if der::oid_arcs(curve_oid).as_deref() != Some(OID_EC_P256) {
-                return Err(PassiveAuthError::UnsupportedKey);
-            }
-            // uncompressed 65 / compressed 33 SEC1 point
-            if matches!(key_bytes.len(), 33 | 65) {
-                Ok(PublicKey::EcP256(key_bytes.to_vec()))
+            let curve = Curve::from_params(params).ok_or(PassiveAuthError::UnsupportedKey)?;
+            // SEC1: uncompressed 04 ‖ x ‖ y, or compressed 02/03 ‖ x where the
+            // curve's verifier takes it — otherwise a key that can never verify
+            // would load, and its signatures read as bad rather than unsupported.
+            let field = curve.field_len();
+            let uncompressed = key_bytes.len() == 1 + 2 * field;
+            let compressed = key_bytes.len() == 1 + field && curve.takes_compressed_points();
+            if uncompressed || compressed {
+                Ok(PublicKey::Ec(curve, key_bytes.to_vec()))
             } else {
                 Err(PassiveAuthError::UnsupportedKey)
             }
@@ -1187,6 +1168,40 @@ mod tests {
             tagged(0xA0, &sha256)
         ]))
         .is_err());
+    }
+
+    /// SubjectPublicKeyInfo for an EC key on the named curve `curve_oid`.
+    fn ec_spki(curve_oid: &[u8], point: &[u8]) -> Vec<u8> {
+        let tlv = |tag: u8, body: &[u8]| {
+            let mut out = vec![tag];
+            push_len(&mut out, body.len());
+            out.extend_from_slice(body);
+            out
+        };
+        let ec_public_key = [0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
+        let alg = tlv(
+            der::SEQUENCE,
+            &[tlv(der::OID, &ec_public_key), tlv(der::OID, curve_oid)].concat(),
+        );
+        let key = tlv(der::BIT_STRING, &[&[0x00], point].concat());
+        [alg, key].concat()
+    }
+
+    #[test]
+    fn compressed_points_only_where_the_verifier_decompresses() {
+        let bp256 = [0x2b, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x07];
+        let bp512 = [0x2b, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x0d];
+        let compressed = |len: usize| [&[0x02][..], &vec![0x11; len]].concat();
+        // brainpoolP256r1 (bp256 crate): a compressed key loads
+        assert!(Certificate::parse_spki(&ec_spki(&bp256, &compressed(32))).is_ok());
+        // brainpoolP512r1 (num-bigint, uncompressed only): unsupported, not loaded
+        // to fail every signature as bad
+        assert!(matches!(
+            Certificate::parse_spki(&ec_spki(&bp512, &compressed(64))),
+            Err(PassiveAuthError::UnsupportedKey)
+        ));
+        let uncompressed = [&[0x04][..], &[0x11; 128]].concat();
+        assert!(Certificate::parse_spki(&ec_spki(&bp512, &uncompressed)).is_ok());
     }
 
     #[test]

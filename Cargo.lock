@@ -578,9 +578,9 @@ dependencies = [
 
 [[package]]
 name = "bp256"
-version = "0.14.0-rc.15"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5c715b9f158d362cc00afc7a3ea6c33da4b018293ff3227402886325c22f947"
+checksum = "46f98c2d9e8e0796b24f84b7ae14159b91ae6ae4b85f74f7655a678a56ad5e1e"
 dependencies = [
  "ecdsa 0.17.0",
  "elliptic-curve 0.14.1",
@@ -590,9 +590,9 @@ dependencies = [
 
 [[package]]
 name = "bp384"
-version = "0.14.0-rc.15"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dad8bed63122ad85f81781099e541e81985e4ff6814a6c6e6bb5ddac481f443f"
+checksum = "bc61f3a96b44a33fbb971e9917b81f4207d6dae9a6b0715845c785a48e73d9c2"
 dependencies = [
  "ecdsa 0.17.0",
  "elliptic-curve 0.14.1",
@@ -1267,6 +1267,7 @@ dependencies = [
  "cmac",
  "des",
  "digest 0.11.3",
+ "ecdsa 0.17.0",
  "elliptic-curve 0.14.1",
  "hex",
  "log",

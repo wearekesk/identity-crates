@@ -20,6 +20,7 @@ pub mod active;
 pub mod passive;
 
 mod der;
+mod ecdsa;
 mod rsa;
 
 /// Hash algorithms an eMRTD may use.
