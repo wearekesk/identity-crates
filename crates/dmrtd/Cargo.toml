@@ -54,3 +54,4 @@ p224 = { workspace = true }
 bp256 = { workspace = true }
 bp384 = { workspace = true }
 elliptic-curve = { workspace = true }
+ecdsa = { workspace = true }

@@ -139,3 +139,100 @@ fn a_sod_wrapping_the_wrong_content_type_is_rejected() {
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
+
+// ---------------------------------------------------------------------------
+// EC, as passports are signed: explicit curve parameters, a NULL ECDSA parameter.
+// `tests/fixtures/ec/make.py` makes them.
+// ---------------------------------------------------------------------------
+
+const BP256_EFSOD: &[u8] = include_bytes!("fixtures/ec/bp256_efsod.bin");
+const BP256_CSCA: &[u8] = include_bytes!("fixtures/ec/bp256_csca.der");
+const P256_CSCA: &[u8] = include_bytes!("fixtures/ec/p256_csca.der");
+
+/// Each curve's EF.SOD and CSCA: the ones RustCrypto's crates verify, and
+/// brainpoolP512r1, which `auth::ecdsa` verifies itself.
+const EC_CHAINS: &[(&str, &[u8], &[u8])] = &[
+    (
+        "P-256",
+        include_bytes!("fixtures/ec/p256_efsod.bin"),
+        P256_CSCA,
+    ),
+    (
+        "P-384",
+        include_bytes!("fixtures/ec/p384_efsod.bin"),
+        include_bytes!("fixtures/ec/p384_csca.der"),
+    ),
+    (
+        "P-521",
+        include_bytes!("fixtures/ec/p521_efsod.bin"),
+        include_bytes!("fixtures/ec/p521_csca.der"),
+    ),
+    ("brainpoolP256r1", BP256_EFSOD, BP256_CSCA),
+    (
+        "brainpoolP384r1",
+        include_bytes!("fixtures/ec/bp384_efsod.bin"),
+        include_bytes!("fixtures/ec/bp384_csca.der"),
+    ),
+    (
+        "brainpoolP512r1",
+        include_bytes!("fixtures/ec/bp512_efsod.bin"),
+        include_bytes!("fixtures/ec/bp512_csca.der"),
+    ),
+];
+
+#[test]
+fn ec_chains_with_explicit_parameters_and_a_null_ecdsa_parameter_are_authentic() {
+    for (curve, sod, csca) in EC_CHAINS {
+        let anchor =
+            TrustAnchor::from_certificate(csca).unwrap_or_else(|e| panic!("{curve} CSCA: {e}"));
+        let result =
+            passive::verify(sod, &groups(), &[anchor]).unwrap_or_else(|e| panic!("{curve}: {e}"));
+        assert_eq!(result.verified_groups, vec![1, 2], "{curve}");
+        assert!(result.is_authentic(), "{curve}");
+    }
+}
+
+#[test]
+fn a_corrupted_ec_signature_is_caught() {
+    for (curve, sod, _) in EC_CHAINS {
+        // The SignerInfo's signature is the last thing in EF.SOD: an ECDSA-Sig-Value
+        // whose final byte is the low byte of s.
+        let mut sod = sod.to_vec();
+        *sod.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            passive::verify(&sod, &groups(), &[]).unwrap_err(),
+            PassiveAuthError::BadDocumentSignature,
+            "{curve}"
+        );
+    }
+}
+
+#[test]
+fn an_ec_csca_on_another_curve_does_not_anchor_the_chain() {
+    let anchor = TrustAnchor::from_certificate(P256_CSCA).unwrap();
+    let result = passive::verify(BP256_EFSOD, &groups(), &[anchor]).unwrap();
+    assert_eq!(result.chain, ChainStatus::Unverified);
+}
+
+#[test]
+fn explicit_parameters_of_no_known_curve_are_refused() {
+    // Change one byte of the CSCA's curve coefficient b: no longer brainpoolP256r1.
+    // b's first bytes also occur inside a (brainpoolP256r1's b reuses part of a),
+    // which comes first, so take the last occurrence: b's.
+    const BP256_B: &[u8] = &[0x26, 0xDC, 0x5C, 0x6C, 0xE9, 0x4A, 0x4B, 0x44];
+    let mut csca = BP256_CSCA.to_vec();
+    let at = csca
+        .windows(BP256_B.len())
+        .rposition(|w| w == BP256_B)
+        .expect("b is in the CSCA's parameters");
+    assert_ne!(
+        find(&csca, BP256_B),
+        Some(at),
+        "a holds b's first bytes too"
+    );
+    csca[at + 7] ^= 1;
+    assert_eq!(
+        TrustAnchor::from_certificate(&csca).unwrap_err(),
+        PassiveAuthError::UnsupportedKey
+    );
+}

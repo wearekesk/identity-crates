@@ -73,6 +73,8 @@ p256 = { version = "0.14", features = ["arithmetic", "ecdh", "ecdsa"] }
 p384 = { version = "0.13", features = ["arithmetic", "ecdh", "ecdsa"] }
 p521 = { version = "0.13", features = ["arithmetic", "ecdh", "ecdsa"] }
 p224 = { version = "0.13", features = ["arithmetic", "ecdh", "ecdsa"] }
-bp256 = { version = "0.14.0-rc.15", features = ["arithmetic"] }
-bp384 = { version = "0.14.0-rc.15", features = ["arithmetic"] }
+bp256 = { version = "0.14", features = ["arithmetic", "ecdsa"] }
+bp384 = { version = "0.14", features = ["arithmetic", "ecdsa"] }
 elliptic-curve = { version = "0.14", features = ["arithmetic"] }
+# ECDSA verification on the Brainpool curves (bp256/bp384 implement its traits)
+ecdsa = { version = "0.17", default-features = false, features = ["algorithm", "der"] }
