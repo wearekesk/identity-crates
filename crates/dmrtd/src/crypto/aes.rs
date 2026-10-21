@@ -379,10 +379,10 @@ fn aes_cbc_decrypt(key: &[u8], iv: &[u8; AES_BLOCK_SIZE], data: &[u8]) -> Vec<u8
 fn aes_ecb_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
     let schedule = AesKeySchedule::new(key);
     let mut output = data.to_vec();
-    for block in output.chunks_exact_mut(AES_BLOCK_SIZE) {
-        let mut arr: [u8; AES_BLOCK_SIZE] = block.try_into().unwrap();
-        schedule.encrypt_block_inplace(&mut arr);
-        block.copy_from_slice(&arr);
+    // Whole blocks only, as before: a trailing partial block is left as is.
+    let (blocks, _) = output.as_chunks_mut::<AES_BLOCK_SIZE>();
+    for block in blocks {
+        schedule.encrypt_block_inplace(block);
     }
     output
 }
@@ -391,10 +391,10 @@ fn aes_ecb_encrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
 fn aes_ecb_decrypt(key: &[u8], data: &[u8]) -> Vec<u8> {
     let schedule = AesKeySchedule::new(key);
     let mut output = data.to_vec();
-    for block in output.chunks_exact_mut(AES_BLOCK_SIZE) {
-        let mut arr: [u8; AES_BLOCK_SIZE] = block.try_into().unwrap();
-        schedule.decrypt_block_inplace(&mut arr);
-        block.copy_from_slice(&arr);
+    // Whole blocks only, as before: a trailing partial block is left as is.
+    let (blocks, _) = output.as_chunks_mut::<AES_BLOCK_SIZE>();
+    for block in blocks {
+        schedule.decrypt_block_inplace(block);
     }
     output
 }
