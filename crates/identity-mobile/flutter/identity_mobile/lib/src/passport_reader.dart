@@ -112,10 +112,15 @@ class PassportReader {
       // discovered tag for NDEF and keeps checking it is still there, both by
       // sending it commands of its own. An identity chip in the middle of
       // BAC or PACE does not expect them: reads dropped with "Tag was lost"
-      // during setup on a real card. Passport readers turn both off.
+      // during setup on a real card.
+      //
+      // The NDEF probe can be turned off. The presence check cannot, only
+      // postponed: Android has no setting that disables it. So it is pushed
+      // well past a whole read, including a large portrait (tens of seconds),
+      // so it does not fire while one is in progress.
       androidCheckNDEF: false,
       androidPlatformSound: false,
-      extraReaderPresenceCheckDelay: const Duration(seconds: 30),
+      extraReaderPresenceCheckDelay: const Duration(minutes: 2),
     );
 
     try {
