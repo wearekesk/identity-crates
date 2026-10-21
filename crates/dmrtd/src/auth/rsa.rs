@@ -97,6 +97,77 @@ impl RsaPublicKey {
             None => false,
         }
     }
+
+    /// Verify an RSASSA-PSS signature over `message` (RFC 8017 §8.1.2, EMSA-PSS-VERIFY
+    /// §9.1.2): `hash` for the message and H, MGF1 over `mgf_hash`, and a salt of
+    /// exactly `salt_len` bytes — what the signature's RSASSA-PSS-params say.
+    pub fn verify_pss(
+        &self,
+        hash: HashAlgo,
+        mgf_hash: HashAlgo,
+        salt_len: usize,
+        message: &[u8],
+        sig: &[u8],
+    ) -> bool {
+        let Some(block) = self.raw_public(sig) else {
+            return false;
+        };
+        // EM is emBits = modBits − 1 long: one byte shorter than the modulus when
+        // modBits ≡ 1 (mod 8), and then the block's first byte must be zero.
+        let em_bits = self.n.bits() as usize - 1;
+        let em_len = em_bits.div_ceil(8);
+        let em = match block.len() - em_len {
+            0 => &block[..],
+            1 if block[0] == 0 => &block[1..],
+            _ => return false,
+        };
+
+        let m_hash = hash.digest(message);
+        let h_len = m_hash.len();
+        if em_len < h_len + salt_len + 2 || em[em_len - 1] != 0xBC {
+            return false;
+        }
+        let (masked_db, h) = em[..em_len - 1].split_at(em_len - h_len - 1);
+        // the bits above emBits must be zero
+        let top_bits = 8 * em_len - em_bits;
+        let top_mask = 0xFFu8 >> top_bits;
+        if masked_db[0] & !top_mask != 0 {
+            return false;
+        }
+
+        let mut db: Vec<u8> = masked_db
+            .iter()
+            .zip(mgf1(mgf_hash, h, masked_db.len()))
+            .map(|(m, k)| m ^ k)
+            .collect();
+        db[0] &= top_mask;
+        // DB = PS (zeros) ‖ 0x01 ‖ salt
+        let ps_len = em_len - h_len - salt_len - 2;
+        if db[..ps_len].iter().any(|&b| b != 0) || db[ps_len] != 0x01 {
+            return false;
+        }
+        let salt = &db[ps_len + 1..];
+
+        // H' = Hash(0x00 × 8 ‖ mHash ‖ salt)
+        let mut m_prime = vec![0u8; 8];
+        m_prime.extend_from_slice(&m_hash);
+        m_prime.extend_from_slice(salt);
+        constant_time_eq(h, &hash.digest(&m_prime))
+    }
+}
+
+/// MGF1 (RFC 8017 §B.2.1): `len` bytes of Hash(seed ‖ counter) for counter 0, 1, …
+fn mgf1(hash: HashAlgo, seed: &[u8], len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len + hash.digest_len());
+    let mut counter: u32 = 0;
+    while out.len() < len {
+        let mut block = seed.to_vec();
+        block.extend_from_slice(&counter.to_be_bytes());
+        out.extend_from_slice(&hash.digest(&block));
+        counter += 1;
+    }
+    out.truncate(len);
+    out
 }
 
 /// Parse a DER INTEGER's content as a positive, minimally-encoded unsigned integer.

@@ -236,3 +236,46 @@ fn explicit_parameters_of_no_known_curve_are_refused() {
         PassiveAuthError::UnsupportedKey
     );
 }
+
+// ---------------------------------------------------------------------------
+// RSASSA-PSS, as many issuers sign: `tests/fixtures/rsa_pss/make.py` makes them.
+// ---------------------------------------------------------------------------
+
+const PSS_EFSOD: &[u8] = include_bytes!("fixtures/rsa_pss/efsod.bin");
+const PSS_CSCA: &[u8] = include_bytes!("fixtures/rsa_pss/csca.der");
+
+#[test]
+fn an_rsassa_pss_chain_is_authentic() {
+    let anchor = TrustAnchor::from_certificate(PSS_CSCA).expect("an RSASSA-PSS CSCA parses");
+    let result = passive::verify(PSS_EFSOD, &groups(), &[anchor]).expect("PA succeeds");
+    assert_eq!(result.verified_groups, vec![1, 2]);
+    assert!(result.is_authentic());
+}
+
+#[test]
+fn a_corrupted_rsassa_pss_signature_is_caught() {
+    // The SignerInfo's signature is the last thing in EF.SOD.
+    let mut sod = PSS_EFSOD.to_vec();
+    *sod.last_mut().unwrap() ^= 1;
+    assert_eq!(
+        passive::verify(&sod, &groups(), &[]).unwrap_err(),
+        PassiveAuthError::BadDocumentSignature
+    );
+}
+
+#[test]
+fn an_rsassa_pss_signature_checked_with_another_salt_length_fails() {
+    // The SignerInfo's saltLength [2] INTEGER 32, its last RSASSA-PSS-params, said
+    // to be 20 instead. The signature is over the signed attributes, not this field,
+    // so only the salt length changes — and the signature no longer verifies.
+    let mut sod = PSS_EFSOD.to_vec();
+    let at = sod
+        .windows(5)
+        .rposition(|w| w == [0xA2, 0x03, 0x02, 0x01, 0x20])
+        .expect("the SignerInfo's salt length");
+    sod[at + 4] = 20;
+    assert_eq!(
+        passive::verify(&sod, &groups(), &[]).unwrap_err(),
+        PassiveAuthError::BadDocumentSignature
+    );
+}

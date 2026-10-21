@@ -47,6 +47,10 @@ const OID_RSA: &[u64] = &[1, 2, 840, 113549, 1, 1, 1];
 const OID_EC_PUBLIC_KEY: &[u64] = &[1, 2, 840, 10045, 2, 1];
 /// id-icao-mrtd-security-ldsSecurityObject — 2.23.136.1.1.1 (EF.SOD eContentType)
 const OID_LDS_SECURITY_OBJECT: &[u64] = &[2, 23, 136, 1, 1, 1];
+/// id-RSASSA-PSS — 1.2.840.113549.1.1.10
+const OID_RSASSA_PSS: &[u64] = &[1, 2, 840, 113549, 1, 1, 10];
+/// id-mgf1 — 1.2.840.113549.1.1.8
+const OID_MGF1: &[u64] = &[1, 2, 840, 113549, 1, 1, 8];
 /// RSA PKCS#1 signature-algorithm OID prefix — 1.2.840.113549.1.1.*
 const OID_RSA_SIG_PREFIX: &[u64] = &[1, 2, 840, 113549, 1, 1];
 /// ECDSA signature-algorithm OID prefix — 1.2.840.10045.4.*
@@ -232,10 +236,12 @@ pub fn verify(
         None => signed.encap_content.clone(),
     };
 
-    if !dsc
-        .public_key
-        .verify(signed.signature_hash, &signed_message, &signed.signature)
-    {
+    if !dsc.public_key.verify(
+        signed.sig_scheme,
+        signed.signature_hash,
+        &signed_message,
+        &signed.signature,
+    ) {
         return Err(PassiveAuthError::BadDocumentSignature);
     }
 
@@ -246,7 +252,8 @@ pub fn verify(
         .find(|a| {
             a.subject == dsc.issuer
                 && scheme_matches_key(&a.key, dsc.sig_scheme)
-                && a.key.verify(dsc.signature_hash, dsc.tbs, &dsc.signature)
+                && a.key
+                    .verify(dsc.sig_scheme, dsc.signature_hash, dsc.tbs, &dsc.signature)
         })
         .map(|a| ChainStatus::Trusted {
             csca_subject: a.subject.clone(),
@@ -267,7 +274,13 @@ pub fn verify(
 /// Which signature scheme the SignerInfo declares — cross-checked against the DSC key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SigScheme {
+    /// RSASSA-PKCS1-v1_5
     Rsa,
+    /// RSASSA-PSS, with its RSASSA-PSS-params' mask generation hash and salt length.
+    RsaPss {
+        mgf_hash: HashAlgo,
+        salt_len: usize,
+    },
     Ecdsa,
 }
 
@@ -443,14 +456,17 @@ fn parse_sig_alg(alg: &[u8]) -> Result<(SigScheme, Option<HashAlgo>), PassiveAut
     let (oid, params) = der::take(alg, der::OID).ok_or(PassiveAuthError::MalformedSod)?;
     let arcs = der::oid_arcs(oid).ok_or(PassiveAuthError::MalformedSod)?;
 
-    // plain rsaEncryption (1.2.840.113549.1.1.1) names no hash; sha*WithRSAEncryption
-    // and ecdsa-with-SHA* do. For any *other* prefixed OID the hash must be recognised
-    // — propagate the error rather than dropping to an unpinned hash, so an algorithm
-    // we don't honour (e.g. RSA-PSS, which is not PKCS#1 v1.5) can't be verified with
-    // the wrong scheme.
+    // plain rsaEncryption (1.2.840.113549.1.1.1) names no hash; sha*WithRSAEncryption,
+    // RSASSA-PSS and ecdsa-with-SHA* do. For any *other* prefixed OID the hash must be
+    // recognised — propagate the error rather than dropping to an unpinned hash, so an
+    // algorithm we don't honour can't be verified with the wrong scheme.
     if arcs == OID_RSA {
         require_params_null_or_absent(params)?; // rsaEncryption: NULL/absent (RFC 4055)
         return Ok((SigScheme::Rsa, None));
+    }
+    if arcs == OID_RSASSA_PSS {
+        let (hash, mgf_hash, salt_len) = parse_pss_params(params)?;
+        return Ok((SigScheme::RsaPss { mgf_hash, salt_len }, Some(hash)));
     }
     if arcs.starts_with(OID_RSA_SIG_PREFIX) {
         require_params_null_or_absent(params)?; // sha*WithRSAEncryption: NULL/absent
@@ -463,6 +479,64 @@ fn parse_sig_alg(alg: &[u8]) -> Result<(SigScheme, Option<HashAlgo>), PassiveAut
         return Ok((SigScheme::Ecdsa, Some(sig_alg_hash(alg)?)));
     }
     Err(PassiveAuthError::UnsupportedHash)
+}
+
+/// RSASSA-PSS-params (RFC 4055 §3.1): the parameters must be present, though every
+/// field has a default.
+///
+/// ```text
+/// SEQUENCE { hashAlgorithm    [0] AlgorithmIdentifier DEFAULT sha1,
+///            maskGenAlgorithm [1] AlgorithmIdentifier DEFAULT mgf1SHA1,
+///            saltLength       [2] INTEGER DEFAULT 20,
+///            trailerField     [3] INTEGER DEFAULT 1 }
+/// ```
+///
+/// Returns the hash, MGF1's hash and the salt length. Only MGF1, and only the
+/// trailer field 1 (0xBC) RFC 8017 defines.
+fn parse_pss_params(params: &[u8]) -> Result<(HashAlgo, HashAlgo, usize), PassiveAuthError> {
+    let e = || PassiveAuthError::UnsupportedHash;
+    let mut rest = der::expect(params, der::SEQUENCE).ok_or_else(e)?;
+    let (mut hash, mut mgf_hash, mut salt_len) = (HashAlgo::Sha1, HashAlgo::Sha1, 20);
+    if let Some((0xA0, field, tail)) = der::next(rest) {
+        hash = algo_hash(der::expect(field, der::SEQUENCE).ok_or_else(e)?)?;
+        rest = tail;
+    }
+    if let Some((0xA1, field, tail)) = der::next(rest) {
+        let mgf = der::expect(field, der::SEQUENCE).ok_or_else(e)?;
+        let (oid, mgf_params) = der::take(mgf, der::OID).ok_or_else(e)?;
+        if der::oid_arcs(oid).as_deref() != Some(OID_MGF1) {
+            return Err(e());
+        }
+        mgf_hash = algo_hash(der::expect(mgf_params, der::SEQUENCE).ok_or_else(e)?)?;
+        rest = tail;
+    }
+    if let Some((0xA2, field, tail)) = der::next(rest) {
+        salt_len = small_uint(der::expect(field, der::INTEGER).ok_or_else(e)?).ok_or_else(e)?;
+        rest = tail;
+    }
+    if let Some((0xA3, field, tail)) = der::next(rest) {
+        if small_uint(der::expect(field, der::INTEGER).ok_or_else(e)?) != Some(1) {
+            return Err(e());
+        }
+        rest = tail;
+    }
+    if !rest.is_empty() {
+        return Err(e());
+    }
+    Ok((hash, mgf_hash, salt_len))
+}
+
+/// A small non-negative DER INTEGER (salt length, trailer field): minimally
+/// encoded, so a leading 0x00 only before a byte with its top bit set. Zero is
+/// allowed — a salt may be empty.
+fn small_uint(contents: &[u8]) -> Option<usize> {
+    match contents {
+        [] => None,
+        [b0, ..] if *b0 & 0x80 != 0 => None,       // negative
+        [0x00, b1, ..] if *b1 & 0x80 == 0 => None, // non-minimal leading zero
+        bytes if bytes.len() <= 4 => Some(bytes.iter().fold(0, |n, &b| n << 8 | usize::from(b))),
+        _ => None,
+    }
 }
 
 /// Select the Document Signer certificate the SignerInfo names.
@@ -650,11 +724,15 @@ enum PublicKey {
 }
 
 impl PublicKey {
-    /// Verify `sig` over `message` under `hash`.
-    fn verify(&self, hash: HashAlgo, message: &[u8], sig: &[u8]) -> bool {
-        match self {
-            PublicKey::Rsa(k) => k.verify_pkcs1v15(hash, message, sig),
-            PublicKey::Ec(curve, point) => curve.verify(point, hash, message, sig),
+    /// Verify `sig` over `message` under `scheme` and `hash`. The caller has already
+    /// checked the scheme is one for this kind of key ([`scheme_matches_key`]).
+    fn verify(&self, scheme: SigScheme, hash: HashAlgo, message: &[u8], sig: &[u8]) -> bool {
+        match (self, scheme) {
+            (PublicKey::Rsa(k), SigScheme::RsaPss { mgf_hash, salt_len }) => {
+                k.verify_pss(hash, mgf_hash, salt_len, message, sig)
+            }
+            (PublicKey::Rsa(k), _) => k.verify_pkcs1v15(hash, message, sig),
+            (PublicKey::Ec(curve, point), _) => curve.verify(point, hash, message, sig),
         }
     }
 }
@@ -663,7 +741,8 @@ impl PublicKey {
 fn scheme_matches_key(key: &PublicKey, scheme: SigScheme) -> bool {
     matches!(
         (key, scheme),
-        (PublicKey::Rsa(_), SigScheme::Rsa) | (PublicKey::Ec(..), SigScheme::Ecdsa)
+        (PublicKey::Rsa(_), SigScheme::Rsa | SigScheme::RsaPss { .. })
+            | (PublicKey::Ec(..), SigScheme::Ecdsa)
     )
 }
 
@@ -1016,10 +1095,79 @@ mod tests {
             (SigScheme::Rsa, Some(HashAlgo::Sha256))
         );
 
-        // RSASSA-PSS (…1.1.10) shares the RSA prefix but is NOT PKCS#1 v1.5 — must be
-        // rejected, not silently verified with the wrong scheme.
+        // RSASSA-PSS (…1.1.10) shares the RSA prefix but is NOT PKCS#1 v1.5 — without
+        // its RSASSA-PSS-params it must be rejected, not verified with the wrong scheme.
         let pss = [0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x0a];
         assert!(parse_sig_alg(&alg_id(&pss)).is_err());
+        // with them (here all defaults): RSASSA-PSS, SHA-1, MGF1-SHA-1, 20-byte salt
+        let mut with_defaults = alg_id(&pss);
+        with_defaults.extend_from_slice(&[der::SEQUENCE, 0x00]);
+        assert_eq!(
+            parse_sig_alg(&with_defaults).unwrap(),
+            (
+                SigScheme::RsaPss {
+                    mgf_hash: HashAlgo::Sha1,
+                    salt_len: 20
+                },
+                Some(HashAlgo::Sha1)
+            )
+        );
+    }
+
+    #[test]
+    fn small_uints_are_minimal_der() {
+        assert_eq!(small_uint(&[0x00]), Some(0));
+        assert_eq!(small_uint(&[0x20]), Some(32));
+        assert_eq!(small_uint(&[0x00, 0x80]), Some(128));
+        assert_eq!(small_uint(&[0x00, 0x20]), None); // 32 with a needless 0x00
+        assert_eq!(small_uint(&[0x00, 0x00]), None);
+        assert_eq!(small_uint(&[0x80]), None); // negative
+        assert_eq!(small_uint(&[]), None);
+    }
+
+    #[test]
+    fn rsassa_pss_params() {
+        let sha256 = [
+            0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+            0x00,
+        ];
+        let mgf1 = |hash: &[u8]| {
+            let mut alg = vec![
+                0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x08,
+            ];
+            alg.extend_from_slice(hash);
+            [&[0x30, alg.len() as u8][..], &alg].concat()
+        };
+        let tagged = |tag: u8, body: &[u8]| [&[tag, body.len() as u8][..], body].concat();
+        let params = |fields: &[Vec<u8>]| {
+            let body = fields.concat();
+            [&[0x30, body.len() as u8][..], &body].concat()
+        };
+
+        // SHA-256, MGF1-SHA-256, 32-byte salt: what issuers use
+        let usual = params(&[
+            tagged(0xA0, &sha256),
+            tagged(0xA1, &mgf1(&sha256)),
+            tagged(0xA2, &[0x02, 0x01, 0x20]),
+        ]);
+        assert_eq!(
+            parse_pss_params(&usual).unwrap(),
+            (HashAlgo::Sha256, HashAlgo::Sha256, 32)
+        );
+        // the trailer field 1 may be spelled out; any other is refused
+        let trailer = |n| params(&[tagged(0xA3, &[0x02, 0x01, n])]);
+        assert!(parse_pss_params(&trailer(1)).is_ok());
+        assert!(parse_pss_params(&trailer(2)).is_err());
+        // a mask generation function other than MGF1
+        let mut other_mgf = mgf1(&sha256);
+        other_mgf[12] = 0x09;
+        assert!(parse_pss_params(&params(&[tagged(0xA1, &other_mgf)])).is_err());
+        // fields out of order, or anything after them
+        assert!(parse_pss_params(&params(&[
+            tagged(0xA2, &[0x02, 0x01, 0x20]),
+            tagged(0xA0, &sha256)
+        ]))
+        .is_err());
     }
 
     /// SubjectPublicKeyInfo for an EC key on the named curve `curve_oid`.
