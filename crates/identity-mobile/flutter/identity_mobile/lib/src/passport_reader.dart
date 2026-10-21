@@ -108,6 +108,14 @@ class PassportReader {
       readIso14443B: true,
       readIso18092: false,
       readIso15693: false,
+      // Android only, ignored elsewhere. By default the platform probes a
+      // discovered tag for NDEF and keeps checking it is still there, both by
+      // sending it commands of its own. An identity chip in the middle of
+      // BAC or PACE does not expect them: reads dropped with "Tag was lost"
+      // during setup on a real card. Passport readers turn both off.
+      androidCheckNDEF: false,
+      androidPlatformSound: false,
+      extraReaderPresenceCheckDelay: const Duration(seconds: 30),
     );
 
     try {
