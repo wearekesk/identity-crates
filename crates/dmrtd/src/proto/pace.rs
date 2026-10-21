@@ -194,14 +194,30 @@ pub fn generate_encoding_input_data(
 /// Generates the MSE:Set AT data field — a SET of:
 /// - `80` Cryptographic Mechanism Reference (OID body, arcs from index 1)
 /// - `83` Password / Reference of Public Key (e.g. MRZ `0x01`, CAN `0x02`)
-pub fn generate_mse_set_at_data(mechanism: &OiePaceProtocol, pace_ref_type: u8) -> Vec<u8> {
+/// - `84` Reference of a Private Key / for Computing a Session Key, when
+///   `parameter_id` is given: the standardized domain parameters'
+///   identifier (ICAO 9303-11, 4.4.4.1).
+///
+/// ICAO makes `84` conditional, required where the chip supports more than
+/// one set of domain parameters; some chips that list one, in a PACEInfo
+/// with a parameterId, accept MSE:Set AT without it and then never answer
+/// GENERAL AUTHENTICATE.
+pub fn generate_mse_set_at_data(
+    mechanism: &OiePaceProtocol,
+    pace_ref_type: u8,
+    parameter_id: Option<u32>,
+) -> Vec<u8> {
     const CRYPTOGRAPHIC_MECHANISM_REF_TAG: u32 = 0x80;
     const PASSWORD_REF_PUB_KEY_TAG: u32 = 0x83;
+    const PRIVATE_KEY_REF_TAG: u32 = 0x84;
     let oid_body = oid_body_bytes(&mechanism.oie);
     let cm = Tlv::new(CRYPTOGRAPHIC_MECHANISM_REF_TAG, oid_body);
     let drp = Tlv::from_int_value(PASSWORD_REF_PUB_KEY_TAG, pace_ref_type as u64);
-    let set = TlvSet::with_tlvs(vec![cm, drp]);
-    set.to_bytes()
+    let mut tlvs = vec![cm, drp];
+    if let Some(id) = parameter_id {
+        tlvs.push(Tlv::from_int_value(PRIVATE_KEY_REF_TAG, id as u64));
+    }
+    TlvSet::with_tlvs(tlvs).to_bytes()
 }
 
 /// Data field for `GENERAL AUTHENTICATE` — step 1 (empty TLV `7C 00`).
@@ -466,7 +482,7 @@ mod tests {
     #[test]
     fn mse_set_at_data_encodes_oid_and_ref_tag() {
         let proto = oie_aes128_ecdh_gm();
-        let out = generate_mse_set_at_data(&proto, 0x01);
+        let out = generate_mse_set_at_data(&proto, 0x01, None);
         // First element: tag 0x80, length N, OID body; second element: 0x83, 0x01, 0x01.
         assert_eq!(out[0], 0x80);
         let oid_len = out[1] as usize;
@@ -475,6 +491,16 @@ mod tests {
         assert_eq!(out[pos], 0x83);
         assert_eq!(out[pos + 1], 0x01);
         assert_eq!(out[pos + 2], 0x01);
+    }
+
+    #[test]
+    fn mse_set_at_data_names_the_domain_parameters_when_given() {
+        let proto = oie_aes128_ecdh_gm();
+        let without = generate_mse_set_at_data(&proto, 0x01, None);
+        let with = generate_mse_set_at_data(&proto, 0x01, Some(13));
+        // The same, and then 84 01 0D: brainpoolP256r1's identifier.
+        assert_eq!(&with[..without.len()], &without[..]);
+        assert_eq!(&with[without.len()..], &[0x84, 0x01, 0x0D]);
     }
 
     #[test]

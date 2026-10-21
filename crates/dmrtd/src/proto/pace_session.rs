@@ -225,6 +225,8 @@ pub struct PaceSession<K: AccessKey> {
     seed_main: Option<[u8; 32]>,
     /// Optional seed for the ephemeral scalar (test determinism).
     seed_ephemeral: Option<[u8; 32]>,
+    /// The domain parameters' identifier, named to the chip in MSE:Set AT.
+    parameter_id: u32,
     state: State,
 }
 
@@ -302,6 +304,7 @@ impl<K: AccessKey> PaceSession<K> {
             engine: PaceEngine::Ecdh(ECDHPace::new(parameter_id)?),
             seed_main: None,
             seed_ephemeral: None,
+            parameter_id,
             state: State::Start,
         })
     }
@@ -333,6 +336,7 @@ impl<K: AccessKey> PaceSession<K> {
             engine: PaceEngine::Dh(engine),
             seed_main: None,
             seed_ephemeral: None,
+            parameter_id,
             state: State::Start,
         })
     }
@@ -372,8 +376,11 @@ impl<K: AccessKey> PaceSession<K> {
     pub fn next(&mut self) -> Result<PaceAction, PaceSessionError> {
         match std::mem::replace(&mut self.state, State::Start) {
             State::Start => {
-                let data =
-                    pace::generate_mse_set_at_data(&self.protocol, self.key.pace_ref_key_tag());
+                let data = pace::generate_mse_set_at_data(
+                    &self.protocol,
+                    self.key.pace_ref_key_tag(),
+                    Some(self.parameter_id),
+                );
                 let cmd = CommandApdu::new(
                     cla::NO_SM,
                     ins::MANAGE_SECURITY_ENVIRONMENT,
@@ -696,6 +703,9 @@ mod tests {
             PaceAction::SendApdu(apdu) => {
                 // CLA=00, INS=22, P1=C1, P2=A4
                 assert_eq!(&apdu[..4], &[0x00, 0x22, 0xC1, 0xA4]);
+                // Naming the domain parameters: 84 01 <id>, last in the data.
+                let lc = apdu[4] as usize;
+                assert_eq!(&apdu[5 + lc - 3..5 + lc], &[0x84, 0x01, NIST_P256_ID as u8]);
             }
             _ => panic!("expected SendApdu"),
         }
