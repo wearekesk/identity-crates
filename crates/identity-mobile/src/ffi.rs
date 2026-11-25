@@ -43,7 +43,9 @@ use crate::IdentityError;
 ///
 /// - **1** — the original surface.
 /// - **2** — `retain_data_groups` added to both passport read entry points.
-pub const IDENTITY_MOBILE_ABI_VERSION: u32 = 2;
+/// - **3** — `aa_challenge` / `aa_challenge_len` added to both passport read entry
+///   points, and `activeAuthSignature` to their result.
+pub const IDENTITY_MOBILE_ABI_VERSION: u32 = 3;
 
 /// Which ABI this library exports; see [`IDENTITY_MOBILE_ABI_VERSION`].
 ///
@@ -323,6 +325,8 @@ pub unsafe extern "C" fn identity_mobile_read_passport(
     read_portrait: bool,
     active_authentication: bool,
     retain_data_groups: bool,
+    aa_challenge: *const u8,
+    aa_challenge_len: usize,
     transceive: TransceiveFn,
     context: *mut std::ffi::c_void,
 ) -> *mut c_char {
@@ -350,11 +354,17 @@ pub unsafe extern "C" fn identity_mobile_read_passport(
         context,
     };
 
+    let challenge = match unsafe { challenge(aa_challenge, aa_challenge_len) } {
+        Ok(challenge) => challenge,
+        Err(e) => return json::<VerifiedIdentity>(Err(e)),
+    };
+
     let options = PassportOptions {
         session: Session::Auto,
         read_portrait,
         active_authentication,
         retain_files: retain_data_groups,
+        active_authentication_challenge: challenge,
     };
 
     json(crate::passport::read_passport(
@@ -402,10 +412,18 @@ pub type PostApduFn =
 /// returns, so they live until that string goes to [`identity_mobile_string_free`] and
 /// not one moment longer. Copy what you intend to keep.
 ///
+/// # A verifier's challenge
+///
+/// Pass the 8 bytes a server issued in `aa_challenge` (`aa_challenge_len` = 8) and the
+/// chip signs that challenge instead of a random one; its raw answer comes back as
+/// `activeAuthSignature` (hex) beside `dataGroups`, for the server to check against
+/// EF.DG15. Null and 0 keep the random challenge and return `activeAuthSignature: null`.
+/// Any other length is refused before the chip is touched.
+///
 /// # Safety
 ///
 /// As [`identity_mobile_read_passport`], and `post` must remain callable until this
-/// function returns.
+/// function returns. `aa_challenge` must be null or valid for `aa_challenge_len` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn identity_mobile_read_passport_async(
     document_number: *const c_char,
@@ -416,6 +434,8 @@ pub unsafe extern "C" fn identity_mobile_read_passport_async(
     read_portrait: bool,
     active_authentication: bool,
     retain_data_groups: bool,
+    aa_challenge: *const u8,
+    aa_challenge_len: usize,
     post: PostApduFn,
     context: *mut std::ffi::c_void,
 ) -> *mut c_char {
@@ -438,11 +458,17 @@ pub unsafe extern "C" fn identity_mobile_read_passport_async(
 
     let anchors = unsafe { collect(anchors, anchor_count) };
 
+    let challenge = match unsafe { challenge(aa_challenge, aa_challenge_len) } {
+        Ok(challenge) => challenge,
+        Err(e) => return json::<VerifiedIdentity>(Err(e)),
+    };
+
     let options = PassportOptions {
         session: Session::Auto,
         read_portrait,
         active_authentication,
         retain_files: retain_data_groups,
+        active_authentication_challenge: challenge,
     };
 
     json(crate::passport::read_passport(
@@ -622,6 +648,24 @@ unsafe fn text(value: *const c_char) -> Option<String> {
 /// Errors come back as `{"error": {...}}` rather than a null pointer, so the host
 /// always has something to show — and, critically, so a refusal to verify never looks
 /// like a crash.
+/// The caller's active-authentication challenge: none, or exactly 8 bytes.
+///
+/// # Safety
+///
+/// `bytes` must be null or valid for `len` bytes.
+unsafe fn challenge(bytes: *const u8, len: usize) -> Result<Option<[u8; 8]>, IdentityError> {
+    if bytes.is_null() || len == 0 {
+        return Ok(None);
+    }
+    // SAFETY: non-null, and the caller guarantees `len` readable bytes.
+    let slice = unsafe { std::slice::from_raw_parts(bytes, len) };
+    <[u8; 8]>::try_from(slice).map(Some).map_err(|_| {
+        IdentityError::Unreadable(format!(
+            "the active authentication challenge must be 8 bytes, not {len}"
+        ))
+    })
+}
+
 fn json<T: Into<Json>>(result: Result<T, IdentityError>) -> *mut c_char {
     let rendered = match result {
         Ok(value) => value.into().render(),
@@ -671,12 +715,16 @@ impl From<VerifiedIdentity> for Json {
 impl From<PassportRead> for Json {
     fn from(read: PassportRead) -> Self {
         Self(format!(
-            r#"{{"identity":{},"dataGroups":{}}}"#,
+            r#"{{"identity":{},"dataGroups":{},"activeAuthSignature":{}}}"#,
             identity_object(&read.identity),
             match &read.files {
                 Some(files) => data_groups(files),
                 // Distinct from an empty object: nothing was retained, as opposed to
                 // nothing being there to retain.
+                None => "null".to_string(),
+            },
+            match &read.active_auth_signature {
+                Some(signature) => quote(&hex(signature)),
                 None => "null".to_string(),
             }
         ))
@@ -873,6 +921,7 @@ mod tests {
         Json::from(PassportRead {
             identity: VerifiedIdentity::default(),
             files,
+            active_auth_signature: None,
         })
         .render()
     }
@@ -912,6 +961,42 @@ mod tests {
 
         assert!(rendered.contains(r#""dataGroups":null"#), "{rendered}");
         assert!(!rendered.contains(r#""sod""#), "{rendered}");
+    }
+
+    /// A read against a caller's challenge hands back the chip's raw answer, hex like
+    /// the files; one without says `null`, never an answer nobody can check.
+    #[test]
+    fn the_chip_answer_rides_beside_the_files() {
+        let rendered = Json::from(PassportRead {
+            identity: VerifiedIdentity::default(),
+            files: None,
+            active_auth_signature: Some(vec![0xAB, 0x01]),
+        })
+        .render();
+        assert!(
+            rendered.ends_with(r#""activeAuthSignature":"ab01"}"#),
+            "{rendered}"
+        );
+        assert!(read(None).ends_with(r#""activeAuthSignature":null}"#));
+    }
+
+    /// Null or empty is "draw a random challenge"; anything but 8 bytes is refused.
+    #[test]
+    fn a_challenge_is_none_or_eight_bytes() {
+        let eight = [1u8, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(
+            unsafe { super::challenge(std::ptr::null(), 0) }.unwrap(),
+            None
+        );
+        assert_eq!(
+            unsafe { super::challenge(eight.as_ptr(), 0) }.unwrap(),
+            None
+        );
+        assert_eq!(
+            unsafe { super::challenge(eight.as_ptr(), 8) }.unwrap(),
+            Some(eight)
+        );
+        assert!(unsafe { super::challenge(eight.as_ptr(), 7) }.is_err());
     }
 
     /// The other result type shares the identity body, so a change to one cannot quietly

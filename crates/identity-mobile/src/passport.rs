@@ -141,6 +141,16 @@ pub struct PassportOptions {
     /// believe a client's verdict. The files come back in the shape
     /// [`verify_passport`] takes, so the far end runs exactly the check this one did.
     pub retain_files: bool,
+    /// The challenge to send with INTERNAL AUTHENTICATE, when someone other than this
+    /// device is going to check the answer.
+    ///
+    /// `None` — the default — draws a fresh random challenge here and checks the answer
+    /// here, which is all a device verifying for itself needs. A server that wants to
+    /// verify active authentication itself issues the challenge, so a recorded answer
+    /// cannot be replayed to it; pass that challenge here and the chip's raw answer comes
+    /// back in [`PassportRead::active_auth_signature`] for the server to check. The local
+    /// verdict is still computed, against the challenge that was actually sent.
+    pub active_authentication_challenge: Option<[u8; 8]>,
 }
 
 impl Default for PassportOptions {
@@ -150,6 +160,7 @@ impl Default for PassportOptions {
             read_portrait: true,
             active_authentication: true,
             retain_files: false,
+            active_authentication_challenge: None,
         }
     }
 }
@@ -225,6 +236,14 @@ pub struct PassportRead {
     ///
     /// Owned by you the moment this returns; see [`PassportFiles`].
     pub files: Option<PassportFiles>,
+    /// The chip's raw INTERNAL AUTHENTICATE response, when the challenge came from the
+    /// caller ([`PassportOptions::active_authentication_challenge`]).
+    ///
+    /// `None` when no challenge was supplied — an answer to a challenge this crate drew
+    /// itself proves nothing to anyone else, and handing it out would invite a caller to
+    /// send it somewhere it will be read as a failed check — and when the document has no
+    /// DG15 or the chip refused to answer.
+    pub active_auth_signature: Option<Vec<u8>>,
 }
 
 // Note what is *not* here: a field saying active authentication succeeded.
@@ -410,20 +429,30 @@ pub fn read_passport(
     // chip that answers the first honestly and the second with a key of its choosing
     // would pass both, which is the whole attack this check exists to stop. The file
     // captured above is used for both purposes.
+    let mut active_auth_signature = None;
     let active_authentication = match (options.active_authentication, dg15_file.as_ref()) {
         (true, Some(dg15_file)) => {
             transport_failed.set(false);
 
-            let mut challenge = [0u8; 8];
-            // Not an NFC error, though it sits on the NFC path: the tag is fine and
-            // repositioning the phone will not help. `Nfc` is the retry-and-tell-the-
-            // holder-to-hold-still kind, and this challenge is the security boundary of
-            // the whole check — a reader with no randomness should stop, not loop.
-            getrandom::fill(&mut challenge).map_err(|e| {
-                IdentityError::Unreadable(format!(
-                    "no source of randomness for the active authentication challenge: {e}"
-                ))
-            })?;
+            let supplied = options.active_authentication_challenge;
+            let challenge = match supplied {
+                // The caller's verifier issued it, and will check the answer itself.
+                Some(challenge) => challenge,
+                None => {
+                    let mut challenge = [0u8; 8];
+                    // Not an NFC error, though it sits on the NFC path: the tag is fine
+                    // and repositioning the phone will not help. `Nfc` is the
+                    // retry-and-tell-the-holder-to-hold-still kind, and this challenge is
+                    // the security boundary of the whole check — a reader with no
+                    // randomness should stop, not loop.
+                    getrandom::fill(&mut challenge).map_err(|e| {
+                        IdentityError::Unreadable(format!(
+                            "no source of randomness for the active authentication challenge: {e}"
+                        ))
+                    })?;
+                    challenge
+                }
+            };
 
             let response = match passport.active_authenticate(&challenge) {
                 Ok(response) => Some(response),
@@ -441,7 +470,12 @@ pub fn read_passport(
 
             match response {
                 Some(response) => {
-                    Some(active::verify(dg15_file.aa_public_key(), &challenge, &response).is_ok())
+                    let verified =
+                        active::verify(dg15_file.aa_public_key(), &challenge, &response).is_ok();
+                    if supplied.is_some() {
+                        active_auth_signature = Some(response);
+                    }
+                    Some(verified)
                 }
                 None => Some(false),
             }
@@ -474,6 +508,7 @@ pub fn read_passport(
         // decoded JPEG in `portrait` whenever DG2 was read. Turning this flag off is not
         // a way to keep biometrics out of the result; `read_portrait` is.
         files: options.retain_files.then_some(files),
+        active_auth_signature,
     })
 }
 

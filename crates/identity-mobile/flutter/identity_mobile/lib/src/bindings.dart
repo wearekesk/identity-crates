@@ -96,6 +96,8 @@ typedef ReadPassportAsyncNative = Pointer<Utf8> Function(
   Bool readPortrait,
   Bool activeAuthentication,
   Bool retainDataGroups,
+  Pointer<Uint8> aaChallenge,
+  Size aaChallengeLen,
   Pointer<NativeFunction<PostApduNative>> post,
   Pointer<Void> context,
 );
@@ -108,6 +110,8 @@ typedef ReadPassportAsync = Pointer<Utf8> Function(
   bool readPortrait,
   bool activeAuthentication,
   bool retainDataGroups,
+  Pointer<Uint8> aaChallenge,
+  int aaChallengeLen,
   Pointer<NativeFunction<PostApduNative>> post,
   Pointer<Void> context,
 );
@@ -208,7 +212,7 @@ class IdentityBindings {
   ///
   /// A Rust test parses this line out of this file and fails if the two have drifted, so
   /// the declaration has to stay recognisable: `expectedAbiVersion = <n>;`.
-  static const int expectedAbiVersion = 2;
+  static const int expectedAbiVersion = 3;
 
   final VerifyMdl verifyMdl;
   final VerifyMdlOpenId4Vp verifyMdlOpenId4Vp;
