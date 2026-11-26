@@ -105,9 +105,14 @@ class PassportReader {
   /// with its answer in [PassportRead.activeAuthSignature]. Leave it null to have the
   /// reader draw and check its own. Only used when [activeAuthentication] is set.
   ///
+  /// The server needs the chip's public key in EF.DG15 to check that signature, and the
+  /// reader does not keep it unless [retainDataGroups] is set: send
+  /// `result.dataGroups!.dg15` along with the signature.
+  ///
   /// Throws [IdentityException]; check `kind` before deciding whether to retry. A
   /// challenge that is not 8 bytes throws [ArgumentError] before the chip is polled.
-  Future<PassportRead> read(DBAKey key, {Uint8List? activeAuthChallenge}) async {
+  Future<PassportRead> read(DBAKey key,
+      {Uint8List? activeAuthChallenge}) async {
     if (activeAuthChallenge != null && activeAuthChallenge.length != 8) {
       throw ArgumentError.value(
         activeAuthChallenge.length,
@@ -115,6 +120,11 @@ class PassportReader {
         'must be 8 bytes',
       );
     }
+    // Copied before the NFC wait: the caller may change its list while the reader polls,
+    // and the chip has to sign the bytes that were passed to this call.
+    final challenge = activeAuthChallenge == null
+        ? null
+        : Uint8List.fromList(activeAuthChallenge);
 
     await FlutterNfcKit.poll(
       iosAlertMessage: iosAlertMessage,
@@ -138,7 +148,7 @@ class PassportReader {
     );
 
     try {
-      return await _readInSession(key, activeAuthChallenge);
+      return await _readInSession(key, challenge);
     } finally {
       // Always close the session, or iOS leaves the sheet up and Android holds the
       // tag until it is torn away.
