@@ -100,8 +100,32 @@ class PassportReader {
 
   /// Poll for a passport, read it, and verify it.
   ///
-  /// Throws [IdentityException]; check `kind` before deciding whether to retry.
-  Future<PassportRead> read(DBAKey key) async {
+  /// [activeAuthChallenge] is for a server that checks active authentication itself:
+  /// pass the 8 bytes it issued, and the chip signs those instead of a random challenge,
+  /// with its answer in [PassportRead.activeAuthSignature]. Leave it null to have the
+  /// reader draw and check its own. Only used when [activeAuthentication] is set.
+  ///
+  /// The server needs the chip's public key in EF.DG15 to check that signature, and the
+  /// reader does not keep it unless [retainDataGroups] is set: send
+  /// `result.dataGroups!.dg15` along with the signature.
+  ///
+  /// Throws [IdentityException]; check `kind` before deciding whether to retry. A
+  /// challenge that is not 8 bytes throws [ArgumentError] before the chip is polled.
+  Future<PassportRead> read(DBAKey key,
+      {Uint8List? activeAuthChallenge}) async {
+    if (activeAuthChallenge != null && activeAuthChallenge.length != 8) {
+      throw ArgumentError.value(
+        activeAuthChallenge.length,
+        'activeAuthChallenge',
+        'must be 8 bytes',
+      );
+    }
+    // Copied before the NFC wait: the caller may change its list while the reader polls,
+    // and the chip has to sign the bytes that were passed to this call.
+    final challenge = activeAuthChallenge == null
+        ? null
+        : Uint8List.fromList(activeAuthChallenge);
+
     await FlutterNfcKit.poll(
       iosAlertMessage: iosAlertMessage,
       readIso14443A: true,
@@ -124,7 +148,7 @@ class PassportReader {
     );
 
     try {
-      return await _readInSession(key);
+      return await _readInSession(key, challenge);
     } finally {
       // Always close the session, or iOS leaves the sheet up and Android holds the
       // tag until it is torn away.
@@ -132,7 +156,7 @@ class PassportReader {
     }
   }
 
-  Future<PassportRead> _readInSession(DBAKey key) async {
+  Future<PassportRead> _readInSession(DBAKey key, Uint8List? challenge) async {
     final bindings = IdentityBindings.instance;
 
     // Exchanges arrive here from the worker isolate. `NativeCallable.listener` is what
@@ -177,6 +201,7 @@ class PassportReader {
         readPortrait: readPortrait,
         activeAuthentication: activeAuthentication,
         retainDataGroups: retainDataGroups,
+        challenge: challenge,
         post: callable.nativeFunction.address,
       );
 
@@ -200,6 +225,7 @@ class PassportReader {
     required bool readPortrait,
     required bool activeAuthentication,
     required bool retainDataGroups,
+    required Uint8List? challenge,
     required int post,
   }) {
     return Isolate.run(() => _runRead(
@@ -208,6 +234,7 @@ class PassportReader {
           readPortrait: readPortrait,
           activeAuthentication: activeAuthentication,
           retainDataGroups: retainDataGroups,
+          challenge: challenge,
           post: post,
         ));
   }
@@ -244,6 +271,7 @@ class PassportReader {
     required bool readPortrait,
     required bool activeAuthentication,
     required bool retainDataGroups,
+    required Uint8List? challenge,
     required int post,
   }) {
     final bindings = IdentityBindings.instance;
@@ -252,6 +280,11 @@ class PassportReader {
     final birth = key._birth.toNativeUtf8();
     final expiry = key._expiry.toNativeUtf8();
     final (anchorArray, anchorBuffers) = allocateAnchors(anchors);
+    final challengeBuffer =
+        challenge == null ? nullptr : calloc<Uint8>(challenge.length);
+    if (challenge != null) {
+      challengeBuffer.asTypedList(challenge.length).setAll(0, challenge);
+    }
 
     try {
       final result = bindings.readPassportAsync(
@@ -263,6 +296,8 @@ class PassportReader {
         readPortrait,
         activeAuthentication,
         retainDataGroups,
+        challengeBuffer,
+        challenge?.length ?? 0,
         Pointer<NativeFunction<PostApduNative>>.fromAddress(post),
         nullptr,
       );
@@ -272,6 +307,7 @@ class PassportReader {
       calloc.free(birth);
       calloc.free(expiry);
       freeAnchors(anchorArray, anchorBuffers);
+      if (challengeBuffer != nullptr) calloc.free(challengeBuffer);
     }
   }
 }

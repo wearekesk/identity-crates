@@ -289,7 +289,11 @@ class PassportDataGroups {
 
 /// What a read produced: the verdict, and — only if asked for — the bytes behind it.
 class PassportRead {
-  const PassportRead({required this.identity, this.dataGroups});
+  const PassportRead({
+    required this.identity,
+    this.dataGroups,
+    this.activeAuthSignature,
+  });
 
   /// The verified identity. This is what most callers want, and all they need.
   final VerifiedIdentity identity;
@@ -297,6 +301,14 @@ class PassportRead {
   /// The elementary files, when `PassportReader.retainDataGroups` was set. `null`
   /// otherwise — nothing was kept, as opposed to nothing being there.
   final PassportDataGroups? dataGroups;
+
+  /// The chip's raw INTERNAL AUTHENTICATE response, when `PassportReader.read` was given
+  /// a verifier's `activeAuthChallenge`. Send it to that verifier with EF.DG15, which
+  /// checks it.
+  ///
+  /// `null` without a challenge (an answer to a challenge the reader drew itself proves
+  /// nothing to anyone else), when the document has no DG15, or when the chip refused.
+  final Uint8List? activeAuthSignature;
 
   /// Parse what the native layer returned, raising the typed error if it failed.
   static PassportRead parseResult(String payload) {
@@ -306,6 +318,8 @@ class PassportRead {
     return PassportRead(
       identity: VerifiedIdentity.fromJson(json['identity'] as Map<String, dynamic>),
       dataGroups: groups == null ? null : PassportDataGroups.fromJson(groups),
+      activeAuthSignature:
+          _decodeHex(json['activeAuthSignature'] as String?, 'activeAuthSignature'),
     );
   }
 }

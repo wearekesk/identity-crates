@@ -6,7 +6,10 @@ dg_stub!(
     /// EF.DG3 — encoded fingerprint biometric template.
     /// The port only validates the outer tag (0x63); this Rust port does
     /// the same.
-    EfDG3, 0x0103, 0x03, 0x63
+    EfDG3,
+    0x0103,
+    0x03,
+    0x63
 );
 
 #[cfg(test)]

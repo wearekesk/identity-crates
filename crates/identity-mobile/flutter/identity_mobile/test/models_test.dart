@@ -342,6 +342,16 @@ void main() {
       expect(result.identity.familyName, 'SHARMA');
     });
 
+    test("a verifier's challenge brings back the chip's answer", () {
+      final json = jsonDecode(readPayload(null)) as Map<String, dynamic>;
+      json['activeAuthSignature'] = 'ab01ff';
+      final result = PassportRead.parseResult(jsonEncode(json));
+      expect(result.activeAuthSignature, [0xAB, 0x01, 0xFF]);
+
+      // Without one, or from a library that predates it, there is none.
+      expect(PassportRead.parseResult(readPayload(null)).activeAuthSignature, isNull);
+    });
+
     /// A read cannot succeed without EF.SOD and EF.DG1, so a payload missing either is a
     /// broken contract rather than a partial read — and must not arrive as empty bytes
     /// that something downstream would try to verify.
