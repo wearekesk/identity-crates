@@ -61,7 +61,7 @@ thin_or_die() { # <lib.a> <arch>
 }
 
 read_exports() { # <exports.txt> -> sorted unique names on stdout
-  grep -v '^[[:space:]]*$' "$1" | sort -u
+  grep -v '^[[:space:]]*$' "$1" | sort -u || die "exports list $1 has no names"
 }
 
 weaken() { # <object.o> <symbol>: make one defined global a weak private extern

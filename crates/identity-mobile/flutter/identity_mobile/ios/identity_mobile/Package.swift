@@ -29,7 +29,7 @@ let package = Package(
             // Without this the linker drops the Rust exports: nothing in the Swift or
             // Objective-C world references them, since every call arrives from Dart at
             // runtime, so dead-stripping is free to remove the lot. The archive is
-            // pre-linked, so this loads no second Rust runtime.
+            // pre-linked, so its Rust runtime does not collide with other Rust staticlibs.
             //
             // `-all_load`, not `-Wl,-all_load`: SwiftPM forwards these to the linker,
             // where the clang-driver spelling would not be understood — and the
