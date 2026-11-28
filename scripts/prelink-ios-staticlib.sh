@@ -154,11 +154,11 @@ check() { # <lib.a> <target> <exports.txt>
   target_info "$t"
   thin_or_die "$lib" "$ARCH"
   if ! diff <({ read_exports "$exports"; echo "$PERSONALITY"; } | sort -u) \
-            <(nm -gUj "$lib" | grep -v -e '^$' -e ':$' | sort -u); then
+            <(nm --no-llvm-bc -gUj "$lib" | grep -v -e '^$' -e ':$' | sort -u); then
     die "$lib: defined globals differ from $exports plus $PERSONALITY (< expected, > actual)"
   fi
   # grep -c, not -q: an early exit would SIGPIPE nm under pipefail.
-  nm -m "$lib" | grep -c "weak private external $PERSONALITY\$" > /dev/null \
+  nm --no-llvm-bc -m "$lib" | grep -c "weak private external $PERSONALITY\$" > /dev/null \
     || die "$lib: $PERSONALITY is not a weak private extern"
   for other in raw weak; do
     if ! collision_link "$lib" "$t" "$exports" "$other" "$log"; then
