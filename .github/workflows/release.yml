@@ -171,18 +171,42 @@ jobs:
             cargo rustc -p identity-mobile --release --locked --target "${t}" --crate-type staticlib
             echo "::endgroup::"
           done
+      - name: Exports list from the C ABI
+        run: |
+          set -euo pipefail
+          ffi=crates/identity-mobile/src/ffi.rs
+          grep -A1 -E '#\[(unsafe\()?no_mangle' "$ffi" \
+            | sed -nE 's/.*extern "C" fn ([A-Za-z_][A-Za-z0-9_]*).*/_\1/p' | sort -u > exports.txt
+          want=$(grep -cE '#\[(unsafe\()?no_mangle' "$ffi")
+          got=$(wc -l < exports.txt | tr -d ' ')
+          cat exports.txt
+          if [[ "$got" != "$want" ]]; then
+            echo "::error::found $got exported function names for $want no_mangle attributes in $ffi"
+            exit 1
+          fi
+      # Two Rust staticlibs in one -all_load link collide on their runtimes;
+      # see scripts/prelink-ios-staticlib.sh.
+      - name: Pre-link, so only the FFI exports stay global
+        run: |
+          set -euo pipefail
+          for t in aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios; do
+            raw="target/${t}/release/libidentity_mobile.a"
+            scripts/prelink-ios-staticlib.sh self-test "$raw" "$t" exports.txt
+            scripts/prelink-ios-staticlib.sh prelink "$raw" "prelinked/${t}/libidentity_mobile.a" "$t" exports.txt
+            scripts/prelink-ios-staticlib.sh check "prelinked/${t}/libidentity_mobile.a" "$t" exports.txt
+          done
       - name: Assemble XCFramework
         run: |
           set -euo pipefail
           # The two simulator slices (Apple-silicon + Intel) share one platform, so
           # they must be a single fat library; the device slice stays on its own.
           lipo -create \
-            target/aarch64-apple-ios-sim/release/libidentity_mobile.a \
-            target/x86_64-apple-ios/release/libidentity_mobile.a \
+            prelinked/aarch64-apple-ios-sim/libidentity_mobile.a \
+            prelinked/x86_64-apple-ios/libidentity_mobile.a \
             -output libidentity_mobile-sim.a
           rm -rf identity_mobile.xcframework
           xcodebuild -create-xcframework \
-            -library target/aarch64-apple-ios/release/libidentity_mobile.a \
+            -library prelinked/aarch64-apple-ios/libidentity_mobile.a \
             -library libidentity_mobile-sim.a \
             -output identity_mobile.xcframework
       # Drops beside the plugin's Package.swift, which declares it as a binary target.
